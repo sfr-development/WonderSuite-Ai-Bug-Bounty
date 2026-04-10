@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/dashboard-sidebar.png" alt="WonderSuite" width="100%" />
+<img src="docs/screenshots/dashboard-sidebar.png?v=1" alt="WonderSuite" width="100%" />
 
 <br />
 <br />
@@ -72,7 +72,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Dashboard
 
-<img src="docs/screenshots/dashboard-sidebar.png" alt="Dashboard with expanded sidebar showing all modules" width="880" />
+<img src="docs/screenshots/dashboard-sidebar.png?v=1" alt="Dashboard with expanded sidebar showing all modules" width="880" />
 
 <sub>System info, browser detection, proxy status, quick actions. The sidebar lists every module with keyboard shortcuts.</sub>
 
@@ -81,7 +81,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Intercept proxy
 
-<img src="docs/screenshots/intercept-proxy.png" alt="Request interception view with queue panel" width="880" />
+<img src="docs/screenshots/intercept-proxy.png?v=1" alt="Request interception view with queue panel" width="880" />
 
 <sub>Pause HTTP/S requests mid-flight, edit headers or body, then forward or drop. Queue panel on the right shows pending requests.</sub>
 
@@ -90,7 +90,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Traffic history
 
-<img src="docs/screenshots/traffic-history.png" alt="HTTP traffic log with context menu open" width="880" />
+<img src="docs/screenshots/traffic-history.png?v=1" alt="HTTP traffic log with context menu open" width="880" />
 
 <sub>Full request/response log with filtering. Right-click to copy URL, send to repeater, export as cURL, or highlight rows by color.</sub>
 
@@ -99,7 +99,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Repeater
 
-<img src="docs/screenshots/repeater.png" alt="HTTP repeater with raw request editor" width="880" />
+<img src="docs/screenshots/repeater.png?v=1" alt="HTTP repeater with raw request editor" width="880" />
 
 <sub>Manually craft requests, edit headers, send, and inspect the response. Tabbed interface for working on multiple requests at once.</sub>
 
@@ -108,7 +108,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Sitemap
 
-<img src="docs/screenshots/sitemap.png" alt="Sitemap tree grouped by host and path" width="880" />
+<img src="docs/screenshots/sitemap.png?v=1" alt="Sitemap tree grouped by host and path" width="880" />
 
 <sub>All captured endpoints organized by host. Click any path to see matching requests, methods, and status codes.</sub>
 
@@ -117,7 +117,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Scan templates
 
-<img src="docs/screenshots/scan-templates.png" alt="77 vulnerability scan templates" width="880" />
+<img src="docs/screenshots/scan-templates.png?v=1" alt="77 vulnerability scan templates" width="880" />
 
 <sub>77 built-in scan templates: exposure checks, default credentials, CVEs, misconfigs, and fuzzing payloads. Filter by severity or tag.</sub>
 
@@ -126,7 +126,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### MCP server settings
 
-<img src="docs/screenshots/mcp-server.png" alt="MCP server settings with IDE auto-detection" width="880" />
+<img src="docs/screenshots/mcp-server.png?v=1" alt="MCP server settings with IDE auto-detection" width="880" />
 
 <sub>One-click MCP setup for Cursor, Windsurf, VS Code, Void, and Gemini CLI. Auto-detects installed IDEs and writes the config for you.</sub>
 
@@ -135,7 +135,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### MCP tools
 
-<img src="docs/screenshots/mcp-tools.png" alt="88 MCP tools listed with descriptions" width="880" />
+<img src="docs/screenshots/mcp-tools.png?v=1" alt="88 MCP tools listed with descriptions" width="880" />
 
 <sub>88 tools exposed via MCP. Proxy control, traffic search, scanning, OSINT, encoding, JWT analysis, WebSocket, and more.</sub>
 
@@ -144,7 +144,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Proxy settings
 
-<img src="docs/screenshots/proxy-settings.png" alt="Proxy engine configuration panel" width="880" />
+<img src="docs/screenshots/proxy-settings.png?v=1" alt="Proxy engine configuration panel" width="880" />
 
 <sub>Listen port, TLS pass-through, upstream proxy chaining, match and replace rules, and interception filters.</sub>
 
@@ -153,7 +153,7 @@ Output goes to `src-tauri/target/release/bundle/`.
 
 ### Project launcher
 
-<img src="docs/screenshots/project-launcher.png" alt="Project launcher with new and recent projects" width="880" />
+<img src="docs/screenshots/project-launcher.png?v=1" alt="Project launcher with new and recent projects" width="880" />
 
 <sub>Each project stores its own traffic, findings, and session data separately.</sub>
 
