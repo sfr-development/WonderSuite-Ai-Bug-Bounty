@@ -1,0 +1,220 @@
+use serde::Serialize;
+use std::time::Instant;
+use crate::mcp::McpState;
+
+#[derive(Serialize)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub headers: String,
+    pub body: String,
+    pub time_ms: u64,
+    pub size: usize,
+}
+
+#[tauri::command]
+pub async fn send_http_request(
+    method: String,
+    url: String,
+    headers: Option<std::collections::HashMap<String, String>>,
+    body: Option<String>,
+) -> Result<HttpResponse, String> {
+    let start = Instant::now();
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut req = match method.to_uppercase().as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        "OPTIONS" => client.request(reqwest::Method::OPTIONS, &url),
+        _ => return Err(format!("Unsupported method: {}", method)),
+    };
+
+    // Apply custom headers from the Repeater editor
+    if let Some(hdrs) = headers {
+        for (key, value) in hdrs {
+            if let (Ok(name), Ok(val)) = (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&value),
+            ) {
+                req = req.header(name, val);
+            }
+        }
+    }
+
+    // Apply request body
+    if let Some(b) = body {
+        if !b.is_empty() {
+            req = req.body(b);
+        }
+    }
+
+    let response = req.send().await.map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    let time_ms = start.elapsed().as_millis() as u64;
+    let size = body.len();
+
+    Ok(HttpResponse { status, headers, body, time_ms, size })
+}
+
+#[tauri::command]
+pub async fn mcp_start(state: tauri::State<'_, McpState>, port: u16) -> Result<String, String> {
+    let mut server = state.lock().await;
+    server.start(port).await?;
+    Ok(format!("MCP server started on port {}", port))
+}
+
+#[tauri::command]
+pub async fn mcp_stop(state: tauri::State<'_, McpState>) -> Result<String, String> {
+    let mut server = state.lock().await;
+    server.stop()?;
+    Ok("MCP server stopped".into())
+}
+
+#[tauri::command]
+pub async fn mcp_status(state: tauri::State<'_, McpState>) -> Result<bool, String> {
+    let server = state.lock().await;
+    Ok(server.is_running())
+}
+
+/// Check if a file or directory exists on disk
+#[tauri::command]
+pub async fn check_path_exists(path: String) -> Result<bool, String> {
+    Ok(std::path::Path::new(&path).exists())
+}
+
+/// Read file content as a string (for checking existing MCP config)
+#[tauri::command]
+pub async fn read_file_content(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file {}: {}", path, e))
+}
+
+/// Write MCP config JSON to a target path (for IDE integration)
+#[tauri::command]
+pub async fn write_mcp_config(path: String, content: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    // Create parent directories if they don't exist
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory: {}", e))?;
+    }
+
+    // If file already exists, try to merge MCP server config
+    if p.exists() {
+        let existing_raw = std::fs::read_to_string(p).unwrap_or_default();
+        let existing_clean = strip_json_comments(&existing_raw);
+
+        if !existing_clean.trim().is_empty() {
+            // Try to parse and merge
+            if let (Ok(mut existing_json), Ok(new_json)) = (
+                serde_json::from_str::<serde_json::Value>(&existing_clean),
+                serde_json::from_str::<serde_json::Value>(&content),
+            ) {
+                // Merge the mcpServers key
+                if let Some(new_servers) = new_json.get("mcpServers") {
+                    if let Some(existing_servers) = existing_json.get_mut("mcpServers") {
+                        if let (Some(es), Some(ns)) = (existing_servers.as_object_mut(), new_servers.as_object()) {
+                            for (k, v) in ns { es.insert(k.clone(), v.clone()); }
+                        }
+                    } else {
+                        existing_json.as_object_mut().map(|o| o.insert("mcpServers".into(), new_servers.clone()));
+                    }
+                }
+                // Also handle "mcp.servers" format (VS Code)
+                if let Some(new_mcp) = new_json.get("mcp") {
+                    if let Some(existing_mcp) = existing_json.get_mut("mcp") {
+                        if let Some(new_s) = new_mcp.get("servers") {
+                            if let Some(existing_s) = existing_mcp.get_mut("servers") {
+                                if let (Some(es), Some(ns)) = (existing_s.as_object_mut(), new_s.as_object()) {
+                                    for (k, v) in ns { es.insert(k.clone(), v.clone()); }
+                                }
+                            } else {
+                                existing_mcp.as_object_mut().map(|o| o.insert("servers".into(), new_s.clone()));
+                            }
+                        }
+                    } else {
+                        existing_json.as_object_mut().map(|o| o.insert("mcp".into(), new_mcp.clone()));
+                    }
+                }
+                let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
+                std::fs::write(p, &merged).map_err(|e| format!("Cannot write file: {}", e))?;
+                return Ok(format!("Merged WonderSuite MCP config into {}", path));
+            }
+            // If existing JSON cannot be parsed, overwrite (fallback)
+        }
+    }
+
+    // Write new file
+    std::fs::write(p, &content).map_err(|e| format!("Cannot write file: {}", e))?;
+    Ok(format!("WonderSuite MCP config written to {}", path))
+}
+
+/// Strip single-line comments (// ...) from JSON-with-comments content
+fn strip_json_comments(input: &str) -> String {
+    // Remove BOM
+    let s = input.trim_start_matches('\u{feff}');
+    let mut result = String::with_capacity(s.len());
+    let mut in_string = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            result.push(c);
+            if c == '\\' {
+                // Skip escaped character
+                if let Some(next) = chars.next() { result.push(next); }
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else {
+            if c == '"' {
+                in_string = true;
+                result.push(c);
+            } else if c == '/' {
+                if chars.peek() == Some(&'/') {
+                    // Skip rest of line
+                    for nc in chars.by_ref() {
+                        if nc == '\n' { result.push('\n'); break; }
+                    }
+                } else {
+                    result.push(c);
+                }
+            } else {
+                result.push(c);
+            }
+        }
+    }
+    result
+}
+
+// ─── MCP Activity Log Commands ──────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_mcp_activity(since_id: Option<u64>) -> Result<Vec<crate::mcp::ActivityEntry>, String> {
+    Ok(crate::mcp::get_activity_log(since_id.unwrap_or(0)))
+}
+
+#[tauri::command]
+pub async fn get_mcp_activity_stats() -> Result<serde_json::Value, String> {
+    Ok(crate::mcp::get_activity_stats())
+}
+
+#[tauri::command]
+pub async fn get_mcp_traffic(since_id: Option<u64>) -> Result<Vec<crate::mcp::McpTrafficEntry>, String> {
+    Ok(crate::mcp::get_mcp_traffic(since_id.unwrap_or(0)))
+}

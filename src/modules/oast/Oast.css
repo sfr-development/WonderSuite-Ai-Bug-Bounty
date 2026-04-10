@@ -1,0 +1,97 @@
+.oast { display: flex; flex-direction: column; height: 100%; background: var(--bg-1); }
+.oast-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--bg-2); border-bottom: 1px solid var(--border); color: var(--text-2); }
+.oast-toolbar-title { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; }
+.oast-action-btn { display: flex; align-items: center; gap: 4px; padding: 3px 8px; font-size: 10px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text-2); border-radius: 4px; cursor: pointer; }
+.oast-action-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.oast-action-btn.accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+.oast-action-btn.accent:hover { opacity: 0.85; }
+.oast-action-btn.danger { color: var(--red); border-color: rgba(239,68,68,0.3); }
+.oast-action-btn.danger:hover { background: rgba(239,68,68,0.1); }
+
+.oast-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.oast-tab { display: flex; align-items: center; gap: 4px; padding: 6px 14px; font-size: 10px; border: none; background: transparent; color: var(--text-3); cursor: pointer; border-bottom: 2px solid transparent; }
+.oast-tab:hover { color: var(--text-1); background: var(--bg-hover); }
+.oast-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.oast-badge { font-size: 9px; padding: 1px 5px; border-radius: 6px; background: var(--bg-3); color: var(--text-3); }
+.oast-badge.hit { background: rgba(34,197,94,0.15); color: var(--green); animation: pulse-green 2s infinite; }
+@keyframes pulse-green { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+.oast-body { flex: 1; overflow: auto; }
+
+/* Server Tab */
+.oast-server-panel { padding: 16px; }
+.oast-server-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.oast-server-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.oast-server-card-header { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
+.oast-server-card-body { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.oast-server-state { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: rgba(239,68,68,0.1); color: var(--red); }
+.oast-server-state.running { background: rgba(34,197,94,0.1); color: var(--green); }
+.oast-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); margin-left: auto; }
+.oast-status-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.oast-start-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px; font-size: 10px; background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.oast-start-btn:hover { opacity: 0.85; }
+
+.oast-quick-gen { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.oast-section-title { font-size: 11px; font-weight: 600; color: var(--text-1); display: block; margin-bottom: 8px; }
+.oast-gen-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.oast-input { flex: 1; padding: 5px 8px; font-size: 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; color: var(--text-1); font-family: inherit; }
+.oast-input:focus { outline: none; border-color: var(--accent); }
+.oast-select { padding: 5px 8px; font-size: 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; color: var(--text-1); }
+.oast-dim { font-size: 9px; color: var(--text-3); }
+
+/* Payloads Tab */
+.oast-payloads-panel { display: flex; flex-direction: column; height: 100%; }
+.oast-payload-gen { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.oast-filter-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-2); border-bottom: 1px solid var(--border); color: var(--text-3); }
+.oast-filter-input { flex: 1; padding: 4px 8px; font-size: 10px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; color: var(--text-1); }
+.oast-filter-input:focus { outline: none; border-color: var(--accent); }
+
+.oast-payload-list { flex: 1; overflow: auto; }
+.oast-payload-item { padding: 8px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.oast-payload-item:hover { background: var(--bg-hover); }
+.oast-payload-item.selected { background: var(--bg-3); border-left: 2px solid var(--accent); }
+.oast-payload-header { display: flex; align-items: center; justify-content: space-between; }
+.oast-payload-desc { font-size: 11px; color: var(--text-1); font-weight: 500; }
+.oast-hit-count { font-size: 9px; padding: 1px 6px; border-radius: 6px; background: var(--bg-3); color: var(--text-3); }
+.oast-hit-count.hit { background: rgba(34,197,94,0.15); color: var(--green); font-weight: 600; }
+.oast-payload-meta { display: flex; gap: 8px; margin-top: 3px; }
+.oast-corr { font-size: 9px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+
+/* Payload Detail */
+.oast-payload-detail, .oast-interaction-detail { background: var(--bg-2); border-top: 1px solid var(--border); padding: 10px 12px; }
+.oast-detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.oast-detail-title { font-size: 11px; font-weight: 600; color: var(--text-1); flex: 1; }
+.oast-detail-close { background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.oast-detail-close:hover { color: var(--text-1); }
+.oast-detail-rows { display: flex; flex-direction: column; gap: 4px; }
+.oast-detail-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.oast-detail-label { font-size: 9px; color: var(--text-3); width: 100px; flex-shrink: 0; }
+.oast-detail-value { font-size: 10px; color: var(--text-1); flex: 1; word-break: break-all; }
+.oast-detail-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--accent); }
+.oast-copy-btn { background: none; border: 1px solid var(--border); border-radius: 3px; padding: 2px 4px; cursor: pointer; color: var(--text-3); }
+.oast-copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Interactions Tab */
+.oast-interactions-panel { display: flex; flex-direction: column; height: 100%; }
+.oast-interaction-list { flex: 1; overflow: auto; }
+.oast-interaction-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 10px; }
+.oast-interaction-item:hover { background: var(--bg-hover); }
+.oast-interaction-item.selected { background: var(--bg-3); border-left: 2px solid var(--accent); }
+.oast-int-type { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; }
+.oast-int-type.http { background: rgba(96,165,250,0.1); color: #60a5fa; }
+.oast-int-type.dns { background: rgba(251,191,36,0.1); color: #fbbf24; }
+.oast-int-type.smtp { background: rgba(168,85,247,0.1); color: #a855f7; }
+.oast-int-corr { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--accent); }
+.oast-int-ip { color: var(--text-2); }
+.oast-raw-data { font-family: 'JetBrains Mono', monospace; font-size: 9px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 4px; padding: 8px; color: var(--text-2); white-space: pre-wrap; word-break: break-all; margin: 8px 0; max-height: 200px; overflow: auto; }
+
+/* Collaborator Everywhere */
+.oast-collab-panel { padding: 16px; }
+.oast-collab-info { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+.oast-collab-list { display: flex; flex-direction: column; gap: 2px; }
+.oast-collab-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; font-size: 10px; }
+.oast-collab-header { font-weight: 600; color: var(--text-1); width: 140px; flex-shrink: 0; }
+.oast-collab-value { flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--accent); word-break: break-all; }
+
+/* Empty state */
+.oast-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 40px; color: var(--text-3); font-size: 11px; }

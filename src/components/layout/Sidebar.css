@@ -1,0 +1,201 @@
+/* ─── Sidebar Container ──────────────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  height: 100%;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border-0);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width 200ms ease;
+  overflow: hidden;
+  z-index: 50;
+}
+
+.sidebar.expanded {
+  width: var(--sidebar-expanded-w);
+}
+
+/* ─── Header (Logo + Toggle) ─────────────────────────────────── */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-brand {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  color: var(--text-0);
+  background: var(--bg-3);
+}
+
+/* ─── Nav (Scrollable) ───────────────────────────────────────── */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+}
+
+/* Scrollbar slim inside sidebar */
+.sidebar-nav::-webkit-scrollbar { width: 3px; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
+
+/* ─── Groups ─────────────────────────────────────────────────── */
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+.sidebar-group-title {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 6px 12px 2px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ─── Nav Items ──────────────────────────────────────────────── */
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+  border: none;
+  background: none;
+  position: relative;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Collapsed: center icon */
+.sidebar:not(.expanded) .sidebar-item {
+  width: 34px;
+  height: 34px;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+/* Expanded: full row */
+.sidebar.expanded .sidebar-item {
+  width: calc(100% - 8px);
+  height: 30px;
+  padding: 0 10px;
+  margin: 0 4px;
+}
+
+.sidebar-item:hover {
+  color: var(--text-0);
+  background: var(--bg-3);
+}
+
+.sidebar-item.active {
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.sidebar-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.sidebar:not(.expanded) .sidebar-item.active::before {
+  left: -3px;
+}
+
+/* ─── Label & Shortcut ───────────────────────────────────────── */
+.sidebar-label {
+  font-size: 11px;
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-shortcut {
+  font-size: 9px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* ─── Tooltip (collapsed only) ───────────────────────────────── */
+.sidebar:not(.expanded) .sidebar-item[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(var(--sidebar-w) - 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-3);
+  color: var(--text-0);
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--border-1);
+  z-index: 200;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ─── Bottom (Settings) ──────────────────────────────────────── */
+.sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-0);
+  flex-shrink: 0;
+}

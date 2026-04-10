@@ -1,0 +1,369 @@
+.launcher {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+}
+
+.launcher-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.launcher-sidebar {
+  width: 280px;
+  background: var(--bg-1);
+  border-right: 1px solid var(--border-0);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px;
+}
+
+.launcher-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 28px;
+  padding: 8px 0;
+}
+
+.launcher-brand-icon {
+  color: var(--accent);
+}
+
+.launcher-brand h1 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-0);
+  letter-spacing: 0.02em;
+}
+
+.launcher-brand span {
+  font-size: 10px;
+  color: var(--text-3);
+  display: block;
+  margin-top: 1px;
+}
+
+.launcher-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.launcher-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: none;
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-s);
+  color: var(--text-1);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+}
+
+.launcher-action-btn:hover {
+  background: var(--bg-2);
+  border-color: var(--border-1);
+  color: var(--text-0);
+}
+
+.launcher-action-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-0);
+  font-weight: 600;
+}
+
+.launcher-action-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.launcher-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.launcher-projects {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launcher-project {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  color: var(--text-1);
+  transition: all var(--transition);
+  text-align: left;
+  width: 100%;
+}
+
+.launcher-project:hover {
+  background: var(--bg-2);
+}
+
+.launcher-project.active {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.launcher-project-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--bg-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.launcher-project-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.launcher-project-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launcher-project-meta {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+.launcher-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.launcher-main.has-project {
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.launcher-empty {
+  text-align: center;
+  color: var(--text-3);
+}
+
+.launcher-empty-icon {
+  margin-bottom: 16px;
+  color: var(--text-3);
+}
+
+.launcher-empty h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+
+.launcher-empty p {
+  font-size: 12px;
+  max-width: 300px;
+  line-height: 1.5;
+}
+
+.launcher-detail {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.launcher-detail-header {
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--border-0);
+}
+
+.launcher-detail-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-0);
+  margin-bottom: 4px;
+}
+
+.launcher-detail-header p {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.launcher-detail-body {
+  flex: 1;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.launcher-stat-row {
+  display: flex;
+  gap: 12px;
+}
+
+.launcher-stat {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-s);
+}
+
+.launcher-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-0);
+}
+
+.launcher-stat-label {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.launcher-detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.launcher-detail-btn {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-1);
+  background: var(--bg-2);
+  color: var(--text-0);
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.launcher-detail-btn:hover {
+  background: var(--bg-3);
+}
+
+.launcher-detail-btn.open {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-0);
+}
+
+.launcher-detail-btn.open:hover {
+  filter: brightness(1.1);
+}
+
+.launcher-detail-btn.danger:hover {
+  background: var(--red);
+  border-color: var(--red);
+  color: white;
+}
+
+/* New Project Dialog */
+.launcher-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.launcher-dialog {
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-m);
+  width: 420px;
+  padding: 24px;
+}
+
+.launcher-dialog h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-0);
+  margin-bottom: 16px;
+}
+
+.launcher-form-group {
+  margin-bottom: 12px;
+}
+
+.launcher-form-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.launcher-form-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.launcher-form-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.launcher-form-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 12px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.launcher-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
