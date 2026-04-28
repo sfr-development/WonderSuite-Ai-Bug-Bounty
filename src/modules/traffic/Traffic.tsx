@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Activity, Trash2, Download, Lock, Copy, Send, Zap, Filter, ArrowUpDown, FileText, Bookmark } from 'lucide-react';
+import { Search, Activity, Trash2, Download, Lock, Filter, ArrowUpDown } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import './Traffic.css';
 
@@ -98,7 +98,8 @@ export function Traffic() {
   const [methodFilter, setMethodFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: TrafficEntry } | null>(null);
+  const [inScopeOnly, setInScopeOnly] = useState(false);
+  const { openContextMenu, isInScope } = useAppStore();
 
 
   useEffect(() => {
@@ -147,11 +148,7 @@ export function Traffic() {
   }, []);
 
 
-  useEffect(() => {
-    const handler = () => setContextMenu(null);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, []);
+
 
   const clearTraffic = useCallback(async () => {
     try {
@@ -183,43 +180,17 @@ export function Traffic() {
 
   const handleContextMenu = (e: React.MouseEvent, entry: TrafficEntry) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, entry });
-  };
-
-  const { sendTo } = useAppStore();
-
-  const contextAction = (action: string) => {
-    if (!contextMenu) return;
-    const entry = contextMenu.entry;
-    setContextMenu(null);
-    const rawReq = `${entry.request_headers}\n\n${entry.request_body}`;
-    switch (action) {
-      case 'copy_url': navigator.clipboard.writeText(entry.url); break;
-      case 'copy_host': navigator.clipboard.writeText(entry.host); break;
-      case 'copy_request': navigator.clipboard.writeText(rawReq); break;
-      case 'copy_response': navigator.clipboard.writeText(`${entry.response_headers}\n\n${entry.response_body}`); break;
-      case 'copy_curl': {
-        const headers = parseHeaders(entry.request_headers);
-        const curl = `curl -X ${entry.method} '${entry.url}' ${headers.map(h => `-H '${h.key}: ${h.value}'`).join(' ')}${entry.request_body ? ` -d '${entry.request_body}'` : ''}`;
-        navigator.clipboard.writeText(curl);
-        break;
-      }
-      case 'send_repeater': sendTo('repeater', entry.method, entry.url, rawReq); break;
-      case 'send_intruder': sendTo('intruder', entry.method, entry.url, rawReq); break;
-      case 'send_organizer': sendTo('organizer', entry.method, entry.url, rawReq); break;
-      case 'highlight_red': updateEntryColor(entry.id, 'var(--red)'); break;
-      case 'highlight_yellow': updateEntryColor(entry.id, 'var(--yellow)'); break;
-      case 'highlight_green': updateEntryColor(entry.id, 'var(--green)'); break;
-      case 'highlight_clear': updateEntryColor(entry.id, ''); break;
-    }
-  };
-
-  const updateEntryColor = (id: number, color: string) => {
-    setEntries(prev => prev.map(e => e.id === id ? { ...e, color } : e));
+    openContextMenu(e.clientX, e.clientY, {
+      method: entry.method,
+      url: entry.url,
+      requestRaw: `${entry.request_headers}\n\n${entry.request_body}`,
+      responseRaw: `${entry.response_headers}\n\n${entry.response_body}`,
+    });
   };
 
 
   const filtered = entries.filter((e) => {
+    if (inScopeOnly && !isInScope(e.url)) return false;
     if (methodFilter && e.method !== methodFilter) return false;
     if (statusFilter) {
       const group = statusFilter;
@@ -270,6 +241,9 @@ export function Traffic() {
         <div className="traffic-toolbar-spacer" />
 
 
+        <button className={`traffic-toolbar-btn ${inScopeOnly ? 'active' : ''}`} onClick={() => setInScopeOnly(!inScopeOnly)} title="Show only in-scope items">
+          <Lock size={13} />
+        </button>
         <button className={`traffic-toolbar-btn ${showFilters ? 'active' : ''}`} onClick={() => setShowFilters(!showFilters)} title="Toggle filters">
           <Filter size={13} />
         </button>
@@ -437,29 +411,6 @@ export function Traffic() {
       )}
 
 
-      {contextMenu && (
-        <div className="traffic-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <div className="traffic-ctx-header">{contextMenu.entry.method} {contextMenu.entry.host}</div>
-          <div className="traffic-ctx-divider" />
-          <div className="traffic-ctx-item" onClick={() => contextAction('copy_url')}><Copy size={11} /> Copy URL</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('copy_host')}><Copy size={11} /> Copy Host</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('copy_request')}><FileText size={11} /> Copy Request</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('copy_response')}><FileText size={11} /> Copy Response</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('copy_curl')}><Copy size={11} /> Copy as cURL</div>
-          <div className="traffic-ctx-divider" />
-          <div className="traffic-ctx-item" onClick={() => contextAction('send_repeater')}><Send size={11} /> Send to Repeater</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('send_intruder')}><Zap size={11} /> Send to Intruder</div>
-          <div className="traffic-ctx-item" onClick={() => contextAction('send_organizer')}><Bookmark size={11} /> Save to Organizer</div>
-          <div className="traffic-ctx-divider" />
-          <div className="traffic-ctx-sub">Highlight</div>
-          <div className="traffic-ctx-colors">
-            <span className="traffic-ctx-dot" style={{ background: 'var(--red)' }} onClick={() => contextAction('highlight_red')} />
-            <span className="traffic-ctx-dot" style={{ background: '#f0c040' }} onClick={() => contextAction('highlight_yellow')} />
-            <span className="traffic-ctx-dot" style={{ background: 'var(--green)' }} onClick={() => contextAction('highlight_green')} />
-            <span className="traffic-ctx-dot" style={{ background: 'var(--text-3)' }} onClick={() => contextAction('highlight_clear')} title="Clear" />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

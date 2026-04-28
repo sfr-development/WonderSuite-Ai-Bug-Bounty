@@ -1217,7 +1217,7 @@ fn tool_definitions() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {
                     "expression": { "type": "string", "description": "Filter expression, e.g. \"status == 200 && host contains 'example'\"" },
-                    "traffic": { "type": "array", "description": "Optional array of traffic items to filter. If omitted, just validates the expression." }
+                    "traffic": { "type": "array", "items": { "type": "object" }, "description": "Optional array of traffic items to filter. If omitted, just validates the expression." }
                 },
                 "required": ["expression"]
             }),
@@ -1630,7 +1630,7 @@ fn tool_definitions() -> Vec<ToolDef> {
 }
 
 
-async fn handle_tool_call(name: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn handle_tool_call(name: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
     match name {
         "send_request" => {
             let method = params["method"].as_str().unwrap_or("GET");

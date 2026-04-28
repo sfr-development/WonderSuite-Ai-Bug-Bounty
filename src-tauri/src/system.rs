@@ -63,9 +63,14 @@ impl SystemInfo {
         #[cfg(target_os = "windows")]
         {
             use std::process::Command;
-            if let Ok(out) = Command::new("cmd")
-                .args(["/c", "ver"])
-                .output()
+            #[cfg(target_os = "windows")]
+            use std::os::windows::process::CommandExt;
+
+            let mut cmd = Command::new("cmd");
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+
+            if let Ok(out) = cmd.args(["/c", "ver"]).output()
             {
                 let ver = String::from_utf8_lossy(&out.stdout);
                 // Extract version number from "Microsoft Windows [Version 10.0.22631.4890]"

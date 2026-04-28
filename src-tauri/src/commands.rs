@@ -106,6 +106,32 @@ pub async fn read_file_content(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file {}: {}", path, e))
 }
 
+#[tauri::command]
+pub async fn read_workspace_plan(session_id: String) -> Result<String, String> {
+    let path = format!("./wondersuite_memory/sess_{}/plan.md", session_id);
+    std::fs::read_to_string(&path).map_err(|e| format!("Plan not found: {}", e))
+}
+
+#[tauri::command]
+pub async fn write_workspace_plan(session_id: String, content: String) -> Result<(), String> {
+    let path = format!("./wondersuite_memory/sess_{}/plan.md", session_id);
+    let p = std::path::Path::new(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory: {}", e))?;
+    }
+    std::fs::write(&path, content).map_err(|e| format!("Cannot write plan: {}", e))
+}
+
+#[tauri::command]
+pub async fn delete_workspace_session(session_id: String) -> Result<(), String> {
+    let path = format!("./wondersuite_memory/sess_{}/", session_id);
+    let p = std::path::Path::new(&path);
+    if p.exists() {
+        std::fs::remove_dir_all(p).map_err(|e| format!("Cannot delete session folder: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Write MCP config JSON to a target path (for IDE integration)
 #[tauri::command]
 pub async fn write_mcp_config(path: String, content: String) -> Result<String, String> {
@@ -217,4 +243,18 @@ pub async fn get_mcp_activity_stats() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn get_mcp_traffic(since_id: Option<u64>) -> Result<Vec<crate::mcp::McpTrafficEntry>, String> {
     Ok(crate::mcp::get_mcp_traffic(since_id.unwrap_or(0)))
+}
+
+/// Bridge command: lets the AI agent execute any MCP tool by name + params.
+/// This gives the agent access to encode, decode, hash, analyze_jwt, generate_payload,
+/// repeat_request, fuzz_request, scan_target, analyze_tokens, compare_data,
+/// query_logs, organize_findings, active_scan, crawl_target, discover_subdomains,
+/// discover_content, full_auto_scan, test_auth_bypass, detect_smuggling, find_secrets,
+/// generate_csrf_poc, dom_invader, timing_attack, raw_tcp_send, smuggling_send,
+/// bambda_filter, mtls_send_request, dns_resolve, race_request, h2_*, crtsh_search,
+/// wayback_lookup, whois_lookup, asn_lookup, favicon_hash, discover_parameters,
+/// graphql_introspect, js_link_finder, reverse_ip_lookup, template_*, and more.
+#[tauri::command]
+pub async fn mcp_execute_tool(name: String, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    crate::mcp::handle_tool_call(&name, &params).await
 }

@@ -1,0 +1,118 @@
+.context-menu {
+  position: fixed;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-m);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  width: 280px;
+  max-height: 90vh;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: visible;
+  animation: context-menu-in 0.15s ease-out;
+}
+
+@keyframes context-menu-in {
+  from { opacity: 0; transform: scale(0.98) translateY(-5px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.context-menu-header {
+  padding: 8px 12px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border-0);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-method {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.context-url {
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-menu-actions {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.context-menu-actions button {
+  background: transparent;
+  border: none;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.1s;
+}
+
+.context-menu-actions button:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--border-0);
+  margin: 4px 0;
+}
+
+/* Submenu logic */
+.context-submenu-trigger {
+  position: relative;
+  display: flex;
+  justify-content: space-between !important;
+}
+
+.context-submenu-trigger::after {
+  content: "▶";
+  font-size: 8px;
+  color: var(--text-2);
+  margin-left: 12px;
+}
+
+.context-submenu {
+  display: none;
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-m);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px 0;
+  z-index: 10000;
+}
+
+/* Invisible bridge so hover doesn't break when switching to submenu */
+.context-submenu::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -8px;
+  bottom: 0;
+  width: 8px;
+  background: transparent;
+}
+
+.context-submenu-trigger:hover .context-submenu {
+  display: flex;
+}

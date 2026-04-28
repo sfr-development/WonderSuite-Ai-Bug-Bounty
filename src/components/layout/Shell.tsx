@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Titlebar } from './Titlebar';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
@@ -27,6 +27,7 @@ import { WebSocket as WsModule } from '../../modules/websocket/WebSocket';
 import { Oast } from '../../modules/oast/Oast';
 import { Discovery } from '../../modules/discovery/Discovery';
 import { Osint } from '../../modules/osint/Osint';
+import { ContextMenu } from '../shared/ContextMenu';
 import './Shell.css';
 
 interface ProjectInfo {
@@ -68,9 +69,34 @@ const moduleComponents: Record<string, React.FC> = {
 export function Shell() {
   const [splashDone, setSplashDone] = useState(false);
   const [activeProject, setActiveProject] = useState<ProjectInfo | null>(null);
-  const activeModule = useAppStore((s) => s.activeModule);
+  const { activeModule, appearance, toasts, removeToast } = useAppStore();
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
   useKeyboardShortcuts();
+
+  // Apply Appearance
+  useEffect(() => {
+    const root = document.documentElement;
+    // Set Theme
+    root.className = `theme-${appearance.theme} ${appearance.compactMode ? 'compact-mode' : ''}`;
+    // Set Custom Accent
+    if (appearance.accentColor) {
+      root.style.setProperty('--accent', appearance.accentColor);
+      root.style.setProperty('--accent-hover', appearance.accentColor);
+      // Create a slight muted background for active states based on hex
+      const hex = appearance.accentColor.replace('#', '');
+      if (hex.length === 6) {
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+        root.style.setProperty('--accent-muted', `rgba(${r}, ${g}, ${b}, 0.12)`);
+        root.style.setProperty('--accent-border', `rgba(${r}, ${g}, ${b}, 0.3)`);
+      }
+    }
+    // Set Scale
+    if (appearance.uiScale) {
+      root.style.setProperty('--ui-scale', (appearance.uiScale / 100).toString());
+    }
+  }, [appearance]);
 
   if (!splashDone) {
     return (
@@ -117,7 +143,21 @@ export function Shell() {
             ))}
           </div>
           <StatusBar projectName={activeProject?.name} />
+          <ContextMenu />
         </div>
+      </div>
+      
+      {/* Toast Container */}
+      <div className="shell-toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`shell-toast shell-toast-${toast.type}`}>
+            <div className="shell-toast-content">
+              {toast.title && <div className="shell-toast-title">{toast.title}</div>}
+              {toast.message && <div className="shell-toast-message">{toast.message}</div>}
+            </div>
+            <button className="shell-toast-close" onClick={() => removeToast(toast.id)}>×</button>
+          </div>
+        ))}
       </div>
     </div>
   );

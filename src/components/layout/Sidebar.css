@@ -20,11 +20,20 @@
 .sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 6px;
   min-height: 38px;
   border-bottom: 1px solid var(--border-0);
   flex-shrink: 0;
+}
+
+/* When collapsed: center the toggle button */
+.sidebar:not(.expanded) .sidebar-header {
+  justify-content: center;
+}
+
+/* When expanded: space between logo and toggle */
+.sidebar.expanded .sidebar-header {
+  justify-content: space-between;
 }
 
 .sidebar-logo {
@@ -32,6 +41,17 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
+}
+
+/* Logo image: aggressively cropped to remove transparent borders */
+.sidebar-logo-img {
+  width: 100px;
+  height: 24px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .sidebar-brand {
@@ -47,14 +67,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: none;
   color: var(--text-2);
   cursor: pointer;
   border-radius: var(--radius-s);
   flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
 }
 
 .sidebar-toggle:hover {
@@ -86,6 +107,7 @@
   margin-bottom: 2px;
 }
 
+/* Collapsible group title (button) — only visible when expanded */
 .sidebar-group-title {
   font-size: 9px;
   font-weight: 600;
@@ -95,6 +117,52 @@
   padding: 6px 12px 2px;
   white-space: nowrap;
   user-select: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-align: left;
+  transition: color 0.15s;
+  position: relative;
+  width: 100%;
+  border-radius: 0;
+}
+
+.sidebar-group-title:hover {
+  color: var(--text-1);
+}
+
+.sidebar-group-title.has-active {
+  color: var(--accent);
+}
+
+/* Chevron rotation */
+.sidebar-group-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+.sidebar-group-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Active dot indicator on collapsed groups */
+.sidebar-group-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Separator between groups when sidebar is collapsed */
+.sidebar:not(.expanded) .sidebar-group + .sidebar-group {
+  border-top: 1px solid var(--border-0);
+  padding-top: 4px;
+  margin-top: 2px;
 }
 
 /* ─── Nav Items ──────────────────────────────────────────────── */
@@ -105,7 +173,7 @@
   border-radius: var(--radius-s);
   color: var(--text-2);
   cursor: pointer;
-  transition: color var(--transition), background var(--transition);
+  transition: color 0.15s ease, background 0.15s ease;
   border: none;
   background: none;
   position: relative;
@@ -176,7 +244,7 @@
   left: calc(var(--sidebar-w) - 4px);
   top: 50%;
   transform: translateY(-50%);
-  background: var(--bg-3);
+  background: var(--bg-2);
   color: var(--text-0);
   padding: 4px 10px;
   border-radius: var(--radius-s);

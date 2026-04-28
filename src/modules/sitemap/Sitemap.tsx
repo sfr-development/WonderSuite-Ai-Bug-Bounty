@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Globe, Folder, FileText, Network } from 'lucide-react';
+import { ChevronRight, ChevronDown, Globe, Folder, FileText, Network, ListTree, GitMerge } from 'lucide-react';
+import { VisualMap } from './VisualMap';
+import { useAppStore } from '../../stores';
 import './Sitemap.css';
 
-interface TreeNode {
+export interface TreeNode {
   name: string;
   type: 'host' | 'dir' | 'file';
   children?: TreeNode[];
@@ -11,10 +13,25 @@ interface TreeNode {
   issues?: number;
 }
 
-function TreeItem({ node, depth, selected, onSelect }: { node: TreeNode; depth: number; selected: string; onSelect: (n: TreeNode) => void }) {
+function TreeItem({ node, depth, selected, onSelect, parentHost }: { node: TreeNode; depth: number; selected: string; onSelect: (n: TreeNode) => void; parentHost?: string }) {
   const [open, setOpen] = useState(depth < 2);
+  const { openContextMenu } = useAppStore();
   const hasChildren = node.children && node.children.length > 0;
   const Icon = node.type === 'host' ? Globe : node.type === 'dir' ? Folder : FileText;
+
+  const currentHost = node.type === 'host' ? node.name : parentHost;
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const url = node.type === 'host' ? node.name : `${parentHost}${node.name === '/' ? '' : node.name}`;
+    const method = node.method || 'GET';
+    openContextMenu(e.clientX, e.clientY, {
+      method: method as string,
+      url: url as string,
+      requestRaw: `${method} ${node.name} HTTP/1.1\r\nHost: target\r\n\r\n`,
+      responseRaw: 'HTTP/1.1 200 OK\r\n\r\n'
+    });
+  };
 
   return (
     <>
@@ -22,6 +39,7 @@ function TreeItem({ node, depth, selected, onSelect }: { node: TreeNode; depth: 
         className={`sitemap-node ${selected === node.name ? 'active' : ''}`}
         style={{ paddingLeft: 8 + depth * 16 }}
         onClick={() => { if (hasChildren) setOpen(!open); onSelect(node); }}
+        onContextMenu={handleContextMenu}
       >
         <span className="sitemap-node-toggle">
           {hasChildren ? (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span style={{ width: 12 }} />}
@@ -39,7 +57,7 @@ function TreeItem({ node, depth, selected, onSelect }: { node: TreeNode; depth: 
         )}
       </div>
       {open && hasChildren && node.children!.map((child, i) => (
-        <TreeItem key={i} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} />
+        <TreeItem key={i} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} parentHost={currentHost} />
       ))}
     </>
   );
@@ -88,6 +106,7 @@ export function Sitemap() {
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [detailTab, setDetailTab] = useState<'requests' | 'issues'>('requests');
   const [filter, setFilter] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
 
   // Build sitemap from proxy traffic
   useEffect(() => {
@@ -145,33 +164,51 @@ export function Sitemap() {
 
   return (
     <div className="sitemap">
-      <div className="sitemap-tree">
+      <div className="sitemap-tree" style={{ flex: viewMode === 'map' ? 2 : 1 }}>
         <div className="sitemap-tree-header">
-          <span>Site Map</span>
-          <span style={{ color: 'var(--text-2)', fontWeight: 400, textTransform: 'none' }}>{totalEndpoints} endpoints</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>Site Map</span>
+            <span style={{ color: 'var(--text-2)', fontWeight: 400, textTransform: 'none' }}>{totalEndpoints} endpoints</span>
+          </div>
+          <div style={{ display: 'flex', gap: 2 }}>
+            <button className={`comparer-mode-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')} title="Tree View">
+              <ListTree size={12} />
+            </button>
+            <button className={`comparer-mode-btn ${viewMode === 'map' ? 'active' : ''}`} onClick={() => setViewMode('map')} title="Flow Map">
+              <GitMerge size={12} />
+            </button>
+          </div>
         </div>
-        <input
-          className="sitemap-tree-filter"
-          placeholder="Filter..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <div className="sitemap-tree-list">
-          {tree.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-3)', gap: 8 }}>
-              <Network size={24} />
-              <span style={{ fontSize: 11 }}>No sites discovered</span>
-              <span style={{ fontSize: 10 }}>Start the proxy and browse to populate</span>
+        {viewMode === 'list' ? (
+          <>
+            <input
+              className="sitemap-tree-filter"
+              placeholder="Filter..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <div className="sitemap-tree-list">
+              {tree.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-3)', gap: 8 }}>
+                  <Network size={24} />
+                  <span style={{ fontSize: 11 }}>No sites discovered</span>
+                  <span style={{ fontSize: 10 }}>Start the proxy and browse to populate</span>
+                </div>
+              ) : (
+                tree.map((node, i) => (
+                  <TreeItem key={i} node={node} depth={0} selected={selected} onSelect={handleSelect} />
+                ))
+              )}
             </div>
-          ) : (
-            tree.map((node, i) => (
-              <TreeItem key={i} node={node} depth={0} selected={selected} onSelect={handleSelect} />
-            ))
-          )}
-        </div>
+          </>
+        ) : (
+          <div style={{ flex: 1, position: 'relative' }}>
+            <VisualMap tree={tree} onNodeSelect={handleSelect} />
+          </div>
+        )}
       </div>
 
-      <div className="sitemap-detail">
+      <div className="sitemap-detail" style={{ flex: 1 }}>
         {selectedNode ? (
           <>
             <div className="sitemap-detail-header">

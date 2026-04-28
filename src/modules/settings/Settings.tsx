@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search } from 'lucide-react';
+import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { useAppStore } from '../../stores';
 import './Settings.css';
 
 
@@ -86,16 +87,14 @@ type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance';
 
 
 const mcpTools = [
-  // HTTP
+  // HTTP & Codec
   { name: 'send_request', desc: 'Send HTTP request to any URL', category: 'http' },
-  { name: 'repeat_request', desc: 'Replay request with modifications (Repeater)', category: 'http' },
-  // Codec
-  { name: 'encode', desc: 'Encode data (Base64, URL, HTML, Hex)', category: 'codec' },
-  { name: 'decode', desc: 'Decode data (Base64, URL, HTML, Hex)', category: 'codec' },
+  { name: 'encode', desc: 'Encode data (Base64, URL, Hex)', category: 'codec' },
+  { name: 'decode', desc: 'Decode data (Base64, URL, Hex)', category: 'codec' },
   { name: 'hash', desc: 'Hash data (SHA-256, SHA-1, SHA-512, MD5)', category: 'codec' },
   { name: 'analyze_jwt', desc: 'Decode and validate JWT tokens', category: 'codec' },
   { name: 'smart_decode', desc: 'Auto-detect and decode encoding chains', category: 'codec' },
-  // Proxy
+  // Proxy (16 tools)
   { name: 'proxy_start', desc: 'Start the MITM proxy engine', category: 'proxy' },
   { name: 'proxy_stop', desc: 'Stop the proxy engine', category: 'proxy' },
   { name: 'proxy_status', desc: 'Get proxy engine status and stats', category: 'proxy' },
@@ -103,110 +102,55 @@ const mcpTools = [
   { name: 'proxy_get_traffic', desc: 'Get captured HTTP traffic history', category: 'traffic' },
   { name: 'proxy_search_traffic', desc: 'Search traffic by host, path, or status', category: 'traffic' },
   { name: 'proxy_clear_traffic', desc: 'Clear all captured traffic', category: 'traffic' },
-  { name: 'proxy_export_traffic', desc: 'Export traffic as JSON/CSV', category: 'traffic' },
+  { name: 'proxy_export_traffic', desc: 'Export traffic as JSON/HAR', category: 'traffic' },
   { name: 'proxy_add_match_replace', desc: 'Add match & replace rule for traffic', category: 'proxy' },
   { name: 'proxy_get_match_replace', desc: 'List match & replace rules', category: 'proxy' },
   { name: 'proxy_add_tls_passthrough', desc: 'Add TLS passthrough host', category: 'proxy' },
   { name: 'proxy_set_upstream', desc: 'Configure upstream proxy (HTTP/SOCKS5)', category: 'proxy' },
-  { name: 'proxy_get_websocket_messages', desc: 'Get WebSocket messages', category: 'proxy' },
-  { name: 'proxy_add_interception_rule', desc: 'Add request interception rule', category: 'proxy' },
-  { name: 'proxy_get_capabilities', desc: 'Get proxy feature capabilities', category: 'proxy' },
+  { name: 'proxy_get_websocket_messages', desc: 'Get captured WebSocket messages', category: 'proxy' },
+  { name: 'proxy_add_interception_rule', desc: 'Add selective interception rule', category: 'proxy' },
+  { name: 'proxy_get_capabilities', desc: 'List proxy feature capabilities', category: 'proxy' },
   { name: 'proxy_get_statistics', desc: 'Get runtime statistics', category: 'proxy' },
-  // Scanner
-  { name: 'scan_target', desc: 'Passive security scan (header/cookie audit)', category: 'scanner' },
-  { name: 'active_scan', desc: 'Full active scanner: auto-crawl → injection → tech fingerprint → info disclosure', category: 'scanner' },
-  { name: 'full_auto_scan', desc: 'Full pipeline: recon → crawl → audit → report', category: 'scanner' },
-  { name: 'custom_attack', desc: 'AI-driven custom payload injection with differential analysis', category: 'scanner' },
-  // Intruder
-  { name: 'generate_payload', desc: 'Generate fuzzing payloads (wordlists)', category: 'attack' },
-  { name: 'fuzz_request', desc: 'Launch Intruder attack with payloads', category: 'attack' },
-  { name: 'process_payload', desc: 'Encode/decode/hash/transform payloads', category: 'attack' },
-  { name: 'grep_extract', desc: 'Regex extraction from responses', category: 'attack' },
-  // Recon & Discovery
-  { name: 'crawl_target', desc: 'Crawl website: follow links, extract forms/scripts', category: 'recon' },
-  { name: 'discover_subdomains', desc: 'Enumerate subdomains (DNS + crt.sh)', category: 'recon' },
-  { name: 'discover_content', desc: 'Directory/file brute-force (like ffuf)', category: 'recon' },
-  { name: 'analyze_target', desc: 'Tech detection, WAF fingerprinting, headers', category: 'recon' },
-  { name: 'find_secrets', desc: 'Find leaked API keys, tokens, passwords', category: 'recon' },
-  // Exploit Tools
-  { name: 'test_auth_bypass', desc: 'Test IDOR & auth bypass vulnerabilities', category: 'exploit' },
-  { name: 'detect_smuggling', desc: 'HTTP request smuggling detection', category: 'exploit' },
-  { name: 'test_open_redirect', desc: 'Open redirect bypass techniques', category: 'exploit' },
-  { name: 'generate_csrf_poc', desc: 'Generate CSRF proof-of-concept HTML', category: 'exploit' },
-  // Browser
-  { name: 'browser_navigate', desc: 'Open URL in WonderBrowser, get page content', category: 'browser' },
-  // Analysis
-  { name: 'inspect_message', desc: 'Parse HTTP headers, params, cookies', category: 'tools' },
-  { name: 'analyze_tokens', desc: 'Shannon entropy + FIPS analysis', category: 'tools' },
-  { name: 'compare_data', desc: 'LCS diff between two texts', category: 'tools' },
-  // Session & Scope
+  // Browser & Session
+  { name: 'browser_navigate', desc: 'Launch/navigate Chromium via CDP', category: 'browser' },
+  { name: 'browser_execute_js', desc: 'Execute JavaScript in browser via CDP', category: 'browser' },
+  { name: 'session_from_browser', desc: 'Extract cookies, localStorage from browser', category: 'session' },
   { name: 'session_manage', desc: 'Cookie jar, macros, session rules', category: 'session' },
-  { name: 'scope_manage', desc: 'Define target scope (include/exclude)', category: 'session' },
-  // Reporting
-  { name: 'generate_report', desc: 'Generate HTML/JSON vulnerability reports', category: 'report' },
-  // Logger & Organizer
-  { name: 'query_logs', desc: 'Query and filter request logs', category: 'tools' },
-  { name: 'organize_findings', desc: 'Manage finding collections', category: 'tools' },
-  // WebSocket
-  { name: 'websocket_edit', desc: 'Modify and replay WebSocket frames', category: 'websocket' },
-  // OAST / Collaborator (Blind Vulnerability Detection)
-  { name: 'oast_generate_payload', desc: 'Generate blind vuln payloads with DNS/HTTP callbacks (Burp Collaborator)', category: 'oast' },
+  { name: 'websocket_connect', desc: 'WebSocket connect, send, receive, close', category: 'websocket' },
+  // Recon & Discovery
+  { name: 'crawl_target', desc: 'BFS web crawler — pages, forms, scripts, emails', category: 'recon' },
+  { name: 'discover_subdomains', desc: 'DNS bruteforce + crt.sh subdomain enum', category: 'recon' },
+  { name: 'discover_content', desc: 'Directory/file bruteforce (dirbusting)', category: 'recon' },
+  { name: 'find_secrets', desc: 'Scan for leaked API keys, tokens, passwords', category: 'recon' },
+  { name: 'dns_resolve', desc: 'DNS lookup with CDN detection + origin probing', category: 'recon' },
+  { name: 'js_link_finder', desc: 'Extract endpoints & secrets from JS files', category: 'recon' },
+  { name: 'graphql_introspect', desc: 'GraphQL schema extraction via introspection', category: 'recon' },
+  // OAST (Blind Vulnerability Detection)
+  { name: 'oast_generate_payload', desc: 'Generate blind vuln payloads (DNS/HTTP callbacks)', category: 'oast' },
   { name: 'oast_poll_interactions', desc: 'Poll for OAST callback interactions', category: 'oast' },
   { name: 'oast_start_server', desc: 'Start OAST HTTP callback server', category: 'oast' },
-  { name: 'oast_get_payloads', desc: 'List generated OAST payloads', category: 'oast' },
-  // HTTP/2
-  { name: 'h2_send_request', desc: 'Send HTTP/2 request with pseudo-headers', category: 'http' },
-  { name: 'h2_detect_support', desc: 'Detect HTTP/2 protocol support', category: 'http' },
-  { name: 'h2_translate', desc: 'Translate between HTTP/1.1 and HTTP/2 formats', category: 'http' },
-  // DOM Invader
-  { name: 'dom_invader', desc: 'Headless DOM XSS detection — sink/source analysis + reflection testing', category: 'exploit' },
-  // OAST Extended
-  { name: 'oast_start_dns_server', desc: 'Start DNS callback server for blind OOB detection', category: 'oast' },
-  { name: 'oast_start_smtp_server', desc: 'Start SMTP callback server for email-based blind vulns', category: 'oast' },
-  { name: 'collaborator_everywhere', desc: 'Auto-inject OAST payloads into 14+ HTTP headers', category: 'oast' },
-  // mTLS
-  { name: 'mtls_send_request', desc: 'Send request with client certificate (mTLS)', category: 'http' },
-  // WebSocket Advanced
-  { name: 'websocket_advanced', desc: 'WS match & replace rules, frame injection, binary editing', category: 'websocket' },
-  // Bambda Filtering
-  { name: 'bambda_filter', desc: 'Custom traffic filter expressions (Bambda-style)', category: 'tools' },
-  // Advanced Pentesting
-  { name: 'raw_tcp_send', desc: 'Raw TCP/TLS byte-level socket access with chunked sending', category: 'exploit' },
-  { name: 'smuggling_send', desc: 'HTTP Request Smuggling — same-connection pipelining with timing', category: 'exploit' },
-  { name: 'timing_attack', desc: 'Statistical differential timing analysis (t-test, Welch)', category: 'exploit' },
-  { name: 'browser_execute_js', desc: 'Execute JavaScript in browser context via CDP', category: 'exploit' },
-  { name: 'websocket_connect', desc: 'Full WebSocket lifecycle — connect, send, receive, close', category: 'websocket' },
-  { name: 'session_from_browser', desc: 'Capture browser session (cookies, localStorage) for tools', category: 'session' },
-  { name: 'oast_verify', desc: 'Self-testing OAST callback server with interaction logging', category: 'oast' },
-  // Advanced Reconnaissance & Exploitation
-  { name: 'dns_resolve', desc: 'DNS lookup with CDN detection + origin IP discovery', category: 'recon' },
-  { name: 'race_request', desc: 'Barrier-synchronized parallel HTTP for race condition testing', category: 'exploit' },
-  // HTTP/2 Smuggling
-  { name: 'h2_detect_support', desc: 'Detect HTTP/2 support via ALPN negotiation', category: 'recon' },
-  { name: 'h2_send_request', desc: 'Send HTTP/2 requests with pseudo-headers', category: 'http' },
-  { name: 'h2_translate', desc: 'Translate between H1 and H2 request formats', category: 'codec' },
+  { name: 'oast_start_dns_server', desc: 'Start DNS callback server', category: 'oast' },
+  { name: 'oast_start_smtp_server', desc: 'Start SMTP callback server', category: 'oast' },
+  { name: 'oast_verify', desc: 'Self-test OAST callback chain', category: 'oast' },
   // OSINT (Zero API Keys)
-  { name: 'crtsh_search', desc: 'Certificate Transparency subdomain enumeration via crt.sh', category: 'osint' },
-  { name: 'wayback_lookup', desc: 'Wayback Machine historical URL discovery (CDX API)', category: 'osint' },
-  { name: 'whois_lookup', desc: 'RDAP/WHOIS domain & IP registration lookup', category: 'osint' },
-  { name: 'asn_lookup', desc: 'ASN info via Team Cymru DNS + RDAP (no API key)', category: 'osint' },
-  { name: 'favicon_hash', desc: 'Favicon MurmurHash3 for origin IP discovery', category: 'osint' },
-  { name: 'discover_parameters', desc: 'Hidden parameter discovery via response differential', category: 'osint' },
-  { name: 'graphql_introspect', desc: 'GraphQL schema extraction via introspection query', category: 'osint' },
-  { name: 'js_link_finder', desc: 'Extract endpoints & secrets from JavaScript files', category: 'osint' },
-  { name: 'reverse_ip_lookup', desc: 'PTR DNS + virtual host discovery (no API key)', category: 'osint' },
-  // Nuclei Template Engine
-  { name: 'template_list', desc: 'List/filter Nuclei templates by category, severity, tags', category: 'nuclei' },
-  { name: 'template_search', desc: 'Full-text search across all Nuclei vulnerability templates', category: 'nuclei' },
-  { name: 'template_scan', desc: 'Run Nuclei templates against a target with matcher engine', category: 'nuclei' },
+  { name: 'crtsh_search', desc: 'Certificate Transparency via crt.sh', category: 'osint' },
+  { name: 'wayback_lookup', desc: 'Wayback Machine historical URL discovery', category: 'osint' },
+  { name: 'whois_lookup', desc: 'RDAP/WHOIS domain & IP lookup', category: 'osint' },
+  { name: 'asn_lookup', desc: 'ASN lookup via Team Cymru DNS + RDAP', category: 'osint' },
+  { name: 'favicon_hash', desc: 'Favicon MurmurHash3 for Shodan/FOFA', category: 'osint' },
+  { name: 'reverse_ip_lookup', desc: 'PTR DNS reverse lookup', category: 'osint' },
+  // Advanced
+  { name: 'raw_tcp_send', desc: 'Raw TCP/TLS socket for HTTP smuggling', category: 'exploit' },
+  { name: 'mtls_send_request', desc: 'HTTP with mutual TLS client certificate', category: 'http' },
+  { name: 'race_request', desc: 'Barrier-sync parallel requests (race conditions)', category: 'exploit' },
+  { name: 'h2_send_request', desc: 'Send HTTP/2 request', category: 'http' },
+  { name: 'bambda_filter', desc: 'Custom traffic filter expressions', category: 'tools' },
 ];
 
 const categoryColors: Record<string, string> = {
   http: '#3b82f6', codec: '#8b5cf6', proxy: '#06b6d4', traffic: '#0ea5e9',
-  scanner: '#ef4444', attack: '#f59e0b', browser: '#22c55e', tools: '#64748b',
-  session: '#ec4899', report: '#14b8a6', websocket: '#a855f7',
-  recon: '#f97316', exploit: '#dc2626', oast: '#e11d48',
-  osint: '#10b981', nuclei: '#f43f5e',
+  browser: '#22c55e', tools: '#64748b', session: '#ec4899', websocket: '#a855f7',
+  recon: '#f97316', exploit: '#dc2626', oast: '#e11d48', osint: '#10b981',
 };
 
 // ── IDE Definitions ─────────────────────────────────────────────────
@@ -265,6 +209,7 @@ function generateMcpConfigForIde(port: string, configType: string): string {
 }
 
 export function Settings() {
+  const { appearance, updateAppearance } = useAppStore();
   const [tab, setTab] = useState<SettingsTab>('mcp');
   const [mcpRunning, setMcpRunning] = useState(false);
   const [mcpPort, setMcpPort] = useState('3100');
@@ -272,33 +217,43 @@ export function Settings() {
   const [toolFilter, setToolFilter] = useState('');
   const [mcpError, setMcpError] = useState('');
 
-  // Check MCP status on mount + auto-start
+  // Check MCP status on mount
   useEffect(() => {
-    (async () => {
+    const checkStatus = async () => {
       try {
         const running = await invoke<boolean>('mcp_status');
         setMcpRunning(running);
         if (!running) {
+          // Server didn't auto-start, try starting manually
           try {
             await invoke('mcp_start', { port: parseInt(mcpPort) });
             setMcpRunning(true);
-            console.log('[MCP] Auto-started on port', mcpPort);
+            console.log('[MCP] Started on port', mcpPort);
           } catch (startErr: any) {
             const errStr = String(startErr);
-            // Port already in use = likely already running from previous session
             if (errStr.includes('10048') || errStr.includes('already') || errStr.includes('in use')) {
-              setMcpRunning(true); // Treat as running
-              console.log('[MCP] Port already bound, treating as running');
+              // Port bound = likely running from app startup
+              setMcpRunning(true);
+              setMcpError('');
             } else {
-              console.error('[MCP] Auto-start failed:', startErr);
+              console.error('[MCP] Start failed:', startErr);
               setMcpError(errStr);
             }
           }
         }
       } catch (e: any) {
         console.error('[MCP] Status check error:', e);
+        // Fallback: try to reach the HTTP endpoint directly
+        try {
+          const resp = await fetch(`http://127.0.0.1:${mcpPort}/mcp`);
+          if (resp.ok) {
+            setMcpRunning(true);
+            setMcpError('');
+          }
+        } catch { /* server truly not reachable */ }
       }
-    })();
+    };
+    checkStatus();
   }, []);
 
   const filteredTools = mcpTools.filter(t =>
@@ -452,6 +407,8 @@ export function Settings() {
               </div>
               <button className="settings-toggle on" onClick={() => {}} />
             </div>
+            
+            <GlobalScopeSettings />
           </div>
           </>
         )}
@@ -462,31 +419,78 @@ export function Settings() {
 
         {tab === 'appearance' && (
           <div className="settings-section">
-            <h2>Appearance</h2>
-            <p>Customize the interface</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+              <Palette size={16} />
+              <h2 style={{ margin: 0 }}>Appearance</h2>
+            </div>
+            <p style={{ color: 'var(--text-2)', fontSize: 11, marginBottom: 24 }}>Customize the visual interface of the suite to match your working style.</p>
 
-            <div className="settings-row">
+            <div className="settings-row" style={{ alignItems: 'flex-start' }}>
               <div className="settings-label">
-                Font size
-                <span>Base font size for the UI</span>
+                Color Theme
+                <span>Choose your preferred color palette</span>
               </div>
-              <input className="settings-input" defaultValue="12" style={{ minWidth: 60 }} />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[
+                  { id: 'dark', label: 'Dark', icon: <Moon size={20} />, bg: '#1a1a1a', border: '#333' },
+                  { id: 'light', label: 'Light', icon: <Sun size={20} />, bg: '#f8f9fa', border: '#dee2e6' },
+                  { id: 'hacker', label: 'Hacker', icon: <Terminal size={20} />, bg: '#000000', border: '#39ff1440' }
+                ].map(t => (
+                  <div key={t.id} 
+                       onClick={() => updateAppearance({ theme: t.id })}
+                       style={{
+                         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, 
+                         padding: '12px 16px', background: t.bg, border: `2px solid ${appearance.theme === t.id ? 'var(--accent)' : t.border}`,
+                         borderRadius: 'var(--radius-m)', cursor: 'pointer', transition: 'var(--transition)',
+                         minWidth: 80, filter: appearance.theme !== t.id ? 'opacity(0.6)' : 'none'
+                       }}>
+                    <div style={{ color: t.id === 'light' ? '#000' : (t.id === 'hacker' ? '#39ff14' : '#fff') }}>{t.icon}</div>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: t.id === 'light' ? '#000' : (t.id === 'hacker' ? '#39ff14' : '#fff') }}>{t.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+              <div className="settings-label">
+                Accent Color
+                <span>Primary color for active states and highlights</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {['#e8a145', '#5b9fd6', '#a78bda', '#4ec58a', '#d95757', '#e8873c', '#56c5c5'].map(color => (
+                  <button key={color} onClick={() => updateAppearance({ accentColor: color })}
+                          style={{
+                            width: 28, height: 28, borderRadius: '50%', background: color, 
+                            border: `2px solid ${appearance.accentColor === color ? 'white' : 'transparent'}`,
+                            cursor: 'pointer', outline: 'none', transition: 'transform 0.15s',
+                            transform: appearance.accentColor === color ? 'scale(1.15)' : 'scale(1)',
+                            boxShadow: appearance.accentColor === color ? `0 0 10px ${color}80` : 'none'
+                          }} />
+                ))}
+              </div>
             </div>
 
             <div className="settings-row">
               <div className="settings-label">
-                Editor font size
-                <span>Font size for code editors</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><ZoomIn size={12} /> UI Zoom Scale</div>
+                <span>Zoom the entire interface in (%)</span>
               </div>
-              <input className="settings-input" defaultValue="11" style={{ minWidth: 60 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <input type="range" min="80" max="130" step="5" 
+                       value={appearance.uiScale} 
+                       onChange={(e) => updateAppearance({ uiScale: parseInt(e.target.value) })}
+                       style={{ width: 150 }} />
+                <span style={{ fontSize: 11, fontFamily: 'monospace', width: 35 }}>{appearance.uiScale}%</span>
+              </div>
             </div>
 
             <div className="settings-row">
               <div className="settings-label">
-                Compact mode
-                <span>Reduce padding and spacing</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LayoutGrid size={12} /> Compact Mode</div>
+                <span>Reduce margins and padding to fit more data</span>
               </div>
-              <button className="settings-toggle" onClick={() => {}} />
+              <button className={`settings-toggle ${appearance.compactMode ? 'on' : ''}`} 
+                      onClick={() => updateAppearance({ compactMode: !appearance.compactMode })} />
             </div>
           </div>
         )}
@@ -845,7 +849,7 @@ function ProxySettings({ proxyPort, onPortChange }: { proxyPort: string; onPortC
     })();
   }, []);
 
-  const startProxy = async () => { try { await invoke('proxy_start', { port: parseInt(proxyPort) }); setProxyRunning(true); } catch (e) { console.error(e); } };
+  const startProxy = async () => { try { await invoke('proxy_start', { port: parseInt(proxyPort) }); setProxyRunning(true); } catch (e) { console.error(e); alert(e); } };
   const stopProxy = async () => { try { await invoke('proxy_stop'); setProxyRunning(false); } catch (e) { console.error(e); } };
   const copyCaCert = () => { if (caCert?.pem) { navigator.clipboard.writeText(caCert.pem); setCopied(true); setTimeout(() => setCopied(false), 2000); } };
 
@@ -1146,6 +1150,60 @@ function GeneralSystemInfo() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function GlobalScopeSettings() {
+  const { globalScope, addScope, removeScope } = useAppStore();
+  const [newScope, setNewScope] = useState('');
+
+  const handleAdd = () => {
+    if (newScope.trim()) {
+      addScope(newScope.trim());
+      setNewScope('');
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-0)' }}>
+      <h3>Global Target Scope</h3>
+      <p style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 12 }}>
+        Define URL patterns or hostnames that are in-scope for your assessment. 
+        When populated, you can filter Traffic, Intruders, and Scanners to only show in-scope items.
+      </p>
+      
+      {globalScope.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+          {globalScope.map((scope) => (
+            <div key={scope} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '6px 12px', background: 'var(--bg-0)', border: '1px solid var(--border-0)',
+              borderRadius: 'var(--radius-s)', fontSize: 11, fontFamily: 'monospace'
+            }}>
+              <span style={{ color: 'var(--text-0)' }}>{scope}</span>
+              <button 
+                onClick={() => removeScope(scope)}
+                style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input 
+          className="settings-input" 
+          placeholder="e.g. *.example.com or regex" 
+          value={newScope} 
+          onChange={(e) => setNewScope(e.target.value)} 
+          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+          style={{ flex: 1 }}
+        />
+        <button className="mcp-btn start" onClick={handleAdd}>Add Scope</button>
+      </div>
     </div>
   );
 }

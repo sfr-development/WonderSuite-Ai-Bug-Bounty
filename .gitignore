@@ -11,6 +11,7 @@ src-tauri/target
 # env / local
 *.local
 .env
+.env.*
 
 # logs
 *.log
@@ -30,3 +31,11 @@ yarn-debug.log*
 # os
 .DS_Store
 Thumbs.db
+
+# temp / debug artifacts
+curl_err.txt
+out.txt
+null
+tree.txt
+src-tauri/tree.txt
+*.bak

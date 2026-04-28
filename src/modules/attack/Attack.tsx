@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Crosshair, Play, Square, Pause, Download, Plus, Trash2, Zap, Target, Hash, Key, ListPlus } from 'lucide-react';
+import { Crosshair, Play, Square, Pause, Download, Plus, Trash2, Zap, Target, Hash, Key, ListPlus, Timer } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import './Attack.css';
 
@@ -18,7 +18,7 @@ interface AttackResult {
   response_headers: string; response_body_preview: string;
 }
 
-type Tab = 'positions' | 'payloads' | 'options' | 'results';
+type Tab = 'positions' | 'payloads' | 'options' | 'results' | 'turbo';
 type AttackType = 'sniper' | 'battering_ram' | 'pitchfork' | 'cluster_bomb';
 
 const ATTACK_DESCRIPTIONS: Record<AttackType, string> = {
@@ -60,6 +60,17 @@ export function Attack() {
   const [threads] = useState(1);
   const [throttleMs, setThrottleMs] = useState(0);
   const [followRedirects, setFollowRedirects] = useState(true);
+
+  // ── Turbo Intruder State ──
+  const [turboUrl, setTurboUrl] = useState('https://example.com/api/action');
+  const [turboMethod, setTurboMethod] = useState('POST');
+  const [turboBody, setTurboBody] = useState('');
+  const [turboHeaders, setTurboHeaders] = useState('Content-Type: application/json');
+  const [turboCount, setTurboCount] = useState(10);
+  const [turboTimeout, setTurboTimeout] = useState(5000);
+  const [turboRunning, setTurboRunning] = useState(false);
+  const [turboResults, setTurboResults] = useState<any[]>([]);
+  const [turboSummary, setTurboSummary] = useState<any>(null);
 
 
   const [attackId, setAttackId] = useState<string | null>(null);
@@ -242,6 +253,47 @@ export function Attack() {
     const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   };
 
+  // ── Turbo Intruder Logic ──
+  const fireTurbo = async () => {
+    setTurboRunning(true);
+    setTurboResults([]);
+    setTurboSummary(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const headerObj: Record<string, string> = {};
+      turboHeaders.split('\n').forEach(line => {
+        const idx = line.indexOf(':');
+        if (idx > 0) headerObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      });
+      const result: any = await invoke('mcp_call', {
+        request: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'race_request', arguments: {
+            repeat_count: turboCount,
+            gate_timeout_ms: turboTimeout,
+            template_request: {
+              method: turboMethod, url: turboUrl,
+              body: turboBody || undefined,
+              headers: Object.keys(headerObj).length > 0 ? headerObj : undefined,
+            },
+          }},
+        }),
+      });
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      const content = parsed?.result?.content?.[0]?.text;
+      if (content) {
+        const data = JSON.parse(content);
+        setTurboResults(data.results || []);
+        setTurboSummary(data);
+      }
+    } catch (err: any) {
+      console.error('Turbo failed:', err);
+      setTurboSummary({ error: err?.toString() });
+    } finally {
+      setTurboRunning(false);
+    }
+  };
+
   const sortedResults = [...results].sort((a: any, b: any) => {
     const av = a[sortKey]; const bv = b[sortKey];
     const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv));
@@ -311,14 +363,16 @@ export function Attack() {
       )}
 
       <div className="attack-tabs">
-        {(['positions', 'payloads', 'options', 'results'] as Tab[]).map(t => (
-          <button key={t} className={`attack-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+        {(['positions', 'payloads', 'options', 'results', 'turbo'] as Tab[]).map(t => (
+          <button key={t} className={`attack-tab ${tab === t ? 'active' : ''} ${t === 'turbo' ? 'turbo-tab' : ''}`} onClick={() => setTab(t)}>
             {t === 'positions' && <Target size={10} />}
             {t === 'payloads' && <ListPlus size={10} />}
             {t === 'options' && <Zap size={10} />}
             {t === 'results' && <Hash size={10} />}
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'turbo' && <Timer size={10} />}
+            {t === 'turbo' ? 'Turbo Intruder' : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === 'results' && results.length > 0 && <span className="attack-tab-badge">{results.length}</span>}
+            {t === 'turbo' && turboResults.length > 0 && <span className="attack-tab-badge">{turboResults.length}</span>}
           </button>
         ))}
       </div>
@@ -537,6 +591,116 @@ export function Attack() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {tab === 'turbo' && (
+          <div className="attack-panel turbo-panel">
+            <div className="turbo-header">
+              <Timer size={14} className="turbo-icon" />
+              <span className="turbo-title">Turbo Intruder — Race Condition Tester</span>
+              <span className="turbo-desc">Fire N identical requests simultaneously using barrier synchronization. All requests release at the same microsecond to detect TOCTOU vulnerabilities.</span>
+            </div>
+
+            <div className="turbo-config">
+              <div className="turbo-row">
+                <div className="turbo-field">
+                  <label>Method</label>
+                  <select value={turboMethod} onChange={e => setTurboMethod(e.target.value)} className="attack-type-select">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="PATCH">PATCH</option>
+                  </select>
+                </div>
+                <div className="turbo-field" style={{ flex: 1 }}>
+                  <label>Target URL</label>
+                  <input type="text" value={turboUrl} onChange={e => setTurboUrl(e.target.value)}
+                    placeholder="https://target.com/api/transfer" className="turbo-input" />
+                </div>
+              </div>
+
+              <div className="turbo-row">
+                <div className="turbo-field">
+                  <label>Concurrent Requests</label>
+                  <input type="number" value={turboCount} onChange={e => setTurboCount(Math.min(50, Math.max(2, Number(e.target.value))))}
+                    min={2} max={50} className="turbo-input turbo-small" />
+                </div>
+                <div className="turbo-field">
+                  <label>Timeout (ms)</label>
+                  <input type="number" value={turboTimeout} onChange={e => setTurboTimeout(Number(e.target.value))}
+                    min={1000} max={30000} step={1000} className="turbo-input turbo-small" />
+                </div>
+              </div>
+
+              <div className="turbo-field">
+                <label>Headers (one per line, Key: Value)</label>
+                <textarea value={turboHeaders} onChange={e => setTurboHeaders(e.target.value)}
+                  className="turbo-textarea" rows={3} spellCheck={false}
+                  placeholder={"Content-Type: application/json\nAuthorization: Bearer token123"} />
+              </div>
+
+              <div className="turbo-field">
+                <label>Request Body</label>
+                <textarea value={turboBody} onChange={e => setTurboBody(e.target.value)}
+                  className="turbo-textarea" rows={4} spellCheck={false}
+                  placeholder='{"amount": 100, "to": "attacker"}' />
+              </div>
+
+              <button className={`turbo-fire ${turboRunning ? 'running' : ''}`}
+                onClick={fireTurbo} disabled={turboRunning || !turboUrl.trim()}>
+                {turboRunning ? <><Square size={11} /> Running...</> : <><Zap size={11} /> Fire {turboCount} Requests</>}
+              </button>
+            </div>
+
+            {turboSummary && (
+              <div className="turbo-summary">
+                <div className={`turbo-indicator ${turboSummary.all_same_status === false ? 'race-detected' : 'no-race'}`}>
+                  {turboSummary.race_indicator || turboSummary.error || 'Completed'}
+                </div>
+                {!turboSummary.error && (
+                  <div className="turbo-stats">
+                    <span>Total: <strong>{turboSummary.total_ms}ms</strong></span>
+                    <span>Fastest: <strong>{turboSummary.fastest_ms}ms</strong></span>
+                    <span>Slowest: <strong>{turboSummary.slowest_ms}ms</strong></span>
+                    <span>Spread: <strong>{turboSummary.timing_spread_ms}ms</strong></span>
+                    <span>Codes: <strong>{turboSummary.status_codes?.join(', ')}</strong></span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {turboResults.length > 0 && (
+              <div className="turbo-results">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Status</th>
+                      <th>Response (ms)</th>
+                      <th>Barrier Wait (µs)</th>
+                      <th>Body Length</th>
+                      <th>Body Preview</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {turboResults.map((r, i) => (
+                      <tr key={i} className={r.error ? 'turbo-error-row' : ''}>
+                        <td className="attack-dim">{r.index ?? i}</td>
+                        <td><span className={`attack-status-badge code-${Math.floor((r.status || 0) / 100)}`}>{r.status || '—'}</span></td>
+                        <td>{r.response_ms ?? '—'}ms</td>
+                        <td className="attack-dim">{r.barrier_wait_us ?? '—'}µs</td>
+                        <td>{r.body_length ?? '—'}</td>
+                        <td className="turbo-preview">{r.body_preview?.slice(0, 120) || ''}</td>
+                        <td className="attack-error">{r.error || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

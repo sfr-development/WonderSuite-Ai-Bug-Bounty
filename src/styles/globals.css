@@ -57,6 +57,56 @@
   --transition: 150ms ease;
 }
 
+:root.theme-light {
+  --bg-0: #f8f9fa;
+  --bg-1: #ffffff;
+  --bg-2: #f1f3f5;
+  --bg-3: #e9ecef;
+  --bg-4: #dee2e6;
+
+  --text-0: #212529;
+  --text-1: #495057;
+  --text-2: #868e96;
+  --text-3: #adb5bd;
+
+  --border-0: #dee2e6;
+  --border-1: #ced4da;
+  --border-2: #adb5bd;
+  --border: #dee2e6;
+  --bg-hover: #e9ecef;
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.1);
+}
+
+:root.theme-hacker {
+  --bg-0: #000000;
+  --bg-1: #0a0a0a;
+  --bg-2: #141414;
+  --bg-3: #1f1f1f;
+  --bg-4: #292929;
+
+  --text-0: #39ff14;
+  --text-1: #32cd32;
+  --text-2: #228b22;
+  --text-3: #006400;
+
+  --border-0: #39ff1440;
+  --border-1: #39ff1460;
+  --border-2: #39ff14A0;
+}
+
+:root.compact-mode {
+  --space-xs: 2px;
+  --space-s: 4px;
+  --space-m: 8px;
+  --space-l: 12px;
+  --space-xl: 18px;
+  --space-2xl: 24px;
+  --statusbar-h: 20px;
+  --toolbar-h: 30px;
+}
+
 * {
   margin: 0;
   padding: 0;

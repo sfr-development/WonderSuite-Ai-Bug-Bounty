@@ -23,6 +23,7 @@ import {
   Fingerprint,
   PanelLeftClose,
   PanelLeftOpen,
+  ChevronRight,
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import type { ModuleId } from '../../types';
@@ -84,14 +85,32 @@ const navGroups: NavGroup[] = [
 export function Sidebar() {
   const { activeModule, setActiveModule } = useAppStore();
   const [expanded, setExpanded] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  const toggleGroup = (title: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  };
+
+  // Auto-expand group if active module is inside a collapsed group
+  const activeGroup = navGroups.find(g => g.items.some(i => i.id === activeModule));
 
   return (
     <aside className={`sidebar ${expanded ? 'expanded' : ''}`}>
       {/* Logo + toggle */}
       <div className="sidebar-header">
         <div className="sidebar-logo">
-          <img src="/wondersuite_logo.png" alt="WS" style={{ width: 22, height: 22, objectFit: 'contain' }} />
-          {expanded && <span className="sidebar-brand">WonderSuite</span>}
+          {expanded && (
+            <img
+              src="/wondersuite_logo.png"
+              alt="WonderSuite"
+              className="sidebar-logo-img"
+            />
+          )}
         </div>
         <button className="sidebar-toggle" onClick={() => setExpanded(!expanded)} title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}>
           {expanded ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
@@ -100,24 +119,38 @@ export function Sidebar() {
 
       {/* Scrollable navigation */}
       <nav className="sidebar-nav">
-        {navGroups.map((group) => (
-          <div key={group.title} className="sidebar-group">
-            {expanded && <div className="sidebar-group-title">{group.title}</div>}
-            {group.items.map(({ id, icon: Icon, label, shortcut }) => (
-              <button
-                key={id}
-                className={`sidebar-item ${activeModule === id ? 'active' : ''}`}
-                onClick={() => setActiveModule(id)}
-                data-tooltip={!expanded ? `${label}${shortcut ? `  (${shortcut})` : ''}` : undefined}
-                title={expanded ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined}
-              >
-                <Icon size={16} strokeWidth={1.8} />
-                {expanded && <span className="sidebar-label">{label}</span>}
-                {expanded && shortcut && <span className="sidebar-shortcut">{shortcut}</span>}
-              </button>
-            ))}
-          </div>
-        ))}
+        {navGroups.map((group) => {
+          const isCollapsed = collapsedGroups.has(group.title);
+          const hasActiveItem = activeGroup?.title === group.title;
+
+          return (
+            <div key={group.title} className="sidebar-group">
+              {expanded && (
+                <button
+                  className={`sidebar-group-title ${isCollapsed ? 'collapsed' : ''} ${hasActiveItem ? 'has-active' : ''}`}
+                  onClick={() => toggleGroup(group.title)}
+                >
+                  <ChevronRight size={10} className={`sidebar-group-chevron ${isCollapsed ? '' : 'open'}`} />
+                  {group.title}
+                  {isCollapsed && hasActiveItem && <span className="sidebar-group-dot" />}
+                </button>
+              )}
+              {(!expanded || !isCollapsed) && group.items.map(({ id, icon: Icon, label, shortcut }) => (
+                <button
+                  key={id}
+                  className={`sidebar-item ${activeModule === id ? 'active' : ''}`}
+                  onClick={() => setActiveModule(id)}
+                  data-tooltip={!expanded ? `${label}${shortcut ? `  (${shortcut})` : ''}` : undefined}
+                  title={expanded ? `${label}${shortcut ? ` (${shortcut})` : ''}` : undefined}
+                >
+                  <Icon size={16} strokeWidth={1.8} />
+                  {expanded && <span className="sidebar-label">{label}</span>}
+                  {expanded && shortcut && <span className="sidebar-shortcut">{shortcut}</span>}
+                </button>
+              ))}
+            </div>
+          );
+        })}
       </nav>
 
       {/* Settings at bottom */}

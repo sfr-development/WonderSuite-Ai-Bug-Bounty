@@ -3,39 +3,86 @@ use crate::proxy::engine::ProxyEngine;
 use crate::proxy::state::*;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
+// ─── Global Proxy State Accessor (for MCP handlers) ────────────────────────
+// MCP tool handlers run outside Tauri's managed state system.
+// This OnceLock stores a clone of the Arc<ProxyState> at startup so handlers
+// can access the live proxy state directly via get_global_proxy_state().
+static GLOBAL_PROXY_STATE: std::sync::OnceLock<Arc<ProxyState>> = std::sync::OnceLock::new();
+
+// Full ProxyAppState access for MCP (needed for proxy start/stop with CA + engine)
+static GLOBAL_PROXY_APP_STATE: std::sync::OnceLock<Arc<ProxyAppState>> = std::sync::OnceLock::new();
+
+/// Returns a reference to the global proxy state, if initialized.
+pub fn get_global_proxy_state() -> Option<Arc<ProxyState>> {
+    GLOBAL_PROXY_STATE.get().cloned()
+}
+
+/// Returns a reference to the global proxy app state (with CA, cancel token).
+pub fn get_global_proxy_app_state() -> Option<Arc<ProxyAppState>> {
+    GLOBAL_PROXY_APP_STATE.get().cloned()
+}
+
+// Global CA for MCP proxy start
+static GLOBAL_CA: std::sync::OnceLock<Arc<ProxyCa>> = std::sync::OnceLock::new();
+// Global shutdown handle for MCP proxy stop
+static GLOBAL_SHUTDOWN: tokio::sync::OnceCell<tokio::sync::Mutex<Option<(tokio::task::JoinHandle<()>, CancellationToken)>>> = tokio::sync::OnceCell::const_new();
+
+pub fn get_global_ca() -> Option<Arc<ProxyCa>> {
+    GLOBAL_CA.get().cloned()
+}
+
+pub async fn get_or_init_global_shutdown() -> &'static tokio::sync::Mutex<Option<(tokio::task::JoinHandle<()>, CancellationToken)>> {
+    GLOBAL_SHUTDOWN.get_or_init(|| async { tokio::sync::Mutex::new(None) }).await
+}
 /// Tauri-managed proxy state.
 pub struct ProxyAppState {
     pub proxy_state: Arc<ProxyState>,
     pub ca: tokio::sync::Mutex<Option<Arc<ProxyCa>>>,
     pub shutdown_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub cancel_token: tokio::sync::Mutex<Option<CancellationToken>>,
 }
 
 impl ProxyAppState {
     pub fn new() -> Self {
         let ca = match ProxyCa::new() {
             Ok(ca) => {
-                println!("[Proxy] CA initialized successfully");
-                Some(Arc::new(ca))
+                println!("[Proxy] ✓ CA initialized (pure Rust, zero deps)");
+                Arc::new(ca)
             }
             Err(e) => {
-                eprintln!("[Proxy] CA init failed (HTTPS MITM disabled): {}", e);
-                eprintln!("[Proxy] Install OpenSSL and restart for full HTTPS interception");
-                None
+                eprintln!("[Proxy] CA init error: {} — retrying", e);
+                Arc::new(ProxyCa::new().expect("CA generation must succeed"))
             }
         };
+
+        // Auto-install CA into OS trust store in background (don't block startup)
+        let ca_clone = ca.clone();
+        std::thread::spawn(move || {
+            ca_clone.install_to_system_trust_store();
+        });
+
+        let proxy_state = ProxyState::new();
+
+        // Register globally so MCP handlers can access without Tauri State
+        let _ = GLOBAL_PROXY_STATE.set(proxy_state.clone());
+        let _ = GLOBAL_CA.set(ca.clone());
+
         Self {
-            proxy_state: ProxyState::new(),
-            ca: tokio::sync::Mutex::new(ca),
+            proxy_state,
+            ca: tokio::sync::Mutex::new(Some(ca)),
             shutdown_handle: tokio::sync::Mutex::new(None),
+            cancel_token: tokio::sync::Mutex::new(None),
         }
     }
 
-    async fn get_ca(&self) -> Result<Arc<ProxyCa>, String> {
+    async fn get_ca(&self) -> Arc<ProxyCa> {
         let guard = self.ca.lock().await;
-        guard.clone().ok_or_else(|| "CA not available. Install OpenSSL for HTTPS interception.".to_string())
+        guard.clone().expect("CA must be initialized")
     }
 }
+
 
 // ─── Core Proxy Commands ─────────────────────────────────────────────────────
 
@@ -49,8 +96,16 @@ pub async fn proxy_start(
         return Err("Proxy is already running".into());
     }
 
+    // Bind listener first, fail immediately if port is in use
+    let listener = match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            return Err(format!("Proxy-Port {} ist blockiert oder wird bereits verwendet: {}", port, e));
+        }
+    };
+
     let proxy_state = state.proxy_state.clone();
-    let ca = state.get_ca().await.map_err(|e| e.to_string())?;
+    let ca = state.get_ca().await;
 
     // Set up event channel for frontend
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ProxyEvent>();
@@ -64,28 +119,42 @@ pub async fn proxy_start(
         }
     });
 
-    // Spawn proxy engine
-    let engine = Arc::new(ProxyEngine::new(ca, proxy_state.clone()));
+    // Spawn proxy engine with the successfully bound listener
+    let cancel = CancellationToken::new();
+    let ps = proxy_state.clone();
+    let engine = Arc::new(ProxyEngine::new(ca, proxy_state.clone(), cancel.clone()));
     let handle = tokio::spawn(async move {
-        if let Err(e) = engine.run(port).await {
+        if let Err(e) = engine.run(listener).await {
             eprintln!("[Proxy] Engine error: {}", e);
+            ps.running.store(false, std::sync::atomic::Ordering::SeqCst);
         }
     });
 
     *state.shutdown_handle.lock().await = Some(handle);
+    *state.cancel_token.lock().await = Some(cancel);
 
-    Ok(format!("Proxy started on 127.0.0.1:{}", port))
+    Ok(format!("Proxy started successfully on port {}", port))
 }
 
 #[tauri::command]
 pub async fn proxy_stop(state: tauri::State<'_, ProxyAppState>) -> Result<String, String> {
-    state.proxy_state.running.store(false, std::sync::atomic::Ordering::SeqCst);
+    // Drain any pending intercepts first so requests don't hang
+    state.proxy_state.drain_pending_intercepts().await;
+    state.proxy_state.set_intercept(false);
+    state.proxy_state.set_response_intercept(false);
 
-    let mut handle = state.shutdown_handle.lock().await;
-    if let Some(h) = handle.take() {
-        h.abort();
+    // Signal graceful shutdown via CancellationToken
+    if let Some(cancel) = state.cancel_token.lock().await.take() {
+        cancel.cancel();
     }
 
+    // Wait for the task to finish (with timeout)
+    let mut handle = state.shutdown_handle.lock().await;
+    if let Some(h) = handle.take() {
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), h).await;
+    }
+
+    state.proxy_state.running.store(false, std::sync::atomic::Ordering::SeqCst);
     *state.proxy_state.event_tx.lock().await = None;
 
     Ok("Proxy stopped".into())
@@ -137,6 +206,13 @@ pub async fn proxy_toggle_intercept(
     state: tauri::State<'_, ProxyAppState>,
 ) -> Result<bool, String> {
     state.proxy_state.set_intercept(enabled);
+
+    // When intercept is toggled OFF, drain all pending requests so they
+    // don't hang forever waiting for a decision that will never come.
+    if !enabled {
+        state.proxy_state.drain_pending_intercepts().await;
+    }
+
     Ok(enabled)
 }
 
@@ -194,7 +270,7 @@ pub async fn proxy_get_pending(state: tauri::State<'_, ProxyAppState>) -> Result
 
 #[tauri::command]
 pub async fn proxy_get_ca_cert(state: tauri::State<'_, ProxyAppState>) -> Result<serde_json::Value, String> {
-    let ca = state.get_ca().await?;
+    let ca = state.get_ca().await;
     Ok(serde_json::json!({
         "pem": ca.ca_cert_pem(),
         "path": ca.ca_cert_path().to_string_lossy(),

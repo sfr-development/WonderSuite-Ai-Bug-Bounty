@@ -81,7 +81,7 @@ export function Scan() {
   const [sevFilter, setSevFilter] = useState<string>('all');
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { sendTo } = useAppStore();
+  const { sendTo, openContextMenu } = useAppStore();
 
   // Start active scan
   const startScan = useCallback(async () => {
@@ -175,6 +175,21 @@ export function Scan() {
       ? `${method} ${url} HTTP/1.1\n${finding.request_info.request_headers.join('\n')}${finding.request_info.request_body ? '\n\n' + finding.request_info.request_body : ''}`
       : `GET ${url} HTTP/1.1\nHost: ${new URL(url).hostname}`;
     sendTo('repeater', method, url, raw);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, finding: ScanFinding) => {
+    e.preventDefault();
+    const url = finding.request_info?.url || finding.url;
+    const method = finding.request_info?.method || 'GET';
+    const requestRaw = finding.request_info
+      ? `${method} ${url} HTTP/1.1\n${finding.request_info.request_headers.join('\n')}${finding.request_info.request_body ? '\n\n' + finding.request_info.request_body : ''}`
+      : `GET ${url} HTTP/1.1\nHost: ${new URL(url).hostname}`;
+    
+    const responseRaw = finding.request_info?.response_headers 
+      ? `HTTP/1.1 ${finding.request_info.response_status} OK\n${finding.request_info.response_headers.join('\n')}\n\n${finding.request_info.response_body_preview || ''}`
+      : undefined;
+
+    openContextMenu(e.clientX, e.clientY, { method, url, requestRaw, responseRaw });
   };
 
   useEffect(() => {
@@ -302,7 +317,8 @@ export function Scan() {
               <div className="scan-findings-list">
                 {filteredFindings.map(f => (
                   <div key={f.id} className={`scan-finding ${selectedFinding?.id === f.id ? 'selected' : ''}`}
-                    onClick={() => { setSelectedFinding(f); setShowEvidence(false); }}>
+                    onClick={() => { setSelectedFinding(f); setShowEvidence(false); }}
+                    onContextMenu={(e) => handleContextMenu(e, f)}>
                     <span className="scan-finding-sev" style={{ background: SEVERITY_COLORS[f.severity] }}>
                       {f.severity[0].toUpperCase()}
                     </span>

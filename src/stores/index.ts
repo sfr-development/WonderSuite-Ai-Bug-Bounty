@@ -1,24 +1,87 @@
 import { create } from 'zustand';
 import type { ModuleId, ReplayTab } from '../types';
 
+export interface ToastConfig {
+  id: string;
+  title: string;
+  message?: string;
+  type: 'success' | 'error' | 'info' | 'warning';
+}
+
 interface AppState {
   activeModule: ModuleId;
   setActiveModule: (id: ModuleId) => void;
   // Send to bridge
-  pendingSendTo: { tool: string; method: string; url: string; requestRaw: string } | null;
-  sendTo: (tool: string, method: string, url: string, requestRaw: string) => void;
+  pendingSendTo: { tool: string; method: string; url: string; requestRaw: string; responseRaw?: string; target?: 'left' | 'right' } | null;
+  sendTo: (tool: string, method: string, url: string, requestRaw: string, responseRaw?: string, target?: 'left' | 'right') => void;
   clearSendTo: () => void;
+  // Global Scope
+  globalScope: string[];
+  addScope: (pattern: string) => void;
+  removeScope: (pattern: string) => void;
+  isInScope: (url: string) => boolean;
+  // Context Menu
+  contextMenu: { isOpen: boolean; x: number; y: number; data: { method: string; url: string; requestRaw: string; responseRaw?: string } | null };
+  openContextMenu: (x: number, y: number, data: { method: string; url: string; requestRaw: string; responseRaw?: string }) => void;
+  closeContextMenu: () => void;
+  // Toasts
+  toasts: ToastConfig[];
+  addToast: (toast: Omit<ToastConfig, 'id'>) => void;
+  removeToast: (id: string) => void;
+  // Appearance
+  appearance: { theme: string; accentColor: string; uiScale: number; compactMode: boolean };
+  updateAppearance: (updates: Partial<{ theme: string; accentColor: string; uiScale: number; compactMode: boolean }>) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   activeModule: 'dashboard',
   setActiveModule: (id) => set({ activeModule: id }),
   pendingSendTo: null,
-  sendTo: (tool, method, url, requestRaw) => set({ 
+  sendTo: (tool, method, url, requestRaw, responseRaw, target) => set({ 
     activeModule: tool === 'repeater' ? 'replay' : tool === 'intruder' ? 'attack' : tool as ModuleId,
-    pendingSendTo: { tool, method, url, requestRaw },
+    pendingSendTo: { tool, method, url, requestRaw, responseRaw, target },
   }),
   clearSendTo: () => set({ pendingSendTo: null }),
+  
+  // Scope
+  globalScope: [],
+  addScope: (pattern) => set((s) => ({ globalScope: s.globalScope.includes(pattern) ? s.globalScope : [...s.globalScope, pattern] })),
+  removeScope: (pattern) => set((s) => ({ globalScope: s.globalScope.filter((p) => p !== pattern) })),
+  isInScope: (testUrl) => {
+    const scope = get().globalScope;
+    if (scope.length === 0) return true; // if no scope defined, everything is in-scope
+    try {
+      const urlObj = new URL(testUrl);
+      return scope.some((p) => {
+        if (p.startsWith('*.')) return urlObj.hostname.endsWith(p.slice(2));
+        return urlObj.hostname === p || urlObj.href.includes(p);
+      });
+    } catch {
+      return false;
+    }
+  },
+
+  // Context Menu
+  contextMenu: { isOpen: false, x: 0, y: 0, data: null },
+  openContextMenu: (x, y, data) => set({ contextMenu: { isOpen: true, x, y, data } }),
+  closeContextMenu: () => set((s) => ({ contextMenu: { ...s.contextMenu, isOpen: false } })),
+
+  // Toasts
+  toasts: [],
+  addToast: (toast) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    set((s) => ({ toasts: [...s.toasts, { ...toast, id }] }));
+    setTimeout(() => get().removeToast(id), 4000);
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // Appearance
+  appearance: JSON.parse(localStorage.getItem('ws_appearance') || '{"theme":"dark","accentColor":"#e8a145","uiScale":100,"compactMode":false}'),
+  updateAppearance: (updates) => set((s) => {
+    const newApp = { ...s.appearance, ...updates };
+    localStorage.setItem('ws_appearance', JSON.stringify(newApp));
+    return { appearance: newApp };
+  }),
 }));
 
 interface ReplayState {

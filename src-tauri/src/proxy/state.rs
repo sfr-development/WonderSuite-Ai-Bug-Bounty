@@ -252,7 +252,7 @@ impl ProxyState {
                 bind_type: "loopback".into(),
                 running: false,
             }]),
-            max_traffic_entries: AtomicU64::new(10000),
+            max_traffic_entries: AtomicU64::new(5000),
             max_response_size: AtomicU64::new(10 * 1024 * 1024), // 10MB
         })
     }
@@ -301,6 +301,26 @@ impl ProxyState {
 
     pub fn set_response_intercept(&self, enabled: bool) {
         self.response_intercept_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Drain all pending intercepts by auto-forwarding them.
+    /// Called when intercept is toggled OFF to prevent requests from hanging.
+    pub async fn drain_pending_intercepts(&self) {
+        let mut intercepts = self.pending_intercepts.lock().await;
+        let ids: Vec<String> = intercepts.keys().cloned().collect();
+        let count = ids.len();
+        for id in ids {
+            if let Some(pending) = intercepts.remove(&id) {
+                let _ = pending.sender.send(InterceptDecision::Forward(String::new()));
+                self.emit(ProxyEvent::InterceptResolved {
+                    id,
+                    action: "forward".to_string(),
+                }).await;
+            }
+        }
+        if count > 0 {
+            println!("[Proxy] Drained {} pending intercepts (toggle off)", count);
+        }
     }
 
     pub fn is_running(&self) -> bool {

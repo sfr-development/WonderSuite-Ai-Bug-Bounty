@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { useEffect } from 'react';
 import { GitCompare, Trash2, ArrowLeftRight } from 'lucide-react';
+import { useAppStore } from '../../stores';
 import './Comparer.css';
 
 interface DiffResult {
@@ -68,6 +70,23 @@ export function Comparer() {
   const [right, setRight] = useState('');
   const [mode, setMode] = useState<'words' | 'lines'>('words');
   const [diff, setDiff] = useState<DiffResult[] | null>(null);
+
+  const { pendingSendTo, clearSendTo } = useAppStore();
+
+  useEffect(() => {
+    if (pendingSendTo?.tool === 'comparer') {
+      const { requestRaw, responseRaw, target } = pendingSendTo;
+      const content = responseRaw ? `${requestRaw}\n\n${responseRaw}` : requestRaw;
+      
+      if (target === 'right') {
+        setRight(content);
+      } else {
+        setLeft(content);
+      }
+      setDiff(null);
+      clearSendTo();
+    }
+  }, [pendingSendTo, clearSendTo]);
 
   const runDiff = () => {
     const result = mode === 'words' ? computeWordDiff(left, right) : computeLineDiff(left, right);
