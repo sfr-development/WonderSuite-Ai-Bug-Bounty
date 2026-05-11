@@ -1,0 +1,94 @@
+.statusbar {
+  height: var(--statusbar-h);
+  background: var(--bg-1);
+  border-top: 1px solid var(--border-0);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-m);
+  gap: var(--space-l);
+  font-size: 11px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.statusbar-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.statusbar-dot.running {
+  background: var(--accent);
+  animation: statusPulse 2s ease infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.statusbar-spacer { flex: 1; }
+.statusbar-version { color: var(--text-3); }
+
+.statusbar-project {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.statusbar-arch {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: rgba(200, 120, 255, 0.1);
+  color: #c878ff;
+  border: 1px solid rgba(200, 120, 255, 0.2);
+}
+
+.statusbar-temp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 4px;
+}
+
+.statusbar-close-project {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 2px;
+  margin-left: 2px;
+}
+
+.statusbar-close-project:hover {
+  color: var(--red, #ef4444);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.statusbar-memory {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+

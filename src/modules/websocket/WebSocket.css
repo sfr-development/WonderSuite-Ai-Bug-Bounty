@@ -1,0 +1,172 @@
+.ws { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+
+.ws-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+}
+.ws-toolbar-title { font-size: 11px; font-weight: 700; color: var(--text-0); }
+
+.ws-url-input {
+  flex: 1; max-width: 350px; height: 26px; padding: 0 8px;
+  background: var(--bg-0); border: 1px solid var(--border-1); border-radius: var(--radius-s);
+  color: var(--text-0); font-family: 'JetBrains Mono', monospace; font-size: 10px; outline: none;
+}
+.ws-url-input:focus { border-color: var(--accent); }
+
+.ws-connect-btn {
+  height: 26px; padding: 0 12px; background: var(--accent); color: white; border: none;
+  border-radius: var(--radius-s); font-size: 10px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; gap: 4px; transition: filter 0.15s;
+}
+.ws-connect-btn:hover { filter: brightness(1.1); }
+
+.ws-tabs {
+  display: flex; gap: 0; background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+}
+.ws-tab {
+  padding: 5px 12px; font-size: 10px; color: var(--text-2); background: none;
+  border: none; border-bottom: 2px solid transparent; cursor: pointer;
+  transition: all 0.15s; display: flex; align-items: center; gap: 4px;
+}
+.ws-tab:hover { color: var(--text-0); }
+.ws-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.ws-badge { font-size: 8px; padding: 1px 4px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); }
+.ws-dim { color: var(--text-3); font-size: 9px; }
+.ws-check { font-size: 9px; color: var(--text-2); display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.ws-check input { accent-color: var(--accent); }
+
+.ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+.ws-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-3); gap: 6px; font-size: 12px;
+}
+
+/* Connections */
+.ws-connections-panel { flex: 1; overflow-y: auto; }
+.ws-conn-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border-0); cursor: pointer; transition: background 0.1s;
+}
+.ws-conn-item:hover { background: var(--bg-2); }
+.ws-conn-item.selected { background: var(--bg-3); }
+.ws-conn-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ws-conn-dot.open { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.ws-conn-dot.closed { background: var(--text-3); }
+.ws-conn-dot.error { background: var(--red); }
+.ws-conn-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.ws-conn-url { font-size: 11px; font-weight: 500; color: var(--text-0); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-conn-meta { display: flex; gap: 6px; font-size: 9px; color: var(--text-3); }
+.ws-conn-close {
+  width: 20px; height: 20px; border: none; background: none; color: var(--text-3);
+  cursor: pointer; border-radius: 3px; display: flex; align-items: center; justify-content: center;
+}
+.ws-conn-close:hover { background: rgba(239,68,68,0.1); color: var(--red); }
+
+/* Messages */
+.ws-messages-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.ws-messages-header {
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+}
+.ws-conn-active-url { font-size: 11px; font-weight: 500; color: var(--text-0); font-family: 'JetBrains Mono', monospace; }
+
+.ws-messages-list { flex: 1; overflow-y: auto; padding: 4px; }
+.ws-msg {
+  display: flex; gap: 6px; padding: 4px 6px; border-radius: var(--radius-s);
+  margin-bottom: 2px; cursor: pointer; transition: background 0.1s;
+}
+.ws-msg:hover { background: var(--bg-2); }
+.ws-msg.selected { background: var(--bg-3); }
+
+.ws-msg-indicator { flex-shrink: 0; width: 18px; display: flex; align-items: flex-start; padding-top: 2px; }
+.ws-msg.sent .ws-msg-indicator { color: #64b4ff; }
+.ws-msg.received .ws-msg-indicator { color: var(--green); }
+
+.ws-msg-content { flex: 1; min-width: 0; }
+.ws-msg-header { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.ws-msg-dir {
+  font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 2px;
+}
+.ws-msg-dir.sent { background: rgba(100,180,255,0.15); color: #64b4ff; }
+.ws-msg-dir.received { background: rgba(80,200,120,0.15); color: var(--green); }
+.ws-msg-type { font-size: 8px; color: var(--text-3); text-transform: uppercase; }
+
+.ws-msg-data {
+  margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-1); white-space: pre-wrap; word-break: break-all; line-height: 1.4;
+}
+
+/* Composer */
+.ws-composer {
+  display: flex; gap: 4px; padding: 6px 8px;
+  background: var(--bg-1); border-top: 1px solid var(--border-0); flex-shrink: 0;
+}
+.ws-composer-input {
+  flex: 1; padding: 6px 8px; background: var(--bg-0); border: 1px solid var(--border-1);
+  border-radius: var(--radius-s); color: var(--text-0); font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; resize: none; outline: none; min-height: 32px;
+}
+.ws-composer-input:focus { border-color: var(--accent); }
+.ws-send-btn {
+  height: 32px; padding: 0 12px; background: var(--accent); color: white; border: none;
+  border-radius: var(--radius-s); font-size: 10px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; gap: 4px; align-self: flex-end;
+}
+.ws-send-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Message Detail */
+.ws-msg-detail {
+  border-top: 1px solid var(--border-0); background: var(--bg-1);
+  max-height: 200px; overflow-y: auto; flex-shrink: 0;
+}
+.ws-msg-detail-header {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: var(--bg-2); border-bottom: 1px solid var(--border-0);
+}
+.ws-msg-detail-close {
+  margin-left: auto; border: none; background: none; color: var(--text-3);
+  cursor: pointer; font-size: 14px;
+}
+.ws-msg-detail-body {
+  margin: 0; padding: 6px 8px; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--text-1); white-space: pre-wrap; word-break: break-all;
+}
+
+/* Rules */
+.ws-rules-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.ws-rules-add {
+  display: flex; gap: 4px; padding: 6px 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+  align-items: center; flex-wrap: wrap;
+}
+.ws-rule-input {
+  height: 22px; padding: 0 6px; background: var(--bg-0); border: 1px solid var(--border-1);
+  border-radius: 3px; color: var(--text-0); font-size: 10px; outline: none; min-width: 80px; flex: 1;
+}
+.ws-rule-input:focus { border-color: var(--accent); }
+.ws-rule-select {
+  height: 22px; padding: 0 4px; background: var(--bg-2); border: 1px solid var(--border-1);
+  border-radius: 3px; color: var(--text-0); font-size: 10px;
+}
+.ws-rule-add-btn {
+  height: 22px; padding: 0 8px; background: var(--accent-muted); border: 1px solid var(--accent);
+  border-radius: var(--radius-s); color: var(--accent); font-size: 9px; font-weight: 600;
+  cursor: pointer; display: flex; align-items: center; gap: 3px;
+}
+
+.ws-rules-list { flex: 1; overflow-y: auto; }
+.ws-rule-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--border-0); font-size: 10px;
+}
+.ws-rule-enabled { color: var(--text-3); font-size: 8px; }
+.ws-rule-enabled.on { color: var(--green); }
+.ws-rule-name { font-weight: 600; color: var(--text-0); min-width: 80px; }
+.ws-rule-dir { color: var(--text-3); font-size: 9px; min-width: 50px; }
+.ws-rule-pattern { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.ws-rule-replace { color: var(--green); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.ws-rule-regex-badge { font-size: 7px; padding: 1px 3px; border-radius: 2px; background: var(--bg-3); color: var(--text-3); }
+.ws-rule-del { border: none; background: none; color: var(--text-3); cursor: pointer; margin-left: auto; }
+.ws-rule-del:hover { color: var(--red); }

@@ -1,0 +1,174 @@
+.context-menu {
+  position: fixed;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-m);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.03);
+  width: 260px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  animation: context-menu-in 120ms ease-out;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@keyframes context-menu-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Header */
+.context-menu-header {
+  padding: 8px 12px;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border-0);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.context-method {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.context-url {
+  font-size: 10px;
+  color: var(--text-2);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 230px;
+}
+
+/* Scrollable body */
+.context-menu-actions {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  max-height: calc(80vh - 50px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.context-menu-actions::-webkit-scrollbar { width: 4px; }
+.context-menu-actions::-webkit-scrollbar-track { background: transparent; }
+.context-menu-actions::-webkit-scrollbar-thumb { background: var(--border-1); border-radius: 2px; }
+
+.context-menu-actions button {
+  background: transparent;
+  border: none;
+  padding: 5px 12px;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 80ms, color 80ms;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.context-menu-actions button:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.context-menu-actions button:hover svg {
+  color: white !important;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--border-0);
+  margin: 3px 8px;
+  flex-shrink: 0;
+}
+
+/* Submenu trigger */
+.context-submenu-trigger {
+  position: relative;
+}
+
+.context-submenu-trigger > button {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.context-submenu-trigger > button::after {
+  content: "›";
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-3);
+  line-height: 1;
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.context-submenu-trigger:hover > button::after {
+  color: white;
+}
+
+/* Submenu panel */
+.context-submenu {
+  display: none;
+  position: absolute;
+  top: -4px;
+  left: calc(100% + 2px);
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-m);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  flex-direction: column;
+  min-width: 190px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+  z-index: 10001;
+}
+
+.context-submenu::-webkit-scrollbar { width: 3px; }
+.context-submenu::-webkit-scrollbar-thumb { background: var(--border-1); border-radius: 2px; }
+
+/* If submenu would go off right edge, flip to left */
+.context-submenu.flip-left {
+  left: auto;
+  right: calc(100% + 2px);
+}
+
+/* Invisible hover bridge — right side */
+.context-submenu::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -12px;
+  bottom: 0;
+  width: 12px;
+  background: transparent;
+}
+
+/* Hover bridge for flip-left — left side bridge */
+.context-submenu.flip-left::before {
+  left: auto;
+  right: -12px;
+}
+
+.context-submenu-trigger:hover > .context-submenu {
+  display: flex;
+}
+
+/* Submenu items */
+.context-submenu button {
+  padding: 5px 12px !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+}

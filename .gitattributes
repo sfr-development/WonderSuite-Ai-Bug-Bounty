@@ -1,0 +1,15 @@
+# Force LF for all text files
+* text=auto eol=lf
+
+# Explicitly mark binary files — never touch these
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

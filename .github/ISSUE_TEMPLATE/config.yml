@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/discussions
+    about: Have a question or want to discuss an idea? Start a discussion.
+  - name: Security Vulnerability
+    url: https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/security/advisories/new
+    about: Do NOT file a public issue for security vulnerabilities. Use a private security advisory.

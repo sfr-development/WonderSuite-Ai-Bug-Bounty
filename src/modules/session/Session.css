@@ -1,0 +1,164 @@
+.session { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+
+.session-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+}
+.session-toolbar-title { font-size: 11px; font-weight: 700; color: var(--text-0); }
+
+.session-tabs {
+  display: flex; gap: 0; background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0); flex-shrink: 0;
+}
+.session-tab {
+  padding: 5px 12px; font-size: 10px; color: var(--text-2); background: none;
+  border: none; border-bottom: 2px solid transparent; cursor: pointer;
+  transition: all 0.15s; display: flex; align-items: center; gap: 4px;
+}
+.session-tab:hover { color: var(--text-0); }
+.session-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.session-badge { font-size: 8px; padding: 1px 4px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); }
+
+.session-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+/* Action buttons */
+.session-action-btn {
+  padding: 2px 8px; height: 22px; background: var(--bg-1); border: 1px solid var(--border-0);
+  border-radius: var(--radius-s); color: var(--text-2); font-size: 9px; cursor: pointer;
+  display: flex; align-items: center; gap: 3px; transition: all 0.15s; font-weight: 600;
+}
+.session-action-btn:hover { background: var(--bg-3); color: var(--text-0); }
+.session-action-btn.accent { background: var(--accent-muted); border-color: var(--accent); color: var(--accent); }
+.session-action-btn.danger { color: var(--red); }
+.session-action-btn.danger:hover { background: rgba(239,68,68,0.1); }
+
+.session-dim { color: var(--text-3); font-size: 9px; }
+.session-green { color: var(--green); }
+.session-check { font-size: 9px; color: var(--text-2); display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.session-check input { accent-color: var(--accent); }
+
+/* Cookie Panel */
+.session-cookie-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.session-cookie-actions {
+  display: flex; gap: 4px; padding: 5px 10px; background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0); flex-shrink: 0; align-items: center;
+}
+.session-filter-input {
+  flex: 1; max-width: 250px; height: 22px; padding: 0 6px; background: var(--bg-0);
+  border: 1px solid var(--border-1); border-radius: var(--radius-s);
+  color: var(--text-0); font-size: 10px; outline: none;
+}
+.session-filter-input:focus { border-color: var(--accent); }
+
+.session-edit-row {
+  display: flex; gap: 4px; padding: 5px 10px; background: var(--bg-2);
+  border-bottom: 1px solid var(--border-0); flex-shrink: 0; align-items: center;
+}
+.session-edit-row input[type="text"] {
+  height: 22px; padding: 0 6px; background: var(--bg-0); border: 1px solid var(--border-1);
+  border-radius: 3px; color: var(--text-0); font-size: 10px; outline: none; flex: 1; min-width: 60px;
+}
+
+.session-cookie-table { flex: 1; overflow: auto; }
+.session-cookie-table table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.session-cookie-table th {
+  position: sticky; top: 0; background: var(--bg-2); padding: 4px 8px; text-align: left;
+  font-weight: 600; color: var(--text-2); font-size: 9px; text-transform: uppercase;
+  border-bottom: 1px solid var(--border-0); white-space: nowrap;
+}
+.session-cookie-table td {
+  padding: 3px 8px; border-bottom: 1px solid var(--border-0);
+  color: var(--text-1); font-size: 10px;
+}
+.session-cookie-table tr:hover td { background: var(--bg-1); }
+.session-cookie-name { font-weight: 600; color: var(--text-0); font-family: 'JetBrains Mono', monospace; }
+.session-cookie-value {
+  font-family: 'JetBrains Mono', monospace; max-width: 250px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent);
+}
+.session-row-del { border: none; background: none; color: var(--text-3); cursor: pointer; padding: 2px; }
+.session-row-del:hover { color: var(--red); }
+.session-empty-td { text-align: center; color: var(--text-3); padding: 20px !important; }
+
+/* Macro Panel */
+.session-macro-panel { flex: 1; display: flex; overflow: hidden; }
+.session-macro-sidebar {
+  width: 220px; border-right: 1px solid var(--border-0); overflow-y: auto;
+  padding: 6px; display: flex; flex-direction: column; gap: 3px; flex-shrink: 0;
+}
+.session-macro-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-radius: var(--radius-s); cursor: pointer; transition: background 0.1s;
+  border: 1px solid transparent;
+}
+.session-macro-item:hover { background: var(--bg-2); }
+.session-macro-item.selected { background: var(--bg-3); border-color: var(--border-1); }
+.session-macro-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.session-macro-name { font-size: 11px; font-weight: 500; color: var(--text-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.session-macro-detail { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+.session-macro-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-3); gap: 6px; font-size: 12px;
+}
+
+/* Macro Editor */
+.session-macro-editor { flex: 1; display: flex; flex-direction: column; padding: 10px; gap: 8px; }
+.session-macro-editor-header { display: flex; flex-direction: column; gap: 4px; }
+.session-macro-name-input, .session-macro-desc-input {
+  height: 28px; padding: 0 8px; background: var(--bg-0);
+  border: 1px solid var(--border-1); border-radius: var(--radius-s);
+  color: var(--text-0); font-size: 11px; outline: none;
+}
+.session-macro-name-input { font-weight: 600; }
+.session-macro-name-input:focus, .session-macro-desc-input:focus { border-color: var(--accent); }
+.session-macro-editor-footer { display: flex; gap: 6px; }
+
+.session-section-title { font-size: 10px; font-weight: 700; color: var(--text-2); text-transform: uppercase; margin-bottom: 4px; display: block; }
+.session-macro-steps { display: flex; flex-direction: column; gap: 4px; }
+.session-macro-step {
+  display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+  background: var(--bg-1); border: 1px solid var(--border-0); border-radius: var(--radius-s);
+}
+.session-macro-step.readonly { cursor: default; }
+.session-step-num {
+  width: 18px; height: 18px; border-radius: 50%; background: var(--bg-3);
+  color: var(--text-3); font-size: 9px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.session-macro-step select {
+  height: 22px; padding: 0 4px; background: var(--bg-2); border: 1px solid var(--border-1);
+  border-radius: 3px; color: var(--text-0); font-size: 10px; font-weight: 600;
+}
+.session-macro-step input[type="text"] {
+  flex: 1; height: 22px; padding: 0 6px; background: var(--bg-0);
+  border: 1px solid var(--border-1); border-radius: 3px;
+  color: var(--text-0); font-family: 'JetBrains Mono', monospace; font-size: 10px; outline: none;
+}
+.session-step-method { font-size: 10px; font-weight: 700; color: var(--accent); min-width: 40px; }
+.session-step-url { font-size: 10px; color: var(--text-1); font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Macro View */
+.session-macro-view { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.session-macro-view-header { display: flex; align-items: center; gap: 8px; }
+.session-macro-view-name { font-size: 13px; font-weight: 600; color: var(--text-0); }
+
+.session-macro-result {
+  margin-top: 8px; padding: 8px; background: rgba(34,197,94,0.04);
+  border: 1px solid rgba(34,197,94,0.15); border-radius: var(--radius-s);
+}
+.session-extract-row { display: flex; gap: 8px; padding: 2px 0; font-size: 10px; }
+.session-extract-key { font-weight: 600; color: var(--text-0); min-width: 100px; font-family: 'JetBrains Mono', monospace; }
+.session-extract-val { color: var(--green); font-family: 'JetBrains Mono', monospace; }
+
+/* Rules */
+.session-rules-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.session-rules-header { padding: 8px 10px; border-bottom: 1px solid var(--border-0); }
+.session-rules-list { flex: 1; overflow-y: auto; }
+.session-rule-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-bottom: 1px solid var(--border-0);
+}
+.session-rule-toggle { border: none; background: none; cursor: pointer; color: var(--text-3); }
+.session-rule-info { flex: 1; display: flex; flex-direction: column; }
+.session-rule-name { font-size: 11px; font-weight: 500; color: var(--text-0); }

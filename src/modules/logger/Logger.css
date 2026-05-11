@@ -1,0 +1,87 @@
+.logger {
+  height: 100%; display: flex; flex-direction: column; overflow: hidden;
+}
+
+.logger-toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0; height: 32px;
+}
+
+.logger-title { font-size: 11px; font-weight: 700; color: var(--text-0); }
+.logger-count { font-size: 10px; color: var(--text-3); background: var(--bg-3); padding: 1px 6px; border-radius: 3px; }
+
+.logger-tool-filter { display: flex; gap: 2px; }
+
+.logger-chip {
+  font-size: 9px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--border-0);
+  background: var(--bg-2); color: var(--text-2); cursor: pointer; transition: all 0.15s;
+}
+.logger-chip:hover { border-color: var(--accent); }
+.logger-chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+.logger-auto-scroll {
+  font-size: 9px; color: var(--text-3); display: flex; align-items: center; gap: 3px; cursor: pointer;
+}
+.logger-auto-scroll input { accent-color: var(--accent); }
+
+.logger-btn {
+  width: 24px; height: 24px; border: none; background: none; color: var(--text-2); cursor: pointer;
+  border-radius: var(--radius-s); display: flex; align-items: center; justify-content: center;
+}
+.logger-btn:hover { background: var(--bg-3); color: var(--text-0); }
+
+.logger-search {
+  display: flex; align-items: center; height: 22px; padding: 0 6px;
+  background: var(--bg-0); border: 1px solid var(--border-1); border-radius: var(--radius-s); gap: 4px; min-width: 140px;
+}
+.logger-search:focus-within { border-color: var(--accent); }
+.logger-search input { flex: 1; background: none; border: none; color: var(--text-0); font-size: 10px; outline: none; }
+.logger-search input::placeholder { color: var(--text-3); }
+
+.logger-table-wrap { flex: 1; overflow: auto; min-height: 0; }
+
+.logger-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+
+.logger-table th {
+  position: sticky; top: 0; background: var(--bg-2); padding: 4px 8px; text-align: left;
+  font-weight: 600; font-size: 10px; color: var(--text-2); text-transform: uppercase;
+  letter-spacing: 0.04em; border-bottom: 1px solid var(--border-1); white-space: nowrap; z-index: 1;
+}
+
+.logger-table td {
+  padding: 3px 8px; border-bottom: 1px solid var(--border-0); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 400px; color: var(--text-1);
+}
+
+.logger-table tbody tr { cursor: pointer; transition: background 80ms; }
+.logger-table tbody tr:hover { background: var(--bg-2); }
+.logger-table tbody tr.selected { background: var(--bg-3); }
+
+.logger-dim { color: var(--text-3); }
+.logger-ts { font-family: 'JetBrains Mono', monospace; font-size: 9px; }
+
+.logger-method { font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+
+.logger-tool-badge {
+  font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px;
+  text-transform: capitalize;
+}
+.logger-tool-badge.proxy { background: rgba(100,180,255,0.1); color: #64b4ff; }
+.logger-tool-badge.repeater { background: rgba(160,120,255,0.1); color: #a078ff; }
+.logger-tool-badge.scanner { background: rgba(255,160,80,0.1); color: #ffa050; }
+.logger-tool-badge.intruder { background: rgba(255,80,80,0.1); color: #ff5050; }
+
+.logger-status { font-weight: 600; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.logger-status.s2xx { color: var(--green); }
+.logger-status.s3xx { color: #64b4ff; }
+.logger-status.s4xx { color: #f0c040; }
+.logger-status.s5xx { color: var(--red); }
+
+.logger-url { font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+
+.logger-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--text-3); gap: 6px; font-size: 12px;
+}
+.logger-empty span { font-size: 11px; opacity: 0.6; }
