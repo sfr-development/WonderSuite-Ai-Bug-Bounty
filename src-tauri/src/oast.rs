@@ -1,19 +1,43 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
-/// WonderSuite OAST (Out-of-Band Application Security Testing) Engine
-/// Equivalent to Burp Suite Collaborator / Interactsh
-///
-/// Provides:
-/// - Unique payload generation with correlation IDs
-/// - DNS/HTTP/SMTP callback URL creation
-/// - DNS callback server (UDP port 53 listener)
-/// - HTTP callback server (Axum-based)
-/// - SMTP callback server (basic MX listener)
-/// - Collaborator Everywhere: auto-inject OAST headers
-/// - Vuln-type specific payload templates
+// Shutdown signals per listener so a running server can be cleanly stopped.
+static SHUTDOWN_HTTP: OnceLock<Mutex<Option<watch::Sender<bool>>>> = OnceLock::new();
+static SHUTDOWN_DNS: OnceLock<Mutex<Option<watch::Sender<bool>>>> = OnceLock::new();
+static SHUTDOWN_SMTP: OnceLock<Mutex<Option<watch::Sender<bool>>>> = OnceLock::new();
+
+fn shutdown_slot(kind: &str) -> &'static Mutex<Option<watch::Sender<bool>>> {
+    match kind {
+        "http" => SHUTDOWN_HTTP.get_or_init(|| Mutex::new(None)),
+        "dns" => SHUTDOWN_DNS.get_or_init(|| Mutex::new(None)),
+        "smtp" => SHUTDOWN_SMTP.get_or_init(|| Mutex::new(None)),
+        _ => unreachable!(),
+    }
+}
+
+pub async fn stop_listener(kind: &str) -> bool {
+    let slot = shutdown_slot(kind);
+    let mut guard = slot.lock().await;
+    if let Some(tx) = guard.take() {
+        let _ = tx.send(true);
+        true
+    } else {
+        false
+    }
+}
+
+async fn install_shutdown(kind: &str) -> watch::Receiver<bool> {
+    let (tx, rx) = watch::channel(false);
+    let slot = shutdown_slot(kind);
+    let mut guard = slot.lock().await;
+    if let Some(prev) = guard.take() {
+        let _ = prev.send(true);
+    }
+    *guard = Some(tx);
+    rx
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OastPayload {
@@ -39,14 +63,12 @@ pub struct OastInteraction {
     pub details: HashMap<String, String>,
 }
 
-/// Global interaction store
 pub static INTERACTIONS: OnceLock<Mutex<Vec<OastInteraction>>> = OnceLock::new();
 
 pub fn get_interactions() -> &'static Mutex<Vec<OastInteraction>> {
     INTERACTIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Generate a unique OAST payload with correlation ID
 pub fn generate_oast_payload(description: &str, server_domain: &str) -> OastPayload {
     let correlation_id = generate_random_string(16);
     let random_part = generate_random_string(12);
@@ -60,12 +82,11 @@ pub fn generate_oast_payload(description: &str, server_domain: &str) -> OastPayl
         dns_payload: subdomain.clone(),
         http_payload: format!("http://{}/", subdomain),
         smtp_payload: format!("oast-{}@{}", correlation_id, server_domain),
-        created_at: chrono_now(),
+        created_at: iso_now(),
         description: description.to_string(),
     }
 }
 
-/// Generate payloads for different vulnerability types
 pub fn generate_oast_payloads_for_scan(
     target: &str,
     server_domain: &str,
@@ -101,7 +122,6 @@ pub fn generate_oast_payloads_for_scan(
     payloads
 }
 
-/// Collaborator Everywhere — headers to auto-inject into every outgoing request
 pub fn collaborator_everywhere_headers(server_domain: &str) -> Vec<(String, String, OastPayload)> {
     let headers_to_inject = vec![
         "Referer",
@@ -137,65 +157,64 @@ pub fn collaborator_everywhere_headers(server_domain: &str) -> Vec<(String, Stri
         .collect()
 }
 
-/// Start DNS callback server on specified port
 pub async fn start_dns_server(port: u16) -> Result<(), String> {
     use tokio::net::UdpSocket;
 
     let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))
         .await
         .map_err(|e| format!("Failed to bind DNS port {}: {}", port, e))?;
-
+    let mut shutdown = install_shutdown("dns").await;
     println!("[OAST] DNS callback server started on port {}", port);
 
     tokio::spawn(async move {
         let mut buf = [0u8; 512];
         loop {
-            match socket.recv_from(&mut buf).await {
-                Ok((len, src)) => {
-                    if let Some(domain) = parse_dns_query(&buf[..len]) {
-                        println!("[OAST-DNS] Query from {}: {}", src, domain);
-
-                        let parts: Vec<&str> = domain.split('.').collect();
-                        let correlation_id =
-                            if parts.len() >= 3 { parts[1].to_string() } else { "unknown".to_string() };
-
-                        let interaction = OastInteraction {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            correlation_id,
-                            interaction_type: "dns".into(),
-                            source_ip: src.to_string(),
-                            timestamp: chrono_now(),
-                            raw_data: format!("DNS Query: {}", domain),
-                            details: {
-                                let mut d = HashMap::new();
-                                d.insert("queried_domain".into(), domain.clone());
-                                d.insert("query_type".into(), "A".into());
-                                d.insert("raw_length".into(), len.to_string());
-                                d
-                            },
-                        };
-
-                        let store = get_interactions();
-                        store.lock().await.push(interaction);
-
-                        if len >= 12 {
-                            let mut resp = buf[..len].to_vec();
-                            resp[2] = 0x81; // Response flags: QR=1, AA=1
-                            resp[3] = 0x80;
-                            resp[6] = 0x00;
-                            resp[7] = 0x01; // ANCOUNT = 1
-                            resp.extend_from_slice(&[0xC0, 0x0C]); // Name pointer
-                            resp.extend_from_slice(&[0x00, 0x01]); // Type A
-                            resp.extend_from_slice(&[0x00, 0x01]); // Class IN
-                            resp.extend_from_slice(&[0x00, 0x00, 0x00, 0x3C]); // TTL 60
-                            resp.extend_from_slice(&[0x00, 0x04]); // RDLENGTH 4
-                            resp.extend_from_slice(&[127, 0, 0, 1]); // 127.0.0.1
-                            let _ = socket.send_to(&resp, src).await;
-                        }
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        println!("[OAST] DNS server stopping");
+                        break;
                     }
                 }
-                Err(e) => {
-                    eprintln!("[OAST-DNS] Error: {}", e);
+                recv = socket.recv_from(&mut buf) => match recv {
+                    Ok((len, src)) => {
+                        if let Some(domain) = parse_dns_query(&buf[..len]) {
+                            println!("[OAST-DNS] Query from {}: {}", src, domain);
+                            let parts: Vec<&str> = domain.split('.').collect();
+                            let correlation_id = if parts.len() >= 3 { parts[1].to_string() } else { "unknown".to_string() };
+                            let interaction = OastInteraction {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                correlation_id,
+                                interaction_type: "dns".into(),
+                                source_ip: src.to_string(),
+                                timestamp: iso_now(),
+                                raw_data: format!("DNS Query: {}", domain),
+                                details: {
+                                    let mut d = HashMap::new();
+                                    d.insert("queried_domain".into(), domain.clone());
+                                    d.insert("query_type".into(), "A".into());
+                                    d.insert("raw_length".into(), len.to_string());
+                                    d
+                                },
+                            };
+                            get_interactions().lock().await.push(interaction);
+                            if len >= 12 {
+                                let mut resp = buf[..len].to_vec();
+                                resp[2] = 0x81;
+                                resp[3] = 0x80;
+                                resp[6] = 0x00;
+                                resp[7] = 0x01;
+                                resp.extend_from_slice(&[0xC0, 0x0C]);
+                                resp.extend_from_slice(&[0x00, 0x01]);
+                                resp.extend_from_slice(&[0x00, 0x01]);
+                                resp.extend_from_slice(&[0x00, 0x00, 0x00, 0x3C]);
+                                resp.extend_from_slice(&[0x00, 0x04]);
+                                resp.extend_from_slice(&[127, 0, 0, 1]);
+                                let _ = socket.send_to(&resp, src).await;
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[OAST-DNS] Error: {}", e),
                 }
             }
         }
@@ -204,75 +223,74 @@ pub async fn start_dns_server(port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// Start HTTP callback server
 pub async fn start_http_callback_server(port: u16) -> Result<(), String> {
-    use axum::{extract::ConnectInfo, response::IntoResponse, routing::any, Router};
+    use axum::{extract::ConnectInfo, routing::any, Router};
     use std::net::SocketAddr;
 
-    let app = Router::new().route(
-        "/{*path}",
-        any(|ConnectInfo(addr): ConnectInfo<SocketAddr>, req: axum::extract::Request| async move {
-            let path = req.uri().path().to_string();
-            let method = req.method().to_string();
-            let headers: HashMap<String, String> = req
-                .headers()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                .collect();
+    let handler = any(|ConnectInfo(addr): ConnectInfo<SocketAddr>, req: axum::extract::Request| async move {
+        let path = req.uri().path().to_string();
+        let method = req.method().to_string();
+        let headers: HashMap<String, String> = req
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        let host = headers.get("host").cloned().unwrap_or_default();
+        let parts: Vec<&str> = host.split('.').collect();
+        let correlation_id = if parts.len() >= 3 {
+            parts[1].to_string()
+        } else if path.len() > 1 {
+            path.trim_start_matches('/').split('/').next().unwrap_or("unknown").to_string()
+        } else {
+            "unknown".to_string()
+        };
+        println!("[OAST-HTTP] {} {} from {} (corr: {})", method, path, addr, correlation_id);
+        let interaction = OastInteraction {
+            id: uuid::Uuid::new_v4().to_string(),
+            correlation_id,
+            interaction_type: "http".into(),
+            source_ip: addr.to_string(),
+            timestamp: iso_now(),
+            raw_data: format!("{} {} HTTP/1.1\nHost: {}", method, path, host),
+            details: {
+                let mut d = HashMap::new();
+                d.insert("method".into(), method);
+                d.insert("path".into(), path);
+                d.insert("host".into(), host);
+                for (k, v) in &headers {
+                    d.insert(format!("header_{}", k), v.clone());
+                }
+                d
+            },
+        };
+        get_interactions().lock().await.push(interaction);
+        "OAST callback received"
+    });
 
-            let host = headers.get("host").cloned().unwrap_or_default();
-            let parts: Vec<&str> = host.split('.').collect();
-            let correlation_id = if parts.len() >= 3 {
-                parts[1].to_string()
-            } else if path.len() > 1 {
-                path.trim_start_matches('/').split('/').next().unwrap_or("unknown").to_string()
-            } else {
-                "unknown".to_string()
-            };
-
-            println!("[OAST-HTTP] {} {} from {} (corr: {})", method, path, addr, correlation_id);
-
-            let interaction = OastInteraction {
-                id: uuid::Uuid::new_v4().to_string(),
-                correlation_id,
-                interaction_type: "http".into(),
-                source_ip: addr.to_string(),
-                timestamp: chrono_now(),
-                raw_data: format!("{} {} HTTP/1.1\nHost: {}", method, path, host),
-                details: {
-                    let mut d = HashMap::new();
-                    d.insert("method".into(), method);
-                    d.insert("path".into(), path);
-                    d.insert("host".into(), host);
-                    for (k, v) in &headers {
-                        d.insert(format!("header_{}", k), v.clone());
-                    }
-                    d
-                },
-            };
-
-            let store = get_interactions();
-            store.lock().await.push(interaction);
-
-            "OAST callback received"
-        }),
-    );
+    // Match both root (/) and any sub-path so a bare GET on the host is logged.
+    let app = Router::new().route("/", handler.clone()).route("/{*path}", handler);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("Failed to bind HTTP port {}: {}", port, e))?;
-
+    let mut shutdown = install_shutdown("http").await;
     println!("[OAST] HTTP callback server started on port {}", port);
 
     tokio::spawn(async move {
-        let _ = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await;
+        let svc = app.into_make_service_with_connect_info::<SocketAddr>();
+        let server = axum::serve(listener, svc);
+        let _ = server
+            .with_graceful_shutdown(async move {
+                let _ = shutdown.changed().await;
+                println!("[OAST] HTTP server stopping");
+            })
+            .await;
     });
 
     Ok(())
 }
 
-/// Start SMTP callback server (basic)
 pub async fn start_smtp_server(port: u16) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -280,12 +298,22 @@ pub async fn start_smtp_server(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .await
         .map_err(|e| format!("Failed to bind SMTP port {}: {}", port, e))?;
-
+    let mut shutdown = install_shutdown("smtp").await;
     println!("[OAST] SMTP callback server started on port {}", port);
 
     tokio::spawn(async move {
         loop {
-            if let Ok((mut stream, addr)) = listener.accept().await {
+            let accept = tokio::select! {
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        println!("[OAST] SMTP server stopping");
+                        return;
+                    }
+                    continue;
+                }
+                a = listener.accept() => a,
+            };
+            if let Ok((mut stream, addr)) = accept {
                 tokio::spawn(async move {
                     let banner = b"220 oast.wondersuite.local ESMTP WonderSuite OAST\r\n";
                     let _ = stream.write_all(banner).await;
@@ -324,7 +352,7 @@ pub async fn start_smtp_server(port: u16) -> Result<(), String> {
                                             correlation_id,
                                             interaction_type: "smtp".into(),
                                             source_ip: addr.to_string(),
-                                            timestamp: chrono_now(),
+                                            timestamp: iso_now(),
                                             raw_data: format!(
                                                 "MAIL FROM: {}\nRCPT TO: {}\nDATA:\n{}",
                                                 mail_from, rcpt_to, data
@@ -410,18 +438,12 @@ fn parse_dns_query(packet: &[u8]) -> Option<String> {
 }
 
 fn generate_random_string(len: usize) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let chars = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    (0..len)
-        .map(|i| {
-            let idx = ((seed >> (i * 3)) as usize + i * 13 + (seed as usize % 37)) % chars.len();
-            chars[idx] as char
-        })
-        .collect()
+    use rand::Rng;
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..len).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
 }
 
-fn chrono_now() -> String {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    format!("{}Z", now.as_secs())
+pub fn iso_now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }

@@ -74,11 +74,34 @@ pub async fn oast_start_smtp(port: Option<u16>) -> Result<String, String> {
     Ok(format!("OAST SMTP callback server started on port {}", p))
 }
 
-/// Get OAST server status
 #[tauri::command]
 pub async fn oast_status() -> Result<OastServerStatus, String> {
     let status = get_server_status().lock().await;
     Ok(status.clone())
+}
+
+#[tauri::command]
+pub async fn oast_stop_http() -> Result<bool, String> {
+    let stopped = oast::stop_listener("http").await;
+    let mut s = get_server_status().lock().await;
+    s.http_running = false;
+    Ok(stopped)
+}
+
+#[tauri::command]
+pub async fn oast_stop_dns() -> Result<bool, String> {
+    let stopped = oast::stop_listener("dns").await;
+    let mut s = get_server_status().lock().await;
+    s.dns_running = false;
+    Ok(stopped)
+}
+
+#[tauri::command]
+pub async fn oast_stop_smtp() -> Result<bool, String> {
+    let stopped = oast::stop_listener("smtp").await;
+    let mut s = get_server_status().lock().await;
+    s.smtp_running = false;
+    Ok(stopped)
 }
 
 /// Generate a new OAST payload

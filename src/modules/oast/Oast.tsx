@@ -33,6 +33,7 @@ export function Oast() {
   const [genDesc, setGenDesc] = useState('');
   const [genType, setGenType] = useState('generic');
   const [genTarget, setGenTarget] = useState('');
+  const [serverDomain, setServerDomain] = useState<string>(() => localStorage.getItem('ws_oast_domain') || 'oast.wondersuite.local');
   const [collabHeaders, setCollabHeaders] = useState<Array<{ header: string; value: string; oast_payload: OastPayload }>>([]);
 
   const [filter, setFilter] = useState('');
@@ -65,14 +66,25 @@ export function Oast() {
 
   useEffect(() => {
     loadStatus(); loadPayloads(); loadInteractions();
-    pollRef.current = setInterval(() => { loadInteractions(); }, 3000);
+    pollRef.current = setInterval(() => { loadInteractions(); loadStatus(); }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('ws_oast_domain', serverDomain);
+  }, [serverDomain]);
 
   const startHttp = async (port?: number) => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('oast_start_http', { port: port || 8888 });
+      loadStatus();
+    } catch (e) { console.error(e); }
+  };
+  const stopHttp = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('oast_stop_http');
       loadStatus();
     } catch (e) { console.error(e); }
   };
@@ -84,6 +96,13 @@ export function Oast() {
       loadStatus();
     } catch (e) { console.error(e); }
   };
+  const stopDns = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('oast_stop_dns');
+      loadStatus();
+    } catch (e) { console.error(e); }
+  };
 
   const startSmtp = async (port?: number) => {
     try {
@@ -92,12 +111,19 @@ export function Oast() {
       loadStatus();
     } catch (e) { console.error(e); }
   };
+  const stopSmtp = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('oast_stop_smtp');
+      loadStatus();
+    } catch (e) { console.error(e); }
+  };
 
   const generate = async () => {
     if (!genDesc) return;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('oast_generate', { description: genDesc, vulnType: genType !== 'generic' ? genType : null, serverDomain: null });
+      await invoke('oast_generate', { description: genDesc, vulnType: genType !== 'generic' ? genType : null, serverDomain });
       setGenDesc('');
       loadPayloads();
     } catch (e) { console.error(e); }
@@ -107,7 +133,7 @@ export function Oast() {
     if (!genTarget) return;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('oast_generate_scan_payloads', { target: genTarget, serverDomain: null });
+      await invoke('oast_generate_scan_payloads', { target: genTarget, serverDomain });
       loadPayloads();
     } catch (e) { console.error(e); }
   };
@@ -116,7 +142,7 @@ export function Oast() {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const headers: Array<{ header: string; value: string; oast_payload: OastPayload }> =
-        await invoke('oast_collaborator_everywhere', { serverDomain: null });
+        await invoke('oast_collaborator_everywhere', { serverDomain });
       setCollabHeaders(headers);
       loadPayloads();
     } catch (e) { console.error(e); }
@@ -189,9 +215,13 @@ export function Oast() {
                     {status?.http_running ? 'Running' : 'Stopped'}
                   </span>
                 </div>
-                {!status?.http_running && (
+                {!status?.http_running ? (
                   <button className="oast-start-btn" onClick={() => startHttp()}>
                     <Wifi size={10} /> Start HTTP Server
+                  </button>
+                ) : (
+                  <button className="oast-start-btn" onClick={stopHttp} style={{ background: 'rgba(239,68,68,0.15)', borderColor: '#ef4444', color: '#fca5a5' }}>
+                    <Wifi size={10} /> Stop HTTP Server
                   </button>
                 )}
               </div>
@@ -209,9 +239,13 @@ export function Oast() {
                     {status?.dns_running ? 'Running' : 'Stopped'}
                   </span>
                 </div>
-                {!status?.dns_running && (
+                {!status?.dns_running ? (
                   <button className="oast-start-btn" onClick={() => startDns()}>
                     <Wifi size={10} /> Start DNS Server
+                  </button>
+                ) : (
+                  <button className="oast-start-btn" onClick={stopDns} style={{ background: 'rgba(239,68,68,0.15)', borderColor: '#ef4444', color: '#fca5a5' }}>
+                    <Wifi size={10} /> Stop DNS Server
                   </button>
                 )}
               </div>
@@ -229,12 +263,30 @@ export function Oast() {
                     {status?.smtp_running ? 'Running' : 'Stopped'}
                   </span>
                 </div>
-                {!status?.smtp_running && (
+                {!status?.smtp_running ? (
                   <button className="oast-start-btn" onClick={() => startSmtp()}>
                     <Wifi size={10} /> Start SMTP Server
                   </button>
+                ) : (
+                  <button className="oast-start-btn" onClick={stopSmtp} style={{ background: 'rgba(239,68,68,0.15)', borderColor: '#ef4444', color: '#fca5a5' }}>
+                    <Wifi size={10} /> Stop SMTP Server
+                  </button>
                 )}
               </div>
+            </div>
+
+            {/* Server domain config */}
+            <div className="oast-quick-gen" style={{ marginTop: 12 }}>
+              <span className="oast-section-title">Callback Domain</span>
+              <div className="oast-gen-row">
+                <input className="oast-input"
+                  placeholder="oast.your-domain.tld"
+                  value={serverDomain}
+                  onChange={e => setServerDomain(e.target.value.trim())} />
+              </div>
+              <span className="oast-dim">
+                For real out-of-band testing you need a domain whose NS records point to this machine on the configured DNS port. Default <b>oast.wondersuite.local</b> only works for local probes hitting 127.0.0.1 directly.
+              </span>
             </div>
 
             {/* Quick Generate */}
