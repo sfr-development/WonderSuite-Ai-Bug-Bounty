@@ -171,27 +171,76 @@ The AI agent operates independently through the MCP interface. It can launch the
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    pentester(["👤 Pentester"])
+    ai(["🤖 AI Client<br/><sub>Claude · Cursor · Windsurf · VS Code · Antigravity</sub>"])
+
+    subgraph DT["💻 &nbsp;WonderSuite Desktop · Tauri 2"]
+        direction TB
+
+        FE["🎨 &nbsp;<b>React 19 Frontend</b><br/><sub>22 modules · TypeScript · Vite · Zustand</sub>"]
+
+        FE <==>|"Tauri IPC<br/>~100 commands"| BE
+
+        subgraph BE["🦀 &nbsp;Rust Backend Engine"]
+            direction TB
+
+            subgraph CORE[" "]
+                direction LR
+                Proxy["🔀 &nbsp;<b>MITM Proxy</b><br/><sub>tokio · native-tls<br/>Dynamic CA · WS · HTTP/2</sub>"]
+                Browser["🌐 &nbsp;<b>WonderBrowser</b><br/><sub>Chromium via CDP<br/>Stealth patches · Net capture</sub>"]
+            end
+
+            subgraph TOOLS[" "]
+                direction LR
+                Scanner["🛡️ &nbsp;<b>Scanner</b><br/><sub>SQLi · XSS · SSTI<br/>LFI · CRLF · Open Redirect</sub>"]
+                Intruder["⚡ &nbsp;<b>Intruder / Fuzzer</b><br/><sub>Sniper · Battering Ram<br/>Pitchfork · Cluster Bomb</sub>"]
+                OAST["📡 &nbsp;<b>OAST Server</b><br/><sub>HTTP · DNS · SMTP<br/>Blind callback collector</sub>"]
+            end
+
+            MCP["🔌 &nbsp;<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>69 security tools</b></sub>"]
+
+            Payloads[("📦 Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
+        end
+    end
+
+    target[("🎯 Target Web Apps<br/><sub>HTTP/1.1 · HTTP/2 · WebSocket · mTLS</sub>")]
+    osint[/"📚 OSINT Sources<br/><sub>crt.sh · RDAP · Wayback · ASN · HackerTarget</sub>"/]
+    callbacks[/"📞 Out-of-Band Callbacks<br/><sub>DNS · HTTP · SMTP</sub>"/]
+
+    pentester ==> FE
+    ai <==>|"HTTP / JSON-RPC"| MCP
+
+    Proxy <==>|"intercept · TLS MITM"| target
+    Browser <==>|"CDP · network capture"| target
+    Scanner -.->|"vulnerability probes"| target
+    Intruder -.->|"payload waves"| target
+    OAST <==>|"out-of-band"| callbacks
+    MCP -.->|"lookup"| osint
+    Scanner --- Payloads
+    Intruder --- Payloads
+
+    classDef person fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#d1fae5
+    classDef desktop fill:#0f172a,stroke:#1e40af,stroke-width:2px,color:#e0e7ff
+    classDef frontend fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#dbeafe
+    classDef engine fill:#451a03,stroke:#fb923c,stroke-width:2px,color:#fed7aa
+    classDef mcp fill:#3b0764,stroke:#a855f7,stroke-width:3px,color:#f3e8ff
+    classDef payload fill:#1f2937,stroke:#94a3b8,stroke-width:1px,color:#e2e8f0
+    classDef external fill:#1f2937,stroke:#94a3b8,stroke-width:1.5px,color:#e2e8f0
+    classDef hidden fill:transparent,stroke:transparent
+
+    class pentester,ai person
+    class DT desktop
+    class FE frontend
+    class BE,Proxy,Browser,Scanner,Intruder,OAST engine
+    class MCP mcp
+    class Payloads payload
+    class target,osint,callbacks external
+    class CORE,TOOLS hidden
 ```
-+-------------------------------------------------------+
-|                    WonderSuite UI                      |
-|              React 19 + TypeScript + Vite              |
-+-------------------------------------------------------+
-|                   Tauri IPC Bridge                     |
-+-------------------------------------------------------+
-|                  Rust Backend Engine                   |
-|                                                       |
-|  +------------+  +------------+  +------------------+ |
-|  |   Proxy    |  |  Browser   |  |   MCP Server     | |
-|  |   Engine   |  |    CDP     |  |  (JSON-RPC 2.0)  | |
-|  |   (MITM)   |  |  Control   |  |   69 Sec Tools   | |
-|  +------------+  +------------+  +------------------+ |
-|                                                       |
-|  +------------+  +------------+  +------------------+ |
-|  |  Scanner   |  |   OAST     |  | Session/Payload  | |
-|  |  Engine    |  |  Server    |  |   Management     | |
-|  +------------+  +------------+  +------------------+ |
-+-------------------------------------------------------+
-```
+
+**How it flows.** The pentester drives the React UI; every action travels through Tauri IPC into the Rust engine. The MITM proxy and the CDP-controlled stealth browser handle live traffic against the target. The scanner and intruder run their own probes, drawing from a 157k-payload arsenal and posting blind-vuln callbacks to the OAST server. In parallel, any MCP-compatible AI client speaks JSON-RPC to the same 69-tool surface — so a human and an AI agent can investigate the same target with the exact same primitives.
 
 ## Tech Stack
 
