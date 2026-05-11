@@ -62,7 +62,7 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: cargo check
-        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets
 
       - name: cargo clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -W clippy::all
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -W clippy::all

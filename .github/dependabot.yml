@@ -12,6 +12,25 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
+    ignore:
+      # The whole pkcs/x509 stack is locked to the 0.7/0.9/0.2/0.10 line —
+      # bumping any single crate splits the dep tree and breaks proxy/ca.rs.
+      - dependency-name: "der"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pem-rfc7468"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "const-oid"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "spki"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pkcs1"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pkcs8"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "x509-cert"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rsa"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/"

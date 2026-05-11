@@ -87,7 +87,11 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Verify Cargo.lock matches
+        shell: bash
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --quiet || (echo "Lockfile drift — run 'cargo update' locally and commit Cargo.lock"; exit 1)
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
