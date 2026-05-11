@@ -667,28 +667,43 @@ pub async fn browser_launch(
 
     let browser = browser.ok_or("No Chromium-based browser found. Install Chrome, Edge, or Brave.")?;
 
-    // If the user pinned a specific port and it is in use, return a structured
-    // error so the frontend can show a kill-the-process modal.
+    let our_pid = std::process::id();
+    let proxy_already_ours = if state.proxy_state.is_running() {
+        if let Some(p) = proxy_port {
+            *state.proxy_state.proxy_port.lock().await == p
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     if let Some(p) = proxy_port {
-        let s = crate::port_commands::port_status(p);
-        if s.in_use {
-            return Err(serde_json::to_string(&serde_json::json!({
-                "kind": "port_in_use",
-                "role": "proxy",
-                "port": p,
-                "holders": s.holders,
-            }))
-            .unwrap_or_else(|_| format!("Proxy port {} is in use", p)));
+        if !proxy_already_ours {
+            let s = crate::port_commands::port_status(p);
+            let foreign_holders: Vec<_> =
+                s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
+            if s.in_use && !foreign_holders.is_empty() {
+                return Err(serde_json::to_string(&serde_json::json!({
+                    "kind": "port_in_use",
+                    "role": "proxy",
+                    "port": p,
+                    "holders": foreign_holders,
+                }))
+                .unwrap_or_else(|_| format!("Proxy port {} is in use", p)));
+            }
         }
     }
     if let Some(p) = cdp_port {
         let s = crate::port_commands::port_status(p);
-        if s.in_use {
+        let foreign_holders: Vec<_> =
+            s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
+        if s.in_use && !foreign_holders.is_empty() {
             return Err(serde_json::to_string(&serde_json::json!({
                 "kind": "port_in_use",
                 "role": "cdp",
                 "port": p,
-                "holders": s.holders,
+                "holders": foreign_holders,
             }))
             .unwrap_or_else(|_| format!("CDP port {} is in use", p)));
         }
@@ -696,16 +711,19 @@ pub async fn browser_launch(
 
     let port = if let Some(p) = proxy_port {
         p
+    } else if proxy_already_ours {
+        *state.proxy_state.proxy_port.lock().await
     } else {
         match find_available_port(8080, 8090) {
             Some(p) => p,
             None => {
                 let s = crate::port_commands::port_status(8080);
+                let foreign: Vec<_> = s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
                 return Err(serde_json::to_string(&serde_json::json!({
                     "kind": "port_in_use",
                     "role": "proxy",
                     "port": 8080,
-                    "holders": s.holders,
+                    "holders": foreign,
                 }))
                 .unwrap_or_else(|_| "All proxy ports 8080-8090 are in use".into()));
             }
@@ -719,11 +737,12 @@ pub async fn browser_launch(
             Some(p) => p,
             None => {
                 let s = crate::port_commands::port_status(9222);
+                let foreign: Vec<_> = s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
                 return Err(serde_json::to_string(&serde_json::json!({
                     "kind": "port_in_use",
                     "role": "cdp",
                     "port": 9222,
-                    "holders": s.holders,
+                    "holders": foreign,
                 }))
                 .unwrap_or_else(|_| "All CDP ports 9222-9232 are in use".into()));
             }

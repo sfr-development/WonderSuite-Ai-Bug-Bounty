@@ -200,3 +200,78 @@
   transition: all 0.12s;
 }
 .updater-btn-secondary:hover { background: var(--bg-2); border-color: var(--border-1); color: var(--text-0); }
+.updater-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.updater-btn-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 6px 14px;
+  color: #1a1208;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.12s;
+}
+.updater-btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.updater-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+.updater-progress-wrap {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.updater-progress-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-1);
+  font-weight: 600;
+}
+.updater-progress-bar {
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.updater-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #ffd28a);
+  transition: width 0.2s ease-out;
+}
+.updater-progress-meta {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+}
+.updater-spin { animation: updater-rot 1s linear infinite; }
+@keyframes updater-rot { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+.updater-ready {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+}
+.updater-ready-title { font-size: 14px; font-weight: 700; color: var(--text-0); }
+.updater-ready-sub { font-size: 11px; color: var(--text-2); }
+
+.updater-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 18px;
+  background: rgba(255,107,53,0.08);
+  border: 1px solid rgba(255,107,53,0.25);
+  margin: 12px 18px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text-1);
+}

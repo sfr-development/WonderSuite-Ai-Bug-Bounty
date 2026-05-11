@@ -31,23 +31,31 @@ fn collect_holders(port: u16) -> Vec<PortHolder> {
             Err(_) => return Vec::new(),
         };
 
-    let needle = format!(":{} ", port);
+    let needle = format!(":{}", port);
     let mut by_pid: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     for line in netstat.lines() {
-        if !line.contains(&needle) {
-            continue;
-        }
         let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 5 {
+        if cols.len() < 4 {
             continue;
         }
-        let local = cols[1].to_string();
-        let state = cols[3];
-        if !state.eq_ignore_ascii_case("LISTENING") {
+        let local = cols[1];
+        let foreign = cols[2];
+
+        if !local.ends_with(&needle) {
             continue;
         }
-        if let Ok(pid) = cols[4].parse::<u32>() {
-            by_pid.entry(pid).or_insert(local);
+
+        let is_listening = foreign == "0.0.0.0:0"
+            || foreign == "[::]:0"
+            || foreign == "*:*"
+            || foreign.ends_with(":0");
+        if !is_listening {
+            continue;
+        }
+
+        let pid_col = cols.last().copied().unwrap_or("");
+        if let Ok(pid) = pid_col.parse::<u32>() {
+            by_pid.entry(pid).or_insert_with(|| local.to_string());
         }
     }
 

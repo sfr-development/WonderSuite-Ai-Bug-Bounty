@@ -88,12 +88,21 @@ function toHex(text: string): string {
   return lines.join('\n');
 }
 
+function findHeaderEnd(raw: string): { idx: number; sepLen: number } {
+  const crlf = raw.indexOf('\r\n\r\n');
+  const lf = raw.indexOf('\n\n');
+  if (crlf !== -1 && (lf === -1 || crlf <= lf)) return { idx: crlf, sepLen: 4 };
+  if (lf !== -1) return { idx: lf, sepLen: 2 };
+  return { idx: -1, sepLen: 0 };
+}
+
 function highlightHttp(raw: string) {
   if (!raw) return null;
-  const headerEnd = raw.indexOf('\r\n\r\n');
+  const { idx: headerEnd, sepLen } = findHeaderEnd(raw);
   const hasBody = headerEnd !== -1;
   const headPart = hasBody ? raw.slice(0, headerEnd) : raw;
-  const bodyPart = hasBody ? raw.slice(headerEnd + 4) : '';
+  const bodyPart = hasBody ? raw.slice(headerEnd + sepLen) : '';
+  const sepRaw = hasBody ? raw.slice(headerEnd, headerEnd + sepLen) : '';
 
   const lines = headPart.split('\n');
   const firstLine = lines[0];
@@ -137,8 +146,407 @@ function highlightHttp(raw: string) {
     <>
       {firstLineJsx}
       {headerJsx}
-      {hasBody && <span className="hl-body">{'\n\n'}{bodyPart}</span>}
+      {hasBody && <span className="hl-body">{sepRaw}{bodyPart}</span>}
     </>
+  );
+}
+
+function replaceBody(raw: string, newBody: string): string {
+  const { idx, sepLen } = findHeaderEnd(raw);
+  if (idx === -1) return raw;
+  let headers = raw.slice(0, idx);
+  const newLen = new TextEncoder().encode(newBody).length;
+  const clRegex = /^Content-Length:[^\r\n]*$/im;
+  if (clRegex.test(headers)) {
+    headers = headers.replace(clRegex, `Content-Length: ${newLen}`);
+  }
+  return headers + raw.slice(idx, idx + sepLen) + newBody;
+}
+
+function jsonType(v: any): 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null' {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v as any;
+}
+
+function looksLikeJson(body: string): boolean {
+  const t = body.trim();
+  return t.startsWith('{') || t.startsWith('[');
+}
+
+function setByPath(obj: any, path: (string | number)[], value: any): any {
+  if (path.length === 0) return value;
+  const [head, ...rest] = path;
+  if (Array.isArray(obj)) {
+    const next = obj.slice();
+    next[head as number] = setByPath(obj[head as number], rest, value);
+    return next;
+  }
+  return { ...obj, [head as string]: setByPath(obj[head as string], rest, value) };
+}
+
+function deleteByPath(obj: any, path: (string | number)[]): any {
+  if (path.length === 0) return undefined;
+  const [head, ...rest] = path;
+  if (rest.length === 0) {
+    if (Array.isArray(obj)) return obj.filter((_, i) => i !== (head as number));
+    const next = { ...obj };
+    delete next[head as string];
+    return next;
+  }
+  return setByPath(obj, [head], deleteByPath(obj[head as any], rest));
+}
+
+function renameKeyAt(obj: any, parentPath: (string | number)[], oldKey: string, newKey: string): any {
+  const doRename = (o: any) => {
+    if (Array.isArray(o) || o === null || typeof o !== 'object') return o;
+    const out: any = {};
+    for (const k of Object.keys(o)) {
+      if (k === oldKey) out[newKey] = o[k];
+      else out[k] = o[k];
+    }
+    return out;
+  };
+  if (parentPath.length === 0) return doRename(obj);
+  const parent = parentPath.reduce((a, p) => a[p as any], obj);
+  return setByPath(obj, parentPath, doRename(parent));
+}
+
+function defaultForType(t: string): any {
+  switch (t) {
+    case 'string': return '';
+    case 'number': return 0;
+    case 'boolean': return false;
+    case 'null': return null;
+    case 'array': return [];
+    case 'object': return {};
+  }
+  return '';
+}
+
+interface JsonBodyEditorProps {
+  editedRaw: string;
+  setEditedRaw: (v: string) => void;
+  setEditedHeaders: (r: string) => void;
+  addToast: (t: any) => void;
+}
+
+function JsonBodyEditor({ editedRaw, setEditedRaw, setEditedHeaders, addToast }: JsonBodyEditorProps) {
+  const body = useMemo(() => {
+    const { idx, sepLen } = findHeaderEnd(editedRaw);
+    return idx === -1 ? '' : editedRaw.slice(idx + sepLen);
+  }, [editedRaw]);
+
+  const [tree, setTree] = useState<any>(undefined);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [pretty, setPretty] = useState(true);
+  const lastSerialized = useRef<string>('');
+
+  useEffect(() => {
+    if (body === lastSerialized.current) return;
+    const t = body.trim();
+    if (!t) {
+      setTree(undefined);
+      setParseError(null);
+      return;
+    }
+    try {
+      setTree(JSON.parse(t));
+      setParseError(null);
+    } catch (e: any) {
+      setParseError(e?.message || String(e));
+    }
+  }, [body]);
+
+  const treeRef = useRef<any>(tree);
+  useEffect(() => { treeRef.current = tree; }, [tree]);
+
+  const commit = useCallback((updaterOrValue: any) => {
+    const newTree = typeof updaterOrValue === 'function'
+      ? updaterOrValue(treeRef.current)
+      : updaterOrValue;
+    setTree(newTree);
+    treeRef.current = newTree;
+    const newBody = pretty ? JSON.stringify(newTree, null, 2) : JSON.stringify(newTree);
+    lastSerialized.current = newBody;
+    const newRaw = replaceBody(editedRaw, newBody);
+    setEditedRaw(newRaw);
+    setEditedHeaders(newRaw);
+  }, [editedRaw, setEditedRaw, setEditedHeaders, pretty]);
+
+  const togglePretty = () => {
+    const next = !pretty;
+    setPretty(next);
+    if (tree !== undefined) {
+      const newBody = next ? JSON.stringify(tree, null, 2) : JSON.stringify(tree);
+      lastSerialized.current = newBody;
+      const newRaw = replaceBody(editedRaw, newBody);
+      setEditedRaw(newRaw);
+      setEditedHeaders(newRaw);
+    }
+  };
+
+  const togglePath = (key: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const initializeAsObject = () => commit({});
+  const initializeAsArray = () => commit([]);
+
+  if (!body.trim()) {
+    return (
+      <div className="json-editor-empty">
+        <Layers size={28} />
+        <span>No body in this request</span>
+        <div className="json-editor-empty-actions">
+          <button onClick={initializeAsObject}>+ Start with Object {'{}'}</button>
+          <button onClick={initializeAsArray}>+ Start with Array []</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (parseError) {
+    return (
+      <div className="json-editor-empty">
+        <AlertTriangle size={28} style={{ color: '#ff6b35' }} />
+        <span>Body is not valid JSON</span>
+        <code className="json-editor-error">{parseError}</code>
+        <span className="intercept-empty-sub">Edit it in the Raw tab, or replace it:</span>
+        <div className="json-editor-empty-actions">
+          <button onClick={initializeAsObject}>Replace with {'{}'}</button>
+          <button onClick={initializeAsArray}>Replace with []</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (tree === undefined) {
+    return <div className="json-editor-empty"><Layers size={24} /><span>Loading…</span></div>;
+  }
+
+  return (
+    <div className="json-editor-root">
+      <div className="json-editor-toolbar">
+        <span className="json-editor-title"><Layers size={12} /> JSON Body Editor</span>
+        <button className="json-editor-toolbtn" onClick={togglePretty} title="Toggle pretty/minified">
+          {pretty ? 'Minify' : 'Format'}
+        </button>
+        <button className="json-editor-toolbtn" onClick={() => {
+          navigator.clipboard.writeText(JSON.stringify(tree, null, 2));
+          addToast({ title: 'Copied', message: 'JSON body copied to clipboard', type: 'success' });
+        }}>
+          <Copy size={11} /> Copy
+        </button>
+        <span className="json-editor-spacer" />
+        <span className="json-editor-size">{new TextEncoder().encode(JSON.stringify(tree)).length} bytes</span>
+      </div>
+      <div className="json-editor-tree">
+        <JsonTreeNode
+          path={[]}
+          value={tree}
+          keyName={null}
+          parentType={null}
+          collapsed={collapsed}
+          togglePath={togglePath}
+          onChange={(newVal) => commit(newVal)}
+          onDelete={() => commit(Array.isArray(tree) ? [] : {})}
+          onRename={() => {}}
+        />
+      </div>
+    </div>
+  );
+}
+
+interface JsonTreeNodeProps {
+  path: (string | number)[];
+  value: any;
+  keyName: string | number | null;
+  parentType: 'object' | 'array' | null;
+  collapsed: Set<string>;
+  togglePath: (key: string) => void;
+  onChange: (newRoot: any) => void;
+  onDelete: () => void;
+  onRename: (newKey: string) => void;
+  rootRef?: any;
+}
+
+function JsonTreeNode(props: JsonTreeNodeProps) {
+  const { path, value, keyName, parentType, collapsed, togglePath, onChange } = props;
+  const t = jsonType(value);
+  const isContainer = t === 'object' || t === 'array';
+  const pathKey = path.join('.') || 'root';
+  const isCollapsed = collapsed.has(pathKey);
+  const [keyDraft, setKeyDraft] = useState<string | null>(null);
+
+  const setLocal = (newValue: any) => {
+    onChange((prev: any) => setByPath(prev, path, newValue));
+  };
+
+  const changeType = (newType: string) => {
+    setLocal(defaultForType(newType));
+  };
+
+  const handleAddChild = (childType: string) => {
+    if (t === 'array') {
+      const newArr = [...(value as any[]), defaultForType(childType)];
+      setLocal(newArr);
+    } else if (t === 'object') {
+      const obj = value as Record<string, any>;
+      let newKey = 'field';
+      let n = 1;
+      while (newKey in obj) newKey = `field${n++}`;
+      setLocal({ ...obj, [newKey]: defaultForType(childType) });
+    }
+  };
+
+  const renderValueControl = () => {
+    if (t === 'string') {
+      return <input className="json-input json-input-str" value={value} onChange={e => setLocal(e.target.value)} spellCheck={false} />;
+    }
+    if (t === 'number') {
+      return <input className="json-input json-input-num" type="number" value={value} onChange={e => {
+        const v = e.target.value;
+        if (v === '') { setLocal(0); return; }
+        const n = Number(v);
+        if (!isNaN(n)) setLocal(n);
+      }} />;
+    }
+    if (t === 'boolean') {
+      return (
+        <button className={`json-bool-btn ${value ? 'true' : 'false'}`} onClick={() => setLocal(!value)}>
+          {value ? 'true' : 'false'}
+        </button>
+      );
+    }
+    if (t === 'null') {
+      return <span className="json-null">null</span>;
+    }
+    if (t === 'array') {
+      return <span className="json-summary">[{(value as any[]).length}]</span>;
+    }
+    if (t === 'object') {
+      return <span className="json-summary">{`{${Object.keys(value).length}}`}</span>;
+    }
+    return null;
+  };
+
+  return (
+    <div className={`json-node json-type-${t}`}>
+      <div className="json-row">
+        {isContainer ? (
+          <button className="json-collapse" onClick={() => togglePath(pathKey)} aria-label="toggle">
+            {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+          </button>
+        ) : <span className="json-collapse-spacer" />}
+
+        {parentType === 'object' && keyName !== null ? (
+          keyDraft !== null ? (
+            <input
+              className="json-input json-input-key"
+              value={keyDraft}
+              autoFocus
+              onChange={e => setKeyDraft(e.target.value)}
+              onBlur={() => {
+                if (keyDraft && keyDraft !== keyName) {
+                  onChange((root: any) => renameKeyAt(root, path.slice(0, -1), keyName as string, keyDraft));
+                }
+                setKeyDraft(null);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') setKeyDraft(null);
+              }}
+              spellCheck={false}
+            />
+          ) : (
+            <span className="json-key" onDoubleClick={() => setKeyDraft(keyName as string)} title="Double-click to rename">
+              {String(keyName)}
+            </span>
+          )
+        ) : parentType === 'array' && keyName !== null ? (
+          <span className="json-idx">[{keyName}]</span>
+        ) : (
+          <span className="json-root-label">root</span>
+        )}
+
+        {(parentType !== null || isContainer) && <span className="json-colon">:</span>}
+
+        <select className="json-type-select" value={t} onChange={e => changeType(e.target.value)}>
+          <option value="string">str</option>
+          <option value="number">num</option>
+          <option value="boolean">bool</option>
+          <option value="null">null</option>
+          <option value="object">obj</option>
+          <option value="array">arr</option>
+        </select>
+
+        {renderValueControl()}
+
+        <div className="json-row-actions">
+          {isContainer && (
+            <>
+              <button className="json-add-btn" onClick={() => handleAddChild('string')} title="Add string">+ str</button>
+              <button className="json-add-btn" onClick={() => handleAddChild('number')} title="Add number">+ num</button>
+              <button className="json-add-btn" onClick={() => handleAddChild('boolean')} title="Add bool">+ bool</button>
+              <button className="json-add-btn" onClick={() => handleAddChild('object')} title="Add object">+ obj</button>
+              <button className="json-add-btn" onClick={() => handleAddChild('array')} title="Add array">+ arr</button>
+            </>
+          )}
+          {path.length > 0 && (
+            <button className="json-del-btn" onClick={() => onChange((root: any) => deleteByPath(root, path))} title="Delete">
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isContainer && !isCollapsed && (
+        <div className="json-children">
+          {t === 'object' ? (
+            Object.keys(value).map((k) => (
+              <JsonTreeNode
+                key={k}
+                path={[...path, k]}
+                value={(value as any)[k]}
+                keyName={k}
+                parentType="object"
+                collapsed={collapsed}
+                togglePath={togglePath}
+                onChange={onChange}
+                onDelete={() => onChange((root: any) => deleteByPath(root, [...path, k]))}
+                onRename={(newKey) => onChange((root: any) => renameKeyAt(root, path, k, newKey))}
+              />
+            ))
+          ) : (
+            (value as any[]).map((item, i) => (
+              <JsonTreeNode
+                key={i}
+                path={[...path, i]}
+                value={item}
+                keyName={i}
+                parentType="array"
+                collapsed={collapsed}
+                togglePath={togglePath}
+                onChange={onChange}
+                onDelete={() => onChange((root: any) => deleteByPath(root, [...path, i]))}
+                onRename={() => {}}
+              />
+            ))
+          )}
+          {((t === 'object' && Object.keys(value).length === 0) ||
+            (t === 'array' && (value as any[]).length === 0)) && (
+            <div className="json-empty-container">empty — use the + buttons above to add entries</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -713,7 +1121,7 @@ export function Intercept() {
   const [interceptOn, setInterceptOn] = useState(false);
   const [responseInterceptOn, setResponseInterceptOn] = useState(false);
   const [proxyRunning, setProxyRunning] = useState(false);
-  const [editorTab, setEditorTab] = useState<'raw' | 'headers' | 'params' | 'hex' | 'attack' | 'response'>('raw');
+  const [editorTab, setEditorTab] = useState<'raw' | 'headers' | 'params' | 'json' | 'hex' | 'attack' | 'response'>('raw');
   const [queue, setQueue] = useState<QueuedRequest[]>([]);
   const [current, setCurrent] = useState<QueuedRequest | null>(null);
   const [lastForwarded, setLastForwarded] = useState<QueuedRequest | null>(null);
@@ -1103,22 +1511,30 @@ export function Intercept() {
 
 
               <div className="intercept-editor-tabs">
-                {([
-                  { id: 'raw', label: 'Raw', icon: <Code size={11} /> },
-                  { id: 'headers', label: 'Headers', icon: <FileText size={11} /> },
-                  { id: 'params', label: 'Params', icon: <Hash size={11} /> },
-                  { id: 'hex', label: 'Hex', icon: <Eye size={11} /> },
-                  { id: 'attack', label: 'Attacks', icon: <Zap size={11} /> },
-                  { id: 'response', label: 'Response', icon: <Eye size={11} /> },
-                ] as const).map((t) => (
-                  <button key={t.id} className={`intercept-editor-tab ${editorTab === t.id ? 'active' : ''}`} onClick={() => setEditorTab(t.id)}>
-                    {t.icon} {t.label}
-                    {t.id === 'headers' && <span className="intercept-tab-count">{editedHeaders.length}</span>}
-                    {t.id === 'params' && <span className="intercept-tab-count">{editedParams.length}</span>}
-                    {t.id === 'attack' && Object.values(detectedAttacks).filter(Boolean).length > 0 && <span className="intercept-tab-count detected">{Object.values(detectedAttacks).filter(Boolean).length}</span>}
-                    {t.id === 'response' && (responseRaw || displayItem.rawResponse) && <span className="intercept-tab-count">1</span>}
-                  </button>
-                ))}
+                {(() => {
+                  const { idx: hdrEnd, sepLen } = findHeaderEnd(editedRaw);
+                  const bodyForDetect = hdrEnd === -1 ? '' : editedRaw.slice(hdrEnd + sepLen);
+                  const hasJsonBody = looksLikeJson(bodyForDetect);
+                  const tabs = [
+                    { id: 'raw', label: 'Raw', icon: <Code size={11} /> },
+                    { id: 'headers', label: 'Headers', icon: <FileText size={11} /> },
+                    { id: 'params', label: 'Params', icon: <Hash size={11} /> },
+                    ...(hasJsonBody ? [{ id: 'json' as const, label: 'JSON', icon: <Layers size={11} /> }] : []),
+                    { id: 'hex', label: 'Hex', icon: <Eye size={11} /> },
+                    { id: 'attack', label: 'Attacks', icon: <Zap size={11} /> },
+                    { id: 'response', label: 'Response', icon: <Eye size={11} /> },
+                  ] as const;
+                  return tabs.map((t) => (
+                    <button key={t.id} className={`intercept-editor-tab ${editorTab === t.id ? 'active' : ''}`} onClick={() => setEditorTab(t.id)}>
+                      {t.icon} {t.label}
+                      {t.id === 'headers' && <span className="intercept-tab-count">{editedHeaders.length}</span>}
+                      {t.id === 'params' && <span className="intercept-tab-count">{editedParams.length}</span>}
+                      {t.id === 'json' && <span className="intercept-tab-count json">JSON</span>}
+                      {t.id === 'attack' && Object.values(detectedAttacks).filter(Boolean).length > 0 && <span className="intercept-tab-count detected">{Object.values(detectedAttacks).filter(Boolean).length}</span>}
+                      {t.id === 'response' && (responseRaw || displayItem.rawResponse) && <span className="intercept-tab-count">1</span>}
+                    </button>
+                  ));
+                })()}
               </div>
 
               {editorTab === 'raw' && (
@@ -1235,6 +1651,15 @@ export function Intercept() {
                     </table>
                   )}
                 </div>
+              )}
+
+              {editorTab === 'json' && (
+                <JsonBodyEditor
+                  editedRaw={editedRaw}
+                  setEditedRaw={setEditedRaw}
+                  setEditedHeaders={(r: string) => setEditedHeaders(parseHeaders(r))}
+                  addToast={addToast}
+                />
               )}
 
               {editorTab === 'hex' && (

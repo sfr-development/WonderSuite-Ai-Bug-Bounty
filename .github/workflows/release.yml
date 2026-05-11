@@ -104,18 +104,24 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: WonderSuite ${{ steps.version.outputs.tag }}
           releaseBody: |
             ## WonderSuite ${{ steps.version.outputs.tag }}
-            
+
             This is an automated release for WonderSuite.
-            
+
             ### Downloads available:
             - **Windows**: `.msi` and `.exe` installers
             - **macOS**: `.app` and `.dmg` (Apple Silicon & Intel)
             - **Linux**: `.AppImage` and `.deb`
+
+            ### Auto-Update
+            Existing installs check `latest.json` on launch and prompt to update in-app — no manual download needed.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.settings.args }}
+          includeUpdaterJson: true
