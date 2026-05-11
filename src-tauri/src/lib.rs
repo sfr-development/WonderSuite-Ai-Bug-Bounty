@@ -6,6 +6,7 @@ mod intruder;
 mod mcp;
 mod oast;
 mod oast_commands;
+mod osint_commands;
 mod payload_commands;
 mod project;
 mod proxy;
@@ -149,6 +150,8 @@ pub fn run() {
             payload_commands::payload_download,
             payload_commands::payload_load,
             payload_commands::payload_search,
+            osint_commands::osint_whois,
+            osint_commands::osint_crtsh,
             updater::check_for_update,
             updater::current_version,
             oast_commands::oast_start_http,

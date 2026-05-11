@@ -83,14 +83,13 @@ export function Scan() {
         const { invoke } = await import('@tauri-apps/api/core');
         const s: any = await invoke('scanner_status', { scanId });
         setTasks(prev => prev.map(t => t.id === scanId ? { ...t, status: s.status, progress: s.progress, requests: s.total_requests, findingCount: s.finding_count, elapsedMs: s.elapsed_ms } : t));
-        if (selectedTask === scanId) {
-          loadFindings(scanId);
-          // Pull the full live result so we can stream the request log into the UI.
-          try {
-            const r: any = await invoke('scanner_get_result', { scanId });
-            if (r?.request_log) setLiveLog(r.request_log);
-          } catch { /* not ready */ }
-        }
+        // Always pull live data for the running scan - the selectedTask check
+        // was stale-captured in the interval closure, leaving live log empty.
+        loadFindings(scanId);
+        try {
+          const r: any = await invoke('scanner_get_result', { scanId });
+          if (r?.request_log) setLiveLog(r.request_log);
+        } catch { /* not ready */ }
         const done = s.status === 'completed' || s.status === 'cancelled' || (typeof s.status === 'string' && s.status.startsWith('error'));
         if (done) {
           clearInterval(pollRef.current!); pollRef.current = null;

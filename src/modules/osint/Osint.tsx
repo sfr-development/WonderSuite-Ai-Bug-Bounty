@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Fingerprint, Globe, Search, Loader2, Copy, Server, Shield, Clock } from 'lucide-react';
+import { useAppStore } from '../../stores';
 import './Osint.css';
 
 type Tab = 'whois' | 'dns' | 'crt' | 'wayback' | 'headers' | 'techdetect';
@@ -11,6 +12,7 @@ interface HeaderInfo { name: string; value: string; secure: boolean; note: strin
 interface TechInfo { name: string; category: string; evidence: string }
 
 export function Osint() {
+  const { addToast } = useAppStore();
   const [tab, setTab] = useState<Tab>('whois');
   const [target, setTarget] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,46 +44,39 @@ export function Osint() {
     setLoading(true); setWhoisResult('');
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const url = `https://rdap.org/domain/${encodeURIComponent(domain())}`;
-      const r: { body: string; status: number } = await invoke('send_http_request', { method: 'GET', url, headers: null, body: null });
-      if (r.status === 200) {
-        try {
-          const data = JSON.parse(r.body);
-          let out = '';
-          out += `Domain: ${data.ldhName || domain()}\n`;
-          out += `Status: ${(data.status || []).join(', ')}\n`;
-          if (data.events) {
-            for (const ev of data.events) {
-              out += `${ev.eventAction}: ${ev.eventDate}\n`;
-            }
-          }
-          if (data.nameservers) {
-            out += `\nNameservers:\n`;
-            for (const ns of data.nameservers) {
-              out += `  ${ns.ldhName || ns.objectClassName || JSON.stringify(ns)}\n`;
-            }
-          }
-          if (data.entities) {
-            out += `\nEntities:\n`;
-            for (const ent of data.entities) {
-              out += `  [${(ent.roles || []).join(', ')}] ${ent.handle || ''}\n`;
-              if (ent.vcardArray && ent.vcardArray[1]) {
-                for (const v of ent.vcardArray[1]) {
-                  if (v[0] === 'fn') out += `    Name: ${v[3]}\n`;
-                  if (v[0] === 'org') out += `    Org: ${v[3]}\n`;
-                  if (v[0] === 'email') out += `    Email: ${v[3]}\n`;
-                }
-              }
-            }
-          }
-          setWhoisResult(out);
-        } catch {
-          setWhoisResult(r.body);
-        }
+      const r: any = await invoke('osint_whois', { target: domain() });
+      if (!r.ok) {
+        setWhoisResult(`RDAP lookup failed.\nLast server: ${r.server || '(none)'}\nLast status: ${r.status}\nNote: ${r.note || '-'}\n\nTried IANA bootstrap + ARIN + Verisign + rdap.org. The TLD may not publish RDAP, or all upstream servers are unreachable from this network.`);
       } else {
-        setWhoisResult(`RDAP lookup returned status ${r.status}\n\n${r.body}`);
+        const s = r.summary || {};
+        let out = '';
+        if (s.domain) out += `Domain: ${s.domain}\n`;
+        if (s.status) out += `Status: ${Array.isArray(s.status) ? s.status.join(', ') : s.status}\n`;
+        if (s.created) out += `Created: ${s.created}\n`;
+        if (s.updated) out += `Updated: ${s.updated}\n`;
+        if (s.expires) out += `Expires: ${s.expires}\n`;
+        if (s.name)    out += `Name:    ${s.name}\n`;
+        if (s.handle)  out += `Handle:  ${s.handle}\n`;
+        if (s.country) out += `Country: ${s.country}\n`;
+        if (s.start_address && s.end_address) out += `Range:   ${s.start_address} - ${s.end_address}\n`;
+        if (s.nameservers && s.nameservers.length) {
+          out += `\nNameservers:\n`;
+          for (const ns of s.nameservers) out += `  ${ns}\n`;
+        }
+        if (s.entities && s.entities.length) {
+          out += `\nEntities:\n`;
+          for (const ent of s.entities) {
+            out += `  [${(ent.roles || []).join(', ')}]`;
+            if (ent.name) out += ` ${ent.name}`;
+            if (ent.org) out += ` (${ent.org})`;
+            out += '\n';
+            if (ent.email) out += `    ${ent.email}\n`;
+          }
+        }
+        out += `\n--- via ${r.server} ---`;
+        setWhoisResult(out);
       }
-    } catch (e) { setWhoisResult(`Error: ${e}`); }
+    } catch (e: any) { setWhoisResult(`Error: ${e?.toString?.() ?? e}`); }
     setLoading(false);
   }, [target, loading]);
 
@@ -116,35 +111,22 @@ export function Osint() {
     setLoading(true); setCrtEntries([]);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const url = `https://crt.sh/?q=%25.${encodeURIComponent(domain())}&output=json`;
-      const r: { body: string; status: number } = await invoke('send_http_request', { method: 'GET', url, headers: null, body: null });
-      if (r.status === 200) {
-        try {
-          const data = JSON.parse(r.body);
-          const seen = new Set<string>();
-          const entries: CrtEntry[] = [];
-          for (const cert of data) {
-            const name = cert.name_value || cert.common_name || '';
-            const names = name.split('\n');
-            for (const n of names) {
-              const clean = n.trim().toLowerCase();
-              if (clean && !seen.has(clean)) {
-                seen.add(clean);
-                entries.push({
-                  subdomain: clean,
-                  issuer: cert.issuer_name || '',
-                  not_after: cert.not_after || '',
-                });
-              }
-            }
-          }
-          entries.sort((a, b) => a.subdomain.localeCompare(b.subdomain));
-          setCrtEntries(entries);
-        } catch { setCrtEntries([]); }
+      const r: any = await invoke('osint_crtsh', { target: domain(), includeExpired: false });
+      if (r?.entries && r.entries.length > 0) {
+        const sorted = [...r.entries].sort((a: CrtEntry, b: CrtEntry) => a.subdomain.localeCompare(b.subdomain));
+        setCrtEntries(sorted);
+      } else if (r?.note) {
+        addToast({ title: 'crt.sh', message: r.note, type: 'warning' });
+        setCrtEntries([]);
+      } else {
+        addToast({ title: 'crt.sh', message: `No certificates for ${domain()} (${r?.total_certificates || 0} raw entries).`, type: 'info' });
+        setCrtEntries([]);
       }
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      addToast({ title: 'crt.sh', message: `Error: ${e?.toString?.() ?? e}`, type: 'error' });
+    }
     setLoading(false);
-  }, [target, loading]);
+  }, [target, loading, addToast]);
 
   const runWayback = useCallback(async () => {
     if (!target || loading) return;
