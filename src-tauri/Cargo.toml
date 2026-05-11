@@ -50,7 +50,7 @@ pkcs8 = { version = "0.10", features = ["pem", "std"] }
 x509-cert = { version = "0.2", features = ["builder", "pem"] }
 der = { version = "0.7", features = ["pem", "std", "alloc"] }
 spki = { version = "0.7", features = ["pem"] }
-const-oid = { version = "0.9", features = ["db"] }
+const-oid = { version = "0.10", features = ["db"] }
 
 # ── Crypto utilities ──
 rand = "0.8"
