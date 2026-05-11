@@ -173,41 +173,41 @@ The AI agent operates independently through the MCP interface. It can launch the
 
 ```mermaid
 flowchart TB
-    pentester(["👤 Pentester"])
-    ai(["🤖 AI Client<br/><sub>Claude · Cursor · Windsurf · VS Code · Antigravity</sub>"])
+    pentester(["Pentester"])
+    ai(["AI Client<br/><sub>Claude · Cursor · Windsurf · VS Code · Antigravity</sub>"])
 
-    subgraph DT["💻 &nbsp;WonderSuite Desktop · Tauri 2"]
+    subgraph DT["WonderSuite Desktop · Tauri 2"]
         direction TB
 
-        FE["🎨 &nbsp;<b>React 19 Frontend</b><br/><sub>22 modules · TypeScript · Vite · Zustand</sub>"]
+        FE["<b>React 19 Frontend</b><br/><sub>22 modules · TypeScript · Vite · Zustand</sub>"]
 
         FE <==>|"Tauri IPC<br/>~100 commands"| BE
 
-        subgraph BE["🦀 &nbsp;Rust Backend Engine"]
+        subgraph BE["Rust Backend Engine"]
             direction TB
 
             subgraph CORE[" "]
                 direction LR
-                Proxy["🔀 &nbsp;<b>MITM Proxy</b><br/><sub>tokio · native-tls<br/>Dynamic CA · WS · HTTP/2</sub>"]
-                Browser["🌐 &nbsp;<b>WonderBrowser</b><br/><sub>Chromium via CDP<br/>Stealth patches · Net capture</sub>"]
+                Proxy["<b>MITM Proxy</b><br/><sub>tokio · native-tls<br/>Dynamic CA · WS · HTTP/2</sub>"]
+                Browser["<b>WonderBrowser</b><br/><sub>Chromium via CDP<br/>Stealth patches · Net capture</sub>"]
             end
 
             subgraph TOOLS[" "]
                 direction LR
-                Scanner["🛡️ &nbsp;<b>Scanner</b><br/><sub>SQLi · XSS · SSTI<br/>LFI · CRLF · Open Redirect</sub>"]
-                Intruder["⚡ &nbsp;<b>Intruder / Fuzzer</b><br/><sub>Sniper · Battering Ram<br/>Pitchfork · Cluster Bomb</sub>"]
-                OAST["📡 &nbsp;<b>OAST Server</b><br/><sub>HTTP · DNS · SMTP<br/>Blind callback collector</sub>"]
+                Scanner["<b>Scanner</b><br/><sub>SQLi · XSS · SSTI<br/>LFI · CRLF · Open Redirect</sub>"]
+                Intruder["<b>Intruder / Fuzzer</b><br/><sub>Sniper · Battering Ram<br/>Pitchfork · Cluster Bomb</sub>"]
+                OAST["<b>OAST Server</b><br/><sub>HTTP · DNS · SMTP<br/>Blind callback collector</sub>"]
             end
 
-            MCP["🔌 &nbsp;<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>69 security tools</b></sub>"]
+            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>69 security tools</b></sub>"]
 
-            Payloads[("📦 Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
+            Payloads[("Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
         end
     end
 
-    target[("🎯 Target Web Apps<br/><sub>HTTP/1.1 · HTTP/2 · WebSocket · mTLS</sub>")]
-    osint[/"📚 OSINT Sources<br/><sub>crt.sh · RDAP · Wayback · ASN · HackerTarget</sub>"/]
-    callbacks[/"📞 Out-of-Band Callbacks<br/><sub>DNS · HTTP · SMTP</sub>"/]
+    target[("Target Web Apps<br/><sub>HTTP/1.1 · HTTP/2 · WebSocket · mTLS</sub>")]
+    osint[/"OSINT Sources<br/><sub>crt.sh · RDAP · Wayback · ASN · HackerTarget</sub>"/]
+    callbacks[/"Out-of-Band Callbacks<br/><sub>DNS · HTTP · SMTP</sub>"/]
 
     pentester ==> FE
     ai <==>|"HTTP / JSON-RPC"| MCP
