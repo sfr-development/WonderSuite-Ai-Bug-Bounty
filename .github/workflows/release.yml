@@ -35,14 +35,21 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.version }}"
           else
-            TAG="${{ github.ref_name }}"
-            VERSION="${TAG#v}"
+            RAW="${{ github.ref_name }}"
           fi
-          echo "Using version: $VERSION"
+          # Strip an arbitrary number of leading 'v' (defends against both 'v0.1.1' and accidental 'vv0.1.1')
+          VERSION="$RAW"
+          while [[ "$VERSION" == v* ]]; do VERSION="${VERSION#v}"; done
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-].+)?$ ]]; then
+            echo "::error::Resolved version '$VERSION' (from '$RAW') is not valid semver"
+            exit 1
+          fi
+          echo "Using version: $VERSION (tag will be v$VERSION)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Sync version into manifests
         shell: bash
@@ -98,10 +105,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ steps.version.outputs.version }}
-          releaseName: WonderSuite v${{ steps.version.outputs.version }}
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: WonderSuite ${{ steps.version.outputs.tag }}
           releaseBody: |
-            ## WonderSuite v${{ steps.version.outputs.version }}
+            ## WonderSuite ${{ steps.version.outputs.tag }}
             
             This is an automated release for WonderSuite.
             
