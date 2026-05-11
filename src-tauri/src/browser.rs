@@ -681,8 +681,7 @@ pub async fn browser_launch(
     if let Some(p) = proxy_port {
         if !proxy_already_ours {
             let s = crate::port_commands::port_status(p);
-            let foreign_holders: Vec<_> =
-                s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
+            let foreign_holders: Vec<_> = s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
             if s.in_use && !foreign_holders.is_empty() {
                 return Err(serde_json::to_string(&serde_json::json!({
                     "kind": "port_in_use",
@@ -696,8 +695,7 @@ pub async fn browser_launch(
     }
     if let Some(p) = cdp_port {
         let s = crate::port_commands::port_status(p);
-        let foreign_holders: Vec<_> =
-            s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
+        let foreign_holders: Vec<_> = s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
         if s.in_use && !foreign_holders.is_empty() {
             return Err(serde_json::to_string(&serde_json::json!({
                 "kind": "port_in_use",

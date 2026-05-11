@@ -45,10 +45,8 @@ fn collect_holders(port: u16) -> Vec<PortHolder> {
             continue;
         }
 
-        let is_listening = foreign == "0.0.0.0:0"
-            || foreign == "[::]:0"
-            || foreign == "*:*"
-            || foreign.ends_with(":0");
+        let is_listening =
+            foreign == "0.0.0.0:0" || foreign == "[::]:0" || foreign == "*:*" || foreign.ends_with(":0");
         if !is_listening {
             continue;
         }
