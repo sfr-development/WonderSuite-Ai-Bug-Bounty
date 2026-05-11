@@ -54,6 +54,13 @@ export function Shell() {
   const { activeModule, appearance, toasts, removeToast } = useAppStore();
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
   useKeyboardShortcuts();
+  // IMPORTANT: this ref MUST be declared before any early returns below so the
+  // hook order stays stable across (splash → launcher → main) transitions.
+  // Otherwise React crashes after the user opens a project (blank screen).
+  const visitedRef = useRef<Set<string>>(new Set());
+  if (activeProject && !visitedRef.current.has(activeModule)) {
+    visitedRef.current.add(activeModule);
+  }
 
   useEffect(() => {
     const root = document.documentElement;
@@ -105,8 +112,6 @@ export function Shell() {
     );
   }
 
-  const visitedRef = useRef<Set<string>>(new Set([activeModule]));
-  if (!visitedRef.current.has(activeModule)) visitedRef.current.add(activeModule);
   const visited = Array.from(visitedRef.current);
 
   return (
