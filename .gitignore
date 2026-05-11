@@ -43,3 +43,7 @@ src-tauri/tree.txt
 # Tauri signer key (NEVER commit)
 .tauri-private-key
 .tauri-private-key.pub
+
+# Marketing material — internal, do not publish
+tiktok-slides/
+tiktok-slides-*/
