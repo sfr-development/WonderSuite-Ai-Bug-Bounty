@@ -46,6 +46,10 @@ export function Scan() {
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [findings, setFindings] = useState<ScanFinding[]>([]);
   const [selectedFinding, setSelectedFinding] = useState<ScanFinding | null>(null);
+  const [viewMode, setViewMode] = useState<'findings' | 'live'>('findings');
+  const [liveLog, setLiveLog] = useState<Array<{ method: string; url: string; response_status: number; response_time_ms: number; response_size: number }>>([]);
+  const liveLogRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollRef = useRef(true);
   const [showEvidence, setShowEvidence] = useState(false);
   const [sevFilter, setSevFilter] = useState<string>('all');
   const [detailTab, setDetailTab] = useState<'detail'|'request'|'response'>('detail');
@@ -79,9 +83,14 @@ export function Scan() {
         const { invoke } = await import('@tauri-apps/api/core');
         const s: any = await invoke('scanner_status', { scanId });
         setTasks(prev => prev.map(t => t.id === scanId ? { ...t, status: s.status, progress: s.progress, requests: s.total_requests, findingCount: s.finding_count, elapsedMs: s.elapsed_ms } : t));
-        // Refresh findings live while the scan runs so the user sees them
-        // appear, not just at the end.
-        if (selectedTask === scanId) loadFindings(scanId);
+        if (selectedTask === scanId) {
+          loadFindings(scanId);
+          // Pull the full live result so we can stream the request log into the UI.
+          try {
+            const r: any = await invoke('scanner_get_result', { scanId });
+            if (r?.request_log) setLiveLog(r.request_log);
+          } catch { /* not ready */ }
+        }
         const done = s.status === 'completed' || s.status === 'cancelled' || (typeof s.status === 'string' && s.status.startsWith('error'));
         if (done) {
           clearInterval(pollRef.current!); pollRef.current = null;
@@ -92,7 +101,19 @@ export function Scan() {
           addToast({ title, message: msg, type: tone });
         }
       } catch { /* not ready */ }
-    }, 1000);
+    }, 700);
+  };
+
+  useEffect(() => {
+    if (viewMode !== 'live' || !autoScrollRef.current) return;
+    const el = liveLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [liveLog, viewMode]);
+
+  const onLiveScroll = () => {
+    const el = liveLogRef.current;
+    if (!el) return;
+    autoScrollRef.current = (el.scrollHeight - el.scrollTop - el.clientHeight) < 30;
   };
 
   const loadFindings = async (scanId: string) => {
@@ -255,6 +276,21 @@ export function Scan() {
                 <BarChart3 size={11} />
                 <span>{riskLabel}</span>
               </div>
+              <div className="scan-view-toggle">
+                <button
+                  className={`scan-view-tab ${viewMode === 'findings' ? 'active' : ''}`}
+                  onClick={() => setViewMode('findings')}>Findings ({findings.length})</button>
+                <button
+                  className={`scan-view-tab ${viewMode === 'live' ? 'active' : ''}`}
+                  onClick={() => setViewMode('live')}>
+                  Live Requests
+                  {activeTask?.status !== 'completed' && activeTask?.status !== 'cancelled' && !activeTask?.status?.startsWith('error') && (
+                    <span className="scan-view-live-dot" />
+                  )}
+                  <span className="scan-view-count">{liveLog.length}</span>
+                </button>
+              </div>
+              {viewMode === 'findings' && (
               <div className="scan-sev-pills">
                 <button className={`scan-sev-pill ${sevFilter === 'all' ? 'active' : ''}`} onClick={() => setSevFilter('all')}>All ({findings.length})</button>
                 {Object.entries(sevCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
@@ -262,6 +298,7 @@ export function Scan() {
                   return <button key={sev} className={`scan-sev-pill ${sevFilter === sev ? 'active' : ''}`} style={{ '--pill-color': SEV_COLORS[sev] } as React.CSSProperties} onClick={() => setSevFilter(sev)}><Icon size={8} /> {sev[0].toUpperCase()} ({count})</button>;
                 })}
               </div>
+              )}
               <div style={{ flex: 1 }} />
               <div className="scan-search-wrap">
                 <Search size={10} />
@@ -272,6 +309,27 @@ export function Scan() {
             </div>
 
             <div className="scan-findings-body">
+              {viewMode === 'live' && (
+                <div className="scan-live-log" ref={liveLogRef} onScroll={onLiveScroll}>
+                  {liveLog.length === 0 ? (
+                    <div className="scan-empty" style={{ padding: 30 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>No requests yet. Start a scan to see traffic stream here.</span>
+                    </div>
+                  ) : (
+                    liveLog.map((r, i) => (
+                      <div key={i} className={`scan-live-row status-${Math.floor(r.response_status / 100)}xx`}>
+                        <span className="scan-live-num">{i + 1}</span>
+                        <span className={`scan-live-status s${Math.floor(r.response_status / 100)}`}>{r.response_status || '—'}</span>
+                        <span className="scan-live-method">{r.method}</span>
+                        <span className="scan-live-url" title={r.url}>{r.url.length > 110 ? r.url.slice(0, 110) + '…' : r.url}</span>
+                        <span className="scan-live-time">{r.response_time_ms}ms</span>
+                        <span className="scan-live-size">{r.response_size > 1024 ? `${(r.response_size / 1024).toFixed(1)}KB` : `${r.response_size}B`}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+              {viewMode === 'findings' && (<>
               {/* List */}
               <div className="scan-findings-list">
                 {filteredFindings.map(f => (
@@ -350,6 +408,7 @@ export function Scan() {
                   <div className="scan-empty"><ShieldAlert size={24} strokeWidth={1} /><span>Select a finding</span></div>
                 </div>
               )}
+              </>)}
             </div>
           </div>
         ) : (

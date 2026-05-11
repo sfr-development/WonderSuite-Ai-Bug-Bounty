@@ -32,12 +32,33 @@ fn flush_live(
     }
 }
 
+// Cheap live update for hot loops — only touches the things that change a lot.
+fn tick_live(live: &ScanLive, findings: &[ScanFinding], total_requests: u32, request_log: &[RequestLog]) {
+    if let Ok(mut s) = live.result.lock() {
+        if findings.len() != s.findings.len() {
+            s.findings = findings.to_vec();
+        }
+        s.total_requests = total_requests;
+        if request_log.len() != s.request_log.len() {
+            s.request_log = request_log.to_vec();
+        }
+    }
+}
+
 macro_rules! check_cancel {
     ($live:expr) => {
         if $live.cancel.load(Ordering::SeqCst) {
             return Ok(());
         }
     };
+}
+
+// Bumps the request counter and live-syncs findings + log so the UI sees them appear.
+macro_rules! bump_req {
+    ($live:expr, $total:ident, $findings:expr, $logs:expr) => {{
+        $total += 1;
+        tick_live(&$live, &$findings, $total, &$logs);
+    }};
 }
 
 /// WonderSuite Active Scanner Engine v2  — Enterprise-Grade
@@ -364,7 +385,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
 
     let req_start = std::time::Instant::now();
     let baseline = client.get(target).send().await.map_err(|e| e.to_string())?;
-    total_requests += 1;
+    bump_req!(live, total_requests, findings, all_request_logs);
     let baseline_status = baseline.status().as_u16();
     let baseline_headers: HashMap<String, String> = baseline
         .headers()
@@ -438,13 +459,13 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
             }
         }
 
-        for url in link_queue.into_iter().take(30) {
-            if total_requests >= config.max_requests / 3 {
+        for url in link_queue.into_iter().take(100) {
+            if total_requests >= config.max_requests / 2 {
                 break;
             }
             let req_start = std::time::Instant::now();
             if let Ok(resp) = client.get(&url).send().await {
-                total_requests += 1;
+                bump_req!(live, total_requests, findings, all_request_logs);
                 let status = resp.status().as_u16();
                 let ct = resp
                     .headers()
@@ -561,8 +582,11 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
 
     if all_params.is_empty() {
         let common_params = [
-            "id", "page", "q", "search", "query", "name", "user", "file", "url", "redirect", "path",
-            "action", "type", "cat", "category", "item", "view", "lang",
+            "id", "page", "q", "search", "query", "name", "user", "username", "email", "file", "filename",
+            "url", "redirect", "return", "next", "callback", "path", "dir", "folder", "action", "type",
+            "cat", "category", "item", "view", "lang", "locale", "ref", "token", "key", "code", "hash",
+            "session", "uid", "pid", "order_id", "product", "include", "template", "page_id", "load", "show",
+            "filter", "sort", "order",
         ];
         for param in &common_params {
             let test_url = if target.contains('?') {
@@ -602,7 +626,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
     if config.check_cors {
         let req_start = std::time::Instant::now();
         if let Ok(cors_resp) = client.get(target).header("Origin", "https://evil.com").send().await {
-            total_requests += 1;
+            bump_req!(live, total_requests, findings, all_request_logs);
             let status = cors_resp.status().as_u16();
             let cors_headers: HashMap<String, String> = cors_resp
                 .headers()
@@ -683,7 +707,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 let test_url = inject_param(param_url, param_name, payload);
                 let req_start = std::time::Instant::now();
                 if let Ok(resp) = client.get(&test_url).send().await {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let status = resp.status().as_u16();
                     let hdrs: Vec<String> = resp
                         .headers()
@@ -735,7 +759,8 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 if let (Ok(true_resp), Ok(false_resp)) =
                     (client.get(&true_url).send().await, client.get(&false_url).send().await)
                 {
-                    total_requests += 2;
+                    bump_req!(live, total_requests, findings, all_request_logs);
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let true_status = true_resp.status().as_u16();
                     let false_status = false_resp.status().as_u16();
                     let true_body = true_resp.text().await.unwrap_or_default();
@@ -781,7 +806,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                     let time_url = inject_param(param_url, param_name, tp);
                     let req_start = std::time::Instant::now();
                     if let Ok(resp) = client.get(&time_url).send().await {
-                        total_requests += 1;
+                        bump_req!(live, total_requests, findings, all_request_logs);
                         let elapsed = req_start.elapsed().as_millis();
                         let status = resp.status().as_u16();
                         if elapsed > 2800 {
@@ -828,7 +853,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
             let canary = format!("ws{}", rand_id(8));
             let canary_url = inject_param(param_url, param_name, &canary);
             if let Ok(resp) = client.get(&canary_url).send().await {
-                total_requests += 1;
+                bump_req!(live, total_requests, findings, all_request_logs);
                 let body = resp.text().await.unwrap_or_default();
 
                 if body.contains(&canary) {
@@ -846,7 +871,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                         let xss_url = inject_param(param_url, param_name, payload);
                         let req_start = std::time::Instant::now();
                         if let Ok(xss_resp) = client.get(&xss_url).send().await {
-                            total_requests += 1;
+                            bump_req!(live, total_requests, findings, all_request_logs);
                             let status = xss_resp.status().as_u16();
                             let ct = xss_resp
                                 .headers()
@@ -926,7 +951,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 let pt_url = inject_param(param_url, param_name, payload);
                 let req_start = std::time::Instant::now();
                 if let Ok(resp) = client.get(&pt_url).send().await {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let status = resp.status().as_u16();
                     let body = resp.text().await.unwrap_or_default();
                     let elapsed = req_start.elapsed().as_millis() as u64;
@@ -981,7 +1006,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 }
                 let cmd_url = inject_param(param_url, param_name, &format!("{}{}", param_value, payload));
                 if let Ok(resp) = client.get(&cmd_url).send().await {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let body = resp.text().await.unwrap_or_default();
                     if body.contains(signature) && !baseline_body.contains(signature) {
                         findings.push(ScanFinding {
@@ -1037,7 +1062,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 }
                 let ssrf_url = inject_param(param_url, param_name, payload);
                 if let Ok(resp) = client.get(&ssrf_url).send().await {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let status_ok = resp.status().is_success();
                     let body = resp.text().await.unwrap_or_default();
                     if body.contains("ami-id")
@@ -1092,7 +1117,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 }
                 let ssti_url = inject_param(param_url, param_name, payload);
                 if let Ok(resp) = client.get(&ssti_url).send().await {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let body = resp.text().await.unwrap_or_default();
                     if body.contains(expected) && !baseline_body.contains(expected) {
                         findings.push(ScanFinding {
@@ -1142,7 +1167,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                 .send()
                 .await
             {
-                total_requests += 1;
+                bump_req!(live, total_requests, findings, all_request_logs);
                 let body = resp.text().await.unwrap_or_default();
                 if body.contains(signature) {
                     findings.push(ScanFinding {
@@ -1208,7 +1233,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                     .send()
                     .await
                 {
-                    total_requests += 1;
+                    bump_req!(live, total_requests, findings, all_request_logs);
                     let status = resp.status().as_u16();
                     let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("");
                     if status >= 300
@@ -1281,7 +1306,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                             .send()
                             .await
                         {
-                            total_requests += 1;
+                            bump_req!(live, total_requests, findings, all_request_logs);
                             let status = resp.status().as_u16();
                             let hdrs: Vec<String> = resp
                                 .headers()
@@ -1450,7 +1475,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
             }
             let req_start = std::time::Instant::now();
             if let Ok(resp) = client.get(target).header(*header_name, *payload).send().await {
-                total_requests += 1;
+                bump_req!(live, total_requests, findings, all_request_logs);
                 let status = resp.status().as_u16();
                 let body = resp.text().await.unwrap_or_default();
                 let elapsed = req_start.elapsed().as_millis() as u64;
@@ -1587,7 +1612,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
                     let cookie_header = format!("{}={}", cookie_name, payload);
                     let req_start = std::time::Instant::now();
                     if let Ok(resp) = client.get(target).header("Cookie", &cookie_header).send().await {
-                        total_requests += 1;
+                        bump_req!(live, total_requests, findings, all_request_logs);
                         let status = resp.status().as_u16();
                         let body = resp.text().await.unwrap_or_default();
                         let elapsed = req_start.elapsed().as_millis() as u64;
@@ -1669,7 +1694,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
             if let Ok(resp) =
                 client.post(target).header("Content-Type", *ct).body(payload.to_string()).send().await
             {
-                total_requests += 1;
+                bump_req!(live, total_requests, findings, all_request_logs);
                 let status = resp.status().as_u16();
                 let body = resp.text().await.unwrap_or_default();
                 let elapsed = req_start.elapsed().as_millis() as u64;
@@ -1739,7 +1764,7 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) 
         }
         let test_url = format!("{}{}", base, path);
         if let Ok(resp) = client.get(&test_url).send().await {
-            total_requests += 1;
+            bump_req!(live, total_requests, findings, all_request_logs);
             let status = resp.status().as_u16();
             let ct =
                 resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
