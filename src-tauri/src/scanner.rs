@@ -1,5 +1,44 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct ScanLive {
+    pub result: Arc<std::sync::Mutex<ScanResult>>,
+    pub cancel: Arc<AtomicBool>,
+}
+
+fn flush_live(
+    live: &ScanLive,
+    status: &str,
+    progress: f64,
+    findings: &[ScanFinding],
+    total_requests: u32,
+    request_log: &[RequestLog],
+    crawled: &[String],
+    injections: &[InjectionPoint],
+    techs: &[String],
+) {
+    if let Ok(mut s) = live.result.lock() {
+        s.status = status.into();
+        s.progress = progress;
+        s.findings = findings.to_vec();
+        s.total_requests = total_requests;
+        s.request_log = request_log.to_vec();
+        s.crawled_urls = crawled.to_vec();
+        s.injection_points = injections.to_vec();
+        s.technologies = techs.to_vec();
+    }
+}
+
+macro_rules! check_cancel {
+    ($live:expr) => {
+        if $live.cancel.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+    };
+}
 
 /// WonderSuite Active Scanner Engine v2  — Enterprise-Grade
 ///
@@ -290,15 +329,20 @@ const TECH_PATTERNS: &[(&str, &str)] = &[
 ];
 
 /// Run a full active scan against a target URL.
-pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanResult, String> {
-    let scan_id = uuid::Uuid::new_v4().to_string();
-    let start = std::time::Instant::now();
+pub async fn run_active_scan(
+    target: &str,
+    config: &ScanConfig,
+    live: ScanLive,
+) -> Result<(), String> {
     let mut findings: Vec<ScanFinding> = Vec::new();
     let mut total_requests: u32 = 0;
     let mut all_request_logs: Vec<RequestLog> = Vec::new();
     let mut crawled_urls: Vec<String> = vec![target.to_string()];
     let mut injection_points: Vec<InjectionPoint> = Vec::new();
     let mut detected_techs: Vec<String> = Vec::new();
+
+    flush_live(&live, "baseline", 2.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
 
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -347,6 +391,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
             }
         }
     }
+
+    flush_live(&live, "crawling", 8.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
 
     if config.auto_crawl {
         let base_url = url::Url::parse(target).ok();
@@ -432,6 +479,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "enumerating", 18.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     let mut all_params: Vec<(String, String, String)> = Vec::new(); // (url, param_name, param_value)
 
     for url in &crawled_urls {
@@ -504,6 +554,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "passive checks", 25.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_headers {
         passive_header_scan(target, &baseline_headers, &baseline_body, &mut findings);
     }
@@ -567,6 +620,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
     if config.check_info_disclosure {
         info_disclosure_scan(target, &baseline_body, &baseline_headers, &mut findings);
     }
+
+    flush_live(&live, "scanning sqli", 32.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
 
     if config.check_sqli {
         for (param_url, param_name, param_value) in &all_params {
@@ -704,6 +760,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "scanning xss", 48.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_xss {
         for (param_url, param_name, _) in &all_params {
             if total_requests >= config.max_requests {
@@ -786,6 +845,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "scanning path traversal", 60.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_path_traversal {
         for (param_url, param_name, _) in &all_params {
             if total_requests >= config.max_requests {
@@ -829,6 +891,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "scanning cmdi", 68.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_command_injection {
         for (param_url, param_name, param_value) in &all_params {
             if total_requests >= config.max_requests {
@@ -863,6 +928,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
             }
         }
     }
+
+    flush_live(&live, "scanning ssrf", 75.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
 
     if config.check_ssrf {
         for (param_url, param_name, _) in &all_params {
@@ -914,6 +982,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "scanning ssti", 82.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_ssti {
         for (param_url, param_name, _) in &all_params {
             if total_requests >= config.max_requests {
@@ -950,6 +1021,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
+    flush_live(&live, "scanning xxe", 88.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
+
     if config.check_xxe {
         for (payload, content_type, signature) in XXE_PAYLOADS {
             if total_requests >= config.max_requests {
@@ -982,6 +1056,9 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
             }
         }
     }
+
+    flush_live(&live, "scanning open redirect", 92.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    check_cancel!(live);
 
     if config.check_open_redirect {
         let redirect_params = [
@@ -1612,8 +1689,6 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
         }
     }
 
-    let duration = start.elapsed().as_millis() as u64;
-
     let severity_order = |s: &str| match s {
         "critical" => 0,
         "high" => 1,
@@ -1623,22 +1698,19 @@ pub async fn run_active_scan(target: &str, config: &ScanConfig) -> Result<ScanRe
     };
     findings.sort_by(|a, b| severity_order(&a.severity).cmp(&severity_order(&b.severity)));
 
-    Ok(ScanResult {
-        scan_id,
-        target: target.into(),
-        scan_type: "full_active_audit".into(),
-        status: "completed".into(),
-        progress: 100.0,
+    flush_live(
+        &live,
+        "finalising",
+        99.0,
+        &findings,
         total_requests,
-        findings,
-        started_at: chrono_now(),
-        completed_at: Some(chrono_now()),
-        duration_ms: duration,
-        crawled_urls,
-        injection_points,
-        request_log: all_request_logs,
-        technologies: detected_techs,
-    })
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
+
+    Ok(())
 }
 
 fn passive_header_scan(
@@ -1856,18 +1928,8 @@ fn inject_param(url: &str, param: &str, value: &str) -> String {
 }
 
 fn rand_id(len: usize) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let chars = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    (0..len)
-        .map(|i| {
-            let idx = ((seed >> (i * 4)) as usize + i * 7) % chars.len();
-            chars[idx] as char
-        })
-        .collect()
-}
-
-fn chrono_now() -> String {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    format!("{}Z", now.as_secs())
+    use rand::Rng;
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..len).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
 }

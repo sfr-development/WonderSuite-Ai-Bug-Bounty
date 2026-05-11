@@ -79,7 +79,18 @@ export function Scan() {
         const { invoke } = await import('@tauri-apps/api/core');
         const s: any = await invoke('scanner_status', { scanId });
         setTasks(prev => prev.map(t => t.id === scanId ? { ...t, status: s.status, progress: s.progress, requests: s.total_requests, findingCount: s.finding_count, elapsedMs: s.elapsed_ms } : t));
-        if (s.status !== 'running') { clearInterval(pollRef.current!); pollRef.current = null; loadFindings(scanId); addToast({ title: 'Scan Complete', message: `${s.finding_count} findings.`, type: s.finding_count > 0 ? 'warning' : 'success' }); }
+        // Refresh findings live while the scan runs so the user sees them
+        // appear, not just at the end.
+        if (selectedTask === scanId) loadFindings(scanId);
+        const done = s.status === 'completed' || s.status === 'cancelled' || (typeof s.status === 'string' && s.status.startsWith('error'));
+        if (done) {
+          clearInterval(pollRef.current!); pollRef.current = null;
+          loadFindings(scanId);
+          const tone = s.status === 'completed' ? (s.finding_count > 0 ? 'warning' : 'success') : (s.status === 'cancelled' ? 'info' : 'error');
+          const title = s.status === 'completed' ? 'Scan Complete' : s.status === 'cancelled' ? 'Scan Cancelled' : 'Scan Failed';
+          const msg = s.status === 'completed' ? `${s.finding_count} findings.` : s.status === 'cancelled' ? `${s.finding_count} findings recorded before cancel.` : s.status;
+          addToast({ title, message: msg, type: tone });
+        }
       } catch { /* not ready */ }
     }, 1000);
   };

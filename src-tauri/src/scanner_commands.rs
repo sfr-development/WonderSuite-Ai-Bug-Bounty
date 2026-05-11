@@ -1,7 +1,8 @@
 use crate::reporting::{self, ReportConfig, ReportFinding};
-use crate::scanner::{self, ScanConfig, ScanResult};
-use serde::{Deserialize, Serialize};
+use crate::scanner::{self, ScanConfig, ScanLive, ScanResult};
+use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -12,13 +13,12 @@ pub fn create_scanner_state() -> ScannerState {
 }
 
 pub struct ScannerManager {
-    pub scans: HashMap<String, ScanResult>,
-    pub running: HashMap<String, bool>, // scan_id → is_running
+    pub scans: HashMap<String, ScanLive>,
 }
 
 impl ScannerManager {
     pub fn new() -> Self {
-        Self { scans: HashMap::new(), running: HashMap::new() }
+        Self { scans: HashMap::new() }
     }
 }
 
@@ -32,57 +32,95 @@ pub struct ScanProgress {
     pub elapsed_ms: u64,
 }
 
+// Add https:// if missing so reqwest doesn't choke on bare hostnames.
+fn normalize_target(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Target URL is empty".into());
+    }
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{}", trimmed)
+    };
+    url::Url::parse(&with_scheme).map_err(|e| format!("Invalid target URL '{}': {}", raw, e))?;
+    Ok(with_scheme)
+}
+
 #[tauri::command]
 pub async fn scanner_start_active(
     state: tauri::State<'_, ScannerState>,
     target: String,
     config: Option<ScanConfig>,
 ) -> Result<String, String> {
+    let target = normalize_target(&target)?;
     let cfg = config.unwrap_or_default();
     let scan_id = uuid::Uuid::new_v4().to_string();
-    let sid = scan_id.clone();
+    let started_at = iso_now();
+
+    let initial = ScanResult {
+        scan_id: scan_id.clone(),
+        target: target.clone(),
+        scan_type: "active".into(),
+        status: "starting".into(),
+        progress: 0.0,
+        total_requests: 0,
+        findings: vec![],
+        started_at: started_at.clone(),
+        completed_at: None,
+        duration_ms: 0,
+        crawled_urls: vec![],
+        injection_points: vec![],
+        request_log: vec![],
+        technologies: vec![],
+    };
+
+    let live = ScanLive {
+        result: Arc::new(std::sync::Mutex::new(initial)),
+        cancel: Arc::new(AtomicBool::new(false)),
+    };
 
     {
         let mut mgr = state.lock().await;
-        mgr.running.insert(sid.clone(), true);
+        mgr.scans.insert(scan_id.clone(), live.clone());
     }
 
-    let state_clone = state.inner().clone();
-
+    let live_for_task = live.clone();
+    let target_for_task = target.clone();
     tokio::spawn(async move {
-        match scanner::run_active_scan(&target, &cfg).await {
-            Ok(result) => {
-                let mut mgr = state_clone.lock().await;
-                mgr.running.insert(sid.clone(), false);
-                mgr.scans.insert(sid, result);
-            }
-            Err(e) => {
-                let mut mgr = state_clone.lock().await;
-                mgr.running.insert(sid.clone(), false);
-                mgr.scans.insert(
-                    sid.clone(),
-                    ScanResult {
-                        scan_id: sid,
-                        target,
-                        scan_type: "failed".into(),
-                        status: format!("error: {}", e),
-                        progress: 100.0,
-                        total_requests: 0,
-                        findings: vec![],
-                        started_at: chrono_now(),
-                        completed_at: Some(chrono_now()),
-                        duration_ms: 0,
-                        crawled_urls: vec![],
-                        injection_points: vec![],
-                        request_log: vec![],
-                        technologies: vec![],
-                    },
-                );
-            }
+        let start = std::time::Instant::now();
+        let outcome =
+            scanner::run_active_scan(&target_for_task, &cfg, live_for_task.clone()).await;
+
+        if let Ok(mut s) = live_for_task.result.lock() {
+            s.duration_ms = start.elapsed().as_millis() as u64;
+            s.completed_at = Some(iso_now());
+            s.progress = 100.0;
+            s.status = match outcome {
+                Ok(()) => {
+                    if live_for_task.cancel.load(Ordering::SeqCst) {
+                        "cancelled".into()
+                    } else {
+                        "completed".into()
+                    }
+                }
+                Err(e) => format!("error: {}", e),
+            };
         }
     });
 
     Ok(scan_id)
+}
+
+#[tauri::command]
+pub async fn scanner_stop(
+    state: tauri::State<'_, ScannerState>,
+    scan_id: String,
+) -> Result<bool, String> {
+    let mgr = state.lock().await;
+    let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    live.cancel.store(true, Ordering::SeqCst);
+    Ok(true)
 }
 
 #[tauri::command]
@@ -91,29 +129,30 @@ pub async fn scanner_status(
     scan_id: String,
 ) -> Result<ScanProgress, String> {
     let mgr = state.lock().await;
-    let is_running = mgr.running.get(&scan_id).copied().unwrap_or(false);
-
-    if let Some(result) = mgr.scans.get(&scan_id) {
-        Ok(ScanProgress {
-            scan_id: scan_id.clone(),
-            status: if is_running { "running".into() } else { result.status.clone() },
-            progress: result.progress,
-            total_requests: result.total_requests,
-            finding_count: result.findings.len(),
-            elapsed_ms: result.duration_ms,
-        })
-    } else if is_running {
-        Ok(ScanProgress {
-            scan_id,
-            status: "running".into(),
-            progress: 0.0,
-            total_requests: 0,
-            finding_count: 0,
-            elapsed_ms: 0,
-        })
+    let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let snap = live
+        .result
+        .lock()
+        .map_err(|_| "scan state poisoned".to_string())?
+        .clone();
+    let elapsed_ms = if snap.duration_ms > 0 {
+        snap.duration_ms
     } else {
-        Err("Scan not found".into())
-    }
+        chrono::Utc::now()
+            .signed_duration_since(chrono::DateTime::parse_from_rfc3339(&snap.started_at)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()))
+            .num_milliseconds()
+            .max(0) as u64
+    };
+    Ok(ScanProgress {
+        scan_id,
+        status: snap.status,
+        progress: snap.progress,
+        total_requests: snap.total_requests,
+        finding_count: snap.findings.len(),
+        elapsed_ms,
+    })
 }
 
 #[tauri::command]
@@ -123,9 +162,14 @@ pub async fn scanner_get_findings(
     severity_filter: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mgr = state.lock().await;
-    let result = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let snap = live
+        .result
+        .lock()
+        .map_err(|_| "scan state poisoned".to_string())?
+        .clone();
 
-    let findings: Vec<&scanner::ScanFinding> = result
+    let findings: Vec<&scanner::ScanFinding> = snap
         .findings
         .iter()
         .filter(|f| if let Some(ref sev) = severity_filter { f.severity == *sev } else { true })
@@ -133,13 +177,13 @@ pub async fn scanner_get_findings(
 
     Ok(serde_json::json!({
         "scan_id": scan_id,
-        "target": result.target,
-        "status": result.status,
-        "total_requests": result.total_requests,
-        "duration_ms": result.duration_ms,
-        "technologies": result.technologies,
-        "crawled_urls": result.crawled_urls.len(),
-        "injection_points": result.injection_points.len(),
+        "target": snap.target,
+        "status": snap.status,
+        "total_requests": snap.total_requests,
+        "duration_ms": snap.duration_ms,
+        "technologies": snap.technologies,
+        "crawled_urls": snap.crawled_urls.len(),
+        "injection_points": snap.injection_points.len(),
         "findings": findings,
     }))
 }
@@ -150,7 +194,13 @@ pub async fn scanner_get_result(
     scan_id: String,
 ) -> Result<ScanResult, String> {
     let mgr = state.lock().await;
-    mgr.scans.get(&scan_id).cloned().ok_or("Scan not found".into())
+    let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let snap = live
+        .result
+        .lock()
+        .map_err(|_| "scan state poisoned".to_string())?
+        .clone();
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -161,20 +211,20 @@ pub async fn scanner_list_scans(
     let mut scans: Vec<serde_json::Value> = mgr
         .scans
         .iter()
-        .map(|(id, r)| {
-            let is_running = mgr.running.get(id).copied().unwrap_or(false);
-            serde_json::json!({
+        .filter_map(|(id, live)| {
+            let s = live.result.lock().ok()?.clone();
+            Some(serde_json::json!({
                 "scan_id": id,
-                "target": r.target,
-                "status": if is_running { "running" } else { &r.status },
-                "progress": r.progress,
-                "total_requests": r.total_requests,
-                "finding_count": r.findings.len(),
-                "duration_ms": r.duration_ms,
-                "started_at": r.started_at,
-                "completed_at": r.completed_at,
-                "technologies": r.technologies,
-            })
+                "target": s.target,
+                "status": s.status,
+                "progress": s.progress,
+                "total_requests": s.total_requests,
+                "finding_count": s.findings.len(),
+                "duration_ms": s.duration_ms,
+                "started_at": s.started_at,
+                "completed_at": s.completed_at,
+                "technologies": s.technologies,
+            }))
         })
         .collect();
     scans.sort_by(|a, b| b["started_at"].as_str().cmp(&a["started_at"].as_str()));
@@ -187,8 +237,10 @@ pub async fn scanner_delete_scan(
     scan_id: String,
 ) -> Result<String, String> {
     let mut mgr = state.lock().await;
-    mgr.scans.remove(&scan_id);
-    mgr.running.remove(&scan_id);
+    if let Some(live) = mgr.scans.remove(&scan_id) {
+        // make sure any still-running task notices it's been removed
+        live.cancel.store(true, Ordering::SeqCst);
+    }
     Ok("Scan deleted".into())
 }
 
@@ -200,7 +252,12 @@ pub async fn scanner_generate_report(
     title: Option<String>,
 ) -> Result<String, String> {
     let mgr = state.lock().await;
-    let result = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
+    let result = live
+        .result
+        .lock()
+        .map_err(|_| "scan state poisoned".to_string())?
+        .clone();
 
     let report_findings: Vec<ReportFinding> = result
         .findings
@@ -235,7 +292,6 @@ pub async fn scanner_generate_report(
     }
 }
 
-fn chrono_now() -> String {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    format!("{}Z", now.as_secs())
+pub fn iso_now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
