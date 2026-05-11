@@ -13,6 +13,17 @@ export function StatusBar({ projectName, isTemporary, onCloseProject }: Props) {
   const [proxyInfo, setProxyInfo] = useState({ running: false, totalRequests: 0, intercepted: 0 });
   const [arch, setArch] = useState('');
   const [memoryMb, setMemoryMb] = useState<number | null>(null);
+  const [version, setVersion] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const v = await invoke<string>('current_version');
+        setVersion(v);
+      } catch { /* not in tauri env */ }
+    })();
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -119,7 +130,7 @@ export function StatusBar({ projectName, isTemporary, onCloseProject }: Props) {
           <span>{arch}</span>
         </div>
       )}
-      <div className="statusbar-version">WonderSuite v0.1.0</div>
+      <div className="statusbar-version">WonderSuite{version ? ` v${version}` : ''}</div>
     </footer>
   );
 }

@@ -31,6 +31,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+          fi
+          echo "Using version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version into manifests
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const v = process.env.VERSION;
+            for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf-8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+            const cargoPath = "src-tauri/Cargo.toml";
+            let cargo = fs.readFileSync(cargoPath, "utf-8");
+            cargo = cargo.replace(/^version = "[^"]*"/m, `version = "${v}"`);
+            fs.writeFileSync(cargoPath, cargo);
+            console.log("Bumped to", v);
+          '
+
       - name: Install dependencies (ubuntu only)
         if: matrix.settings.platform == 'ubuntu-22.04'
         run: |
@@ -61,10 +94,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ github.event.inputs.version || github.ref_name }}
-          releaseName: WonderSuite v${{ github.event.inputs.version || github.ref_name }}
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: WonderSuite v${{ steps.version.outputs.version }}
           releaseBody: |
-            ## WonderSuite v${{ github.event.inputs.version || github.ref_name }}
+            ## WonderSuite v${{ steps.version.outputs.version }}
             
             This is an automated release for WonderSuite.
             
