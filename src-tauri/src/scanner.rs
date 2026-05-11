@@ -329,11 +329,7 @@ const TECH_PATTERNS: &[(&str, &str)] = &[
 ];
 
 /// Run a full active scan against a target URL.
-pub async fn run_active_scan(
-    target: &str,
-    config: &ScanConfig,
-    live: ScanLive,
-) -> Result<(), String> {
+pub async fn run_active_scan(target: &str, config: &ScanConfig, live: ScanLive) -> Result<(), String> {
     let mut findings: Vec<ScanFinding> = Vec::new();
     let mut total_requests: u32 = 0;
     let mut all_request_logs: Vec<RequestLog> = Vec::new();
@@ -341,7 +337,17 @@ pub async fn run_active_scan(
     let mut injection_points: Vec<InjectionPoint> = Vec::new();
     let mut detected_techs: Vec<String> = Vec::new();
 
-    flush_live(&live, "baseline", 2.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "baseline",
+        2.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     let client = reqwest::Client::builder()
@@ -392,7 +398,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "crawling", 8.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "crawling",
+        8.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.auto_crawl {
@@ -479,7 +495,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "enumerating", 18.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "enumerating",
+        18.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     let mut all_params: Vec<(String, String, String)> = Vec::new(); // (url, param_name, param_value)
@@ -554,7 +580,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "passive checks", 25.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "passive checks",
+        25.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_headers {
@@ -621,7 +657,17 @@ pub async fn run_active_scan(
         info_disclosure_scan(target, &baseline_body, &baseline_headers, &mut findings);
     }
 
-    flush_live(&live, "scanning sqli", 32.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning sqli",
+        32.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_sqli {
@@ -760,7 +806,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning xss", 48.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning xss",
+        48.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_xss {
@@ -845,7 +901,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning path traversal", 60.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning path traversal",
+        60.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_path_traversal {
@@ -891,7 +957,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning cmdi", 68.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning cmdi",
+        68.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_command_injection {
@@ -929,7 +1005,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning ssrf", 75.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning ssrf",
+        75.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_ssrf {
@@ -982,7 +1068,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning ssti", 82.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning ssti",
+        82.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_ssti {
@@ -1021,7 +1117,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning xxe", 88.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning xxe",
+        88.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_xxe {
@@ -1057,7 +1163,17 @@ pub async fn run_active_scan(
         }
     }
 
-    flush_live(&live, "scanning open redirect", 92.0, &findings, total_requests, &all_request_logs, &crawled_urls, &injection_points, &detected_techs);
+    flush_live(
+        &live,
+        "scanning open redirect",
+        92.0,
+        &findings,
+        total_requests,
+        &all_request_logs,
+        &crawled_urls,
+        &injection_points,
+        &detected_techs,
+    );
     check_cancel!(live);
 
     if config.check_open_redirect {

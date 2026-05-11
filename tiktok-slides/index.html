@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>WonderSuite — TikTok Slide Deck Preview</title>
+<link rel="stylesheet" href="styles.css"/>
+<style>
+  body {
+    background: #000;
+    align-items: flex-start;
+    padding: 40px;
+    min-height: auto;
+  }
+  .header {
+    width: min(96vw, 2600px);
+    margin: 0 auto 24px;
+    padding: 20px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--bg-1);
+  }
+  .header h1 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  .header .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--fg-muted);
+    letter-spacing: 0.08em;
+  }
+  .header .accent { color: var(--accent); }
+  .preview-grid {
+    margin: 0 auto;
+    --scale: 0.24;
+  }
+  .preview-grid .preview {
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .preview-grid .preview:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>WonderSuite · <span class="accent">TikTok Slide Deck</span></h1>
+  <div class="meta">10 SLIDES · 1080 × 1920 · 9:16 · CLICK ANY TILE TO OPEN FULL-SIZE</div>
+</div>
+
+<div class="preview-grid">
+  <a class="preview" href="slide-01-hook.html"><span class="label">01 · HOOK</span><iframe src="slide-01-hook.html"></iframe></a>
+  <a class="preview" href="slide-02-intro.html"><span class="label">02 · INTRO</span><iframe src="slide-02-intro.html"></iframe></a>
+  <a class="preview" href="slide-03-dashboard.html"><span class="label">03 · DASHBOARD</span><iframe src="slide-03-dashboard.html"></iframe></a>
+  <a class="preview" href="slide-04-mcp.html"><span class="label">04 · MCP</span><iframe src="slide-04-mcp.html"></iframe></a>
+  <a class="preview" href="slide-05-scanner.html"><span class="label">05 · SCANNER</span><iframe src="slide-05-scanner.html"></iframe></a>
+  <a class="preview" href="slide-06-proxy.html"><span class="label">06 · PROXY</span><iframe src="slide-06-proxy.html"></iframe></a>
+  <a class="preview" href="slide-07-sitemap.html"><span class="label">07 · SITEMAP</span><iframe src="slide-07-sitemap.html"></iframe></a>
+  <a class="preview" href="slide-08-oast.html"><span class="label">08 · OAST</span><iframe src="slide-08-oast.html"></iframe></a>
+  <a class="preview" href="slide-09-stack.html"><span class="label">09 · STACK</span><iframe src="slide-09-stack.html"></iframe></a>
+  <a class="preview" href="slide-10-cta.html"><span class="label">10 · CTA</span><iframe src="slide-10-cta.html"></iframe></a>
+</div>
+
+</body>
+</html>

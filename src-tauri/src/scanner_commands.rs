@@ -89,8 +89,7 @@ pub async fn scanner_start_active(
     let target_for_task = target.clone();
     tokio::spawn(async move {
         let start = std::time::Instant::now();
-        let outcome =
-            scanner::run_active_scan(&target_for_task, &cfg, live_for_task.clone()).await;
+        let outcome = scanner::run_active_scan(&target_for_task, &cfg, live_for_task.clone()).await;
 
         if let Ok(mut s) = live_for_task.result.lock() {
             s.duration_ms = start.elapsed().as_millis() as u64;
@@ -113,10 +112,7 @@ pub async fn scanner_start_active(
 }
 
 #[tauri::command]
-pub async fn scanner_stop(
-    state: tauri::State<'_, ScannerState>,
-    scan_id: String,
-) -> Result<bool, String> {
+pub async fn scanner_stop(state: tauri::State<'_, ScannerState>, scan_id: String) -> Result<bool, String> {
     let mgr = state.lock().await;
     let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
     live.cancel.store(true, Ordering::SeqCst);
@@ -130,18 +126,16 @@ pub async fn scanner_status(
 ) -> Result<ScanProgress, String> {
     let mgr = state.lock().await;
     let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
-    let snap = live
-        .result
-        .lock()
-        .map_err(|_| "scan state poisoned".to_string())?
-        .clone();
+    let snap = live.result.lock().map_err(|_| "scan state poisoned".to_string())?.clone();
     let elapsed_ms = if snap.duration_ms > 0 {
         snap.duration_ms
     } else {
         chrono::Utc::now()
-            .signed_duration_since(chrono::DateTime::parse_from_rfc3339(&snap.started_at)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()))
+            .signed_duration_since(
+                chrono::DateTime::parse_from_rfc3339(&snap.started_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            )
             .num_milliseconds()
             .max(0) as u64
     };
@@ -163,11 +157,7 @@ pub async fn scanner_get_findings(
 ) -> Result<serde_json::Value, String> {
     let mgr = state.lock().await;
     let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
-    let snap = live
-        .result
-        .lock()
-        .map_err(|_| "scan state poisoned".to_string())?
-        .clone();
+    let snap = live.result.lock().map_err(|_| "scan state poisoned".to_string())?.clone();
 
     let findings: Vec<&scanner::ScanFinding> = snap
         .findings
@@ -195,11 +185,7 @@ pub async fn scanner_get_result(
 ) -> Result<ScanResult, String> {
     let mgr = state.lock().await;
     let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
-    let snap = live
-        .result
-        .lock()
-        .map_err(|_| "scan state poisoned".to_string())?
-        .clone();
+    let snap = live.result.lock().map_err(|_| "scan state poisoned".to_string())?.clone();
     Ok(snap)
 }
 
@@ -253,11 +239,7 @@ pub async fn scanner_generate_report(
 ) -> Result<String, String> {
     let mgr = state.lock().await;
     let live = mgr.scans.get(&scan_id).ok_or("Scan not found")?;
-    let result = live
-        .result
-        .lock()
-        .map_err(|_| "scan state poisoned".to_string())?
-        .clone();
+    let result = live.result.lock().map_err(|_| "scan state poisoned".to_string())?.clone();
 
     let report_findings: Vec<ReportFinding> = result
         .findings
