@@ -135,6 +135,8 @@ macro_rules! bump_req {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanConfig {
+    #[serde(default = "default_scan_type")]
+    pub scan_type: String,
     pub max_depth: u32,
     pub max_requests: u32,
     pub follow_redirects: bool,
@@ -156,9 +158,69 @@ pub struct ScanConfig {
     pub user_agent: String,
 }
 
+fn default_scan_type() -> String {
+    "crawl_and_audit".into()
+}
+
+impl ScanConfig {
+    /// Apply scan-type preset effects. Called once before run_active_scan dispatches.
+    /// Each preset overrides the relevant config flags so the user-visible dropdown
+    /// actually changes behavior. Unknown / default mode = crawl_and_audit (full scan).
+    pub fn apply_preset(&mut self) {
+        match self.scan_type.as_str() {
+            "passive_audit" => {
+                self.auto_crawl = false;
+                self.check_sqli = false;
+                self.check_xss = false;
+                self.check_ssrf = false;
+                self.check_path_traversal = false;
+                self.check_command_injection = false;
+                self.check_ssti = false;
+                self.check_xxe = false;
+                self.check_open_redirect = false;
+                self.max_requests = self.max_requests.min(40);
+            }
+            "lightweight" => {
+                self.auto_crawl = false;
+                self.check_ssrf = false;
+                self.check_path_traversal = false;
+                self.check_command_injection = false;
+                self.check_ssti = false;
+                self.check_xxe = false;
+                self.check_open_redirect = false;
+                self.max_requests = self.max_requests.min(150);
+                self.crawl_depth = 1;
+            }
+            "owasp_top10" => {
+                self.crawl_depth = self.crawl_depth.max(2);
+                self.check_sqli = true;
+                self.check_xss = true;
+                self.check_ssrf = true;
+                self.check_headers = true;
+                self.check_cors = true;
+                self.check_path_traversal = true;
+                self.check_command_injection = true;
+                self.check_xxe = true;
+                self.check_open_redirect = true;
+                self.check_info_disclosure = true;
+            }
+            "api_scan" => {
+                // API-only: skip HTML link crawl but keep all injection checks.
+                self.auto_crawl = false;
+                self.check_xss = false;
+                self.crawl_depth = 1;
+            }
+            "crawl_and_audit" | _ => {
+                // Full default behavior — keep whatever user toggles are set.
+            }
+        }
+    }
+}
+
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
+            scan_type: default_scan_type(),
             max_depth: 3,
             max_requests: 500,
             follow_redirects: true,
@@ -494,79 +556,110 @@ pub async fn run_active_scan(
         let base_host = base_url.as_ref().and_then(|u| u.host_str()).unwrap_or("").to_string();
 
         let link_re = regex::Regex::new(r#"(?:href|src|action)\s*=\s*["']([^"'#]+)["']"#).unwrap();
-        let mut link_queue: Vec<String> = Vec::new();
-        for cap in link_re.captures_iter(&baseline_body) {
-            if let Some(m) = cap.get(1) {
-                let link = m.as_str();
-                if link.starts_with("javascript:") || link.starts_with("mailto:") || link.starts_with("#") {
-                    continue;
-                }
-                let resolved = if let Ok(u) = url::Url::parse(link) {
-                    u.to_string()
-                } else if let Some(ref base) = base_url {
-                    base.join(link).map(|u| u.to_string()).unwrap_or_default()
-                } else {
-                    continue;
-                };
-                if let Ok(u) = url::Url::parse(&resolved) {
-                    if u.host_str().unwrap_or("") == base_host && !crawled_urls.contains(&resolved) {
-                        link_queue.push(resolved);
+
+        // BFS queue of (url, depth). depth 0 = target's homepage, already fetched.
+        // Links discovered on depth-N page enqueue at depth N+1, bounded by crawl_depth.
+        let mut queue: std::collections::VecDeque<(String, u32)> = std::collections::VecDeque::new();
+        let mut visited: std::collections::HashSet<String> =
+            std::collections::HashSet::from_iter([target.to_string()]);
+        let max_depth = config.crawl_depth.max(1);
+
+        let extract_links = |body: &str, from_url: &str| -> Vec<String> {
+            let from_parsed = url::Url::parse(from_url).ok();
+            let mut out = Vec::new();
+            for cap in link_re.captures_iter(body) {
+                if let Some(m) = cap.get(1) {
+                    let link = m.as_str();
+                    if link.is_empty()
+                        || link.starts_with("javascript:")
+                        || link.starts_with("mailto:")
+                        || link.starts_with("tel:")
+                        || link.starts_with("#")
+                        || link.starts_with("data:")
+                    {
+                        continue;
+                    }
+                    let resolved = if let Ok(u) = url::Url::parse(link) {
+                        Some(u)
+                    } else if let Some(ref base) = from_parsed {
+                        base.join(link).ok()
+                    } else {
+                        None
+                    };
+                    if let Some(u) = resolved {
+                        if u.host_str().unwrap_or("") == base_host {
+                            // Strip fragment to dedupe more aggressively
+                            let mut clean = u.clone();
+                            clean.set_fragment(None);
+                            out.push(clean.to_string());
+                        }
                     }
                 }
             }
+            out
+        };
+
+        // Seed queue with links from the baseline (depth 1).
+        for link in extract_links(&baseline_body, target) {
+            if visited.insert(link.clone()) {
+                queue.push_back((link, 1));
+            }
         }
 
-        for url in link_queue.into_iter().take(100) {
-            if total_requests >= config.max_requests / 2 {
+        // Drain queue until we hit max_requests or queue empties.
+        while let Some((url, depth)) = queue.pop_front() {
+            if total_requests >= config.max_requests {
                 break;
             }
+            check_cancel!(live);
             let req_start = std::time::Instant::now();
-            if let Ok(resp) = client.get(&url).send().await {
-                bump_req!(live, total_requests, findings, all_request_logs, proxy_state);
-                let status = resp.status().as_u16();
-                let ct = resp
-                    .headers()
-                    .get("content-type")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
-                let hdrs: Vec<String> = resp
-                    .headers()
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
-                    .collect();
-                let body = resp.text().await.unwrap_or_default();
+            let resp = match client.get(&url).send().await {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            bump_req!(live, total_requests, findings, all_request_logs, proxy_state);
+            let status = resp.status().as_u16();
+            let ct =
+                resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let hdrs: Vec<String> =
+                resp.headers().iter().map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or(""))).collect();
+            let body = resp.text().await.unwrap_or_default();
 
-                all_request_logs.push(RequestLog {
-                    method: "GET".into(),
-                    url: url.clone(),
-                    request_headers: vec![],
-                    request_body: None,
-                    response_status: status,
-                    response_headers: hdrs,
-                    response_body_preview: body.chars().take(300).collect(),
-                    response_time_ms: req_start.elapsed().as_millis() as u64,
-                    response_size: body.len(),
-                });
+            all_request_logs.push(RequestLog {
+                method: "GET".into(),
+                url: url.clone(),
+                request_headers: vec![],
+                request_body: None,
+                response_status: status,
+                response_headers: hdrs,
+                response_body_preview: body.chars().take(300).collect(),
+                response_time_ms: req_start.elapsed().as_millis() as u64,
+                response_size: body.len(),
+            });
 
-                crawled_urls.push(url.clone());
+            crawled_urls.push(url.clone());
 
-                if ct.contains("html") {
-                    for cap in link_re.captures_iter(&body) {
-                        if let Some(m) = cap.get(1) {
-                            let link = m.as_str();
-                            if link.starts_with("javascript:") || link.starts_with("mailto:") {
-                                continue;
-                            }
-                            if let Some(ref base) = base_url {
-                                if let Ok(resolved) = base.join(link) {
-                                    let resolved = resolved.to_string();
-                                    if !crawled_urls.contains(&resolved) {
-                                        crawled_urls.push(resolved);
-                                    }
-                                }
-                            }
-                        }
+            // Periodically flush progress so the UI's progress bar moves during crawl
+            if total_requests % 10 == 0 {
+                let progress = 8.0 + (total_requests as f64 / config.max_requests as f64) * 12.0;
+                flush_live(
+                    &live,
+                    "crawling",
+                    progress.min(20.0),
+                    &findings,
+                    total_requests,
+                    &all_request_logs,
+                    &crawled_urls,
+                    &injection_points,
+                    &detected_techs,
+                );
+            }
+
+            // Enqueue child links if we still have crawl-depth budget and the page is HTML.
+            if depth < max_depth && ct.contains("html") {
+                for link in extract_links(&body, &url) {
+                    if visited.insert(link.clone()) {
+                        queue.push_back((link, depth + 1));
                     }
                 }
             }

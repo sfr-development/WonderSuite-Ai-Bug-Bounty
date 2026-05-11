@@ -55,7 +55,8 @@ pub async fn scanner_start_active(
     config: Option<ScanConfig>,
 ) -> Result<String, String> {
     let target = normalize_target(&target)?;
-    let cfg = config.unwrap_or_default();
+    let mut cfg = config.unwrap_or_default();
+    cfg.apply_preset();
     let scan_id = uuid::Uuid::new_v4().to_string();
     let started_at = iso_now();
     let proxy_state_for_task = Some(proxy_app_state.proxy_state.clone());

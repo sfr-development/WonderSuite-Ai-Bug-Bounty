@@ -62,6 +62,7 @@ export function Scan() {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const config: Record<string, unknown> = {
+        scan_type: scanType,
         max_depth: maxDepth, max_requests: maxRequests, follow_redirects: followRedirects,
         auto_crawl: true, crawl_depth: 2, timeout_ms: 10000, concurrency,
         user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WonderSuite/1.0',

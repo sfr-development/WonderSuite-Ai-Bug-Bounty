@@ -151,6 +151,35 @@ function highlightHttp(raw: string) {
   );
 }
 
+// Auto pretty-print the body of an HTTP message if Content-Type is JSON and the
+// body parses cleanly. Returns the raw unchanged if no transformation applies.
+// Also updates Content-Length to match the new body length.
+function autoPrettyJsonBody(raw: string): string {
+  if (!raw) return raw;
+  const { idx, sepLen } = findHeaderEnd(raw);
+  if (idx === -1) return raw;
+  const headers = raw.slice(0, idx);
+  const body = raw.slice(idx + sepLen);
+  const ctMatch = /^Content-Type:\s*([^\r\n]+)/im.exec(headers);
+  const isJson = (ctMatch && /json/i.test(ctMatch[1])) || looksLikeJson(body);
+  if (!isJson) return raw;
+  const trimmed = body.trim();
+  if (!trimmed) return raw;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const pretty = JSON.stringify(parsed, null, 2);
+    if (pretty === trimmed) return raw;
+    const newLen = new TextEncoder().encode(pretty).length;
+    const clRegex = /^Content-Length:[^\r\n]*$/im;
+    const newHeaders = clRegex.test(headers)
+      ? headers.replace(clRegex, `Content-Length: ${newLen}`)
+      : headers;
+    return newHeaders + raw.slice(idx, idx + sepLen) + pretty;
+  } catch {
+    return raw;
+  }
+}
+
 function replaceBody(raw: string, newBody: string): string {
   const { idx, sepLen } = findHeaderEnd(raw);
   if (idx === -1) return raw;
@@ -377,6 +406,10 @@ interface JsonTreeNodeProps {
   rootRef?: any;
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  string: 'str', number: 'num', boolean: 'bool', null: 'null', object: 'obj', array: 'arr',
+};
+
 function JsonTreeNode(props: JsonTreeNodeProps) {
   const { path, value, keyName, parentType, collapsed, togglePath, onChange } = props;
   const t = jsonType(value);
@@ -384,6 +417,8 @@ function JsonTreeNode(props: JsonTreeNodeProps) {
   const pathKey = path.join('.') || 'root';
   const isCollapsed = collapsed.has(pathKey);
   const [keyDraft, setKeyDraft] = useState<string | null>(null);
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   const setLocal = (newValue: any) => {
     onChange((prev: any) => setByPath(prev, path, newValue));
@@ -391,6 +426,7 @@ function JsonTreeNode(props: JsonTreeNodeProps) {
 
   const changeType = (newType: string) => {
     setLocal(defaultForType(newType));
+    setTypeMenuOpen(false);
   };
 
   const handleAddChild = (childType: string) => {
@@ -404,6 +440,7 @@ function JsonTreeNode(props: JsonTreeNodeProps) {
       while (newKey in obj) newKey = `field${n++}`;
       setLocal({ ...obj, [newKey]: defaultForType(childType) });
     }
+    setAddMenuOpen(false);
   };
 
   const renderValueControl = () => {
@@ -429,20 +466,29 @@ function JsonTreeNode(props: JsonTreeNodeProps) {
       return <span className="json-null">null</span>;
     }
     if (t === 'array') {
-      return <span className="json-summary">[{(value as any[]).length}]</span>;
+      return <span className="json-summary">[<span className="json-summary-count">{(value as any[]).length}</span>]</span>;
     }
     if (t === 'object') {
-      return <span className="json-summary">{`{${Object.keys(value).length}}`}</span>;
+      return <span className="json-summary">{'{'}<span className="json-summary-count">{Object.keys(value).length}</span>{'}'}</span>;
     }
     return null;
   };
+
+  const addTypes: { id: string; label: string }[] = [
+    { id: 'string', label: 'String' },
+    { id: 'number', label: 'Number' },
+    { id: 'boolean', label: 'Boolean' },
+    { id: 'null', label: 'Null' },
+    { id: 'object', label: 'Object' },
+    { id: 'array', label: 'Array' },
+  ];
 
   return (
     <div className={`json-node json-type-${t}`}>
       <div className="json-row">
         {isContainer ? (
           <button className="json-collapse" onClick={() => togglePath(pathKey)} aria-label="toggle">
-            {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+            {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
         ) : <span className="json-collapse-spacer" />}
 
@@ -471,37 +517,65 @@ function JsonTreeNode(props: JsonTreeNodeProps) {
             </span>
           )
         ) : parentType === 'array' && keyName !== null ? (
-          <span className="json-idx">[{keyName}]</span>
+          <span className="json-idx">{keyName}</span>
         ) : (
           <span className="json-root-label">root</span>
         )}
 
-        {(parentType !== null || isContainer) && <span className="json-colon">:</span>}
+        {parentType !== null && <span className="json-colon">:</span>}
 
-        <select className="json-type-select" value={t} onChange={e => changeType(e.target.value)}>
-          <option value="string">str</option>
-          <option value="number">num</option>
-          <option value="boolean">bool</option>
-          <option value="null">null</option>
-          <option value="object">obj</option>
-          <option value="array">arr</option>
-        </select>
+        <span style={{ position: 'relative' }} onMouseLeave={() => setTypeMenuOpen(false)}>
+          <button
+            type="button"
+            className={`json-type-badge ${t}`}
+            onClick={() => setTypeMenuOpen(!typeMenuOpen)}
+            title="Change type"
+          >
+            {TYPE_LABEL[t]}
+          </button>
+          {typeMenuOpen && (
+            <div className="json-type-menu" onClick={e => e.stopPropagation()}>
+              {Object.keys(TYPE_LABEL).map(typ => (
+                <button
+                  key={typ}
+                  className={typ === t ? 'active' : ''}
+                  onClick={() => changeType(typ)}
+                >
+                  {TYPE_LABEL[typ]}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
 
         {renderValueControl()}
 
         <div className="json-row-actions">
           {isContainer && (
-            <>
-              <button className="json-add-btn" onClick={() => handleAddChild('string')} title="Add string">+ str</button>
-              <button className="json-add-btn" onClick={() => handleAddChild('number')} title="Add number">+ num</button>
-              <button className="json-add-btn" onClick={() => handleAddChild('boolean')} title="Add bool">+ bool</button>
-              <button className="json-add-btn" onClick={() => handleAddChild('object')} title="Add object">+ obj</button>
-              <button className="json-add-btn" onClick={() => handleAddChild('array')} title="Add array">+ arr</button>
-            </>
+            <span className="json-add-menu-wrap" onMouseLeave={() => setAddMenuOpen(false)}>
+              <button
+                type="button"
+                className="json-add-trigger"
+                onClick={() => setAddMenuOpen(!addMenuOpen)}
+                title="Add child"
+              >
+                +
+              </button>
+              {addMenuOpen && (
+                <div className="json-add-menu" onClick={e => e.stopPropagation()}>
+                  {addTypes.map(at => (
+                    <button key={at.id} onClick={() => handleAddChild(at.id)}>
+                      <span className={`json-type-mini json-type-badge ${at.id}`}>{TYPE_LABEL[at.id]}</span>
+                      <span>{at.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
           )}
           {path.length > 0 && (
             <button className="json-del-btn" onClick={() => onChange((root: any) => deleteByPath(root, path))} title="Delete">
-              <X size={11} />
+              <X size={12} />
             </button>
           )}
         </div>
@@ -1272,11 +1346,12 @@ export function Intercept() {
   }, [queue, current]);
 
   const selectItem = (item: QueuedRequest) => {
+    const prettied = autoPrettyJsonBody(item.raw);
     setCurrent(item);
     setLastForwarded(null); // clear lastForwarded when selecting a new item
-    setEditedRaw(item.raw);
-    setEditedHeaders(parseHeaders(item.raw));
-    setEditedParams(parseParams(item.raw, item.url));
+    setEditedRaw(prettied);
+    setEditedHeaders(parseHeaders(prettied));
+    setEditedParams(parseParams(prettied, item.url));
     setResponseRaw(item.rawResponse || '');
   };
 

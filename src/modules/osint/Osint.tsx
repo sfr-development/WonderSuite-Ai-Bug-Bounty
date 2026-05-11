@@ -135,7 +135,10 @@ export function Osint() {
       const { invoke } = await import('@tauri-apps/api/core');
       const url = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain())}/*&output=json&limit=200&fl=timestamp,original,statuscode,mimetype`;
       const r: { body: string; status: number } = await invoke('send_http_request', { method: 'GET', url, headers: null, body: null });
-      if (r.status === 200) {
+      if (r.status !== 200) {
+        addToast({ title: 'Wayback', message: `web.archive.org returned HTTP ${r.status}. Try again in a moment — CDX rate-limits aggressively.`, type: 'error' });
+        setWaybackUrls([]);
+      } else {
         try {
           const rows: string[][] = JSON.parse(r.body);
           if (rows.length > 1) {
@@ -146,12 +149,21 @@ export function Osint() {
               mime: row[3],
             }));
             setWaybackUrls(urls);
+            addToast({ title: 'Wayback', message: `Found ${urls.length} archived URLs for ${domain()}.`, type: 'success' });
+          } else {
+            addToast({ title: 'Wayback', message: `No archived URLs found for ${domain()}.`, type: 'info' });
+            setWaybackUrls([]);
           }
-        } catch { setWaybackUrls([]); }
+        } catch (e: any) {
+          addToast({ title: 'Wayback', message: `CDX response was not valid JSON: ${e?.message || e}`, type: 'error' });
+          setWaybackUrls([]);
+        }
       }
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      addToast({ title: 'Wayback', message: `Request failed: ${e?.toString?.() ?? e}`, type: 'error' });
+    }
     setLoading(false);
-  }, [target, loading]);
+  }, [target, loading, addToast]);
 
   const runHeaders = useCallback(async () => {
     if (!target || loading) return;

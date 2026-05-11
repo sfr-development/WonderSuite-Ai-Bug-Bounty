@@ -155,6 +155,53 @@ fn summarize_ip(v: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+/// Hard-coded RDAP endpoints for ccTLDs not present in IANA's bootstrap.
+/// Add new entries here when a user reports a 404 on a TLD that does publish RDAP.
+#[allow(non_snake_case)]
+fn ccTLD_rdap_server(tld: &str) -> Option<&'static str> {
+    match tld.to_ascii_lowercase().as_str() {
+        "de" => Some("https://rdap.denic.de"),
+        "at" => Some("https://rdap.nic.at"),
+        "ch" | "li" => Some("https://rdap.nic.ch"),
+        "nl" => Some("https://rdap.sidn.nl"),
+        "fr" => Some("https://rdap.nic.fr"),
+        "se" => Some("https://rdap.iis.se"),
+        "nu" => Some("https://rdap.iis.nu"),
+        "dk" => Some("https://rdap.dk-hostmaster.dk"),
+        "fi" => Some("https://rdap.fi"),
+        "no" => Some("https://rdap.norid.no"),
+        "is" => Some("https://rdap.isnic.is"),
+        "ee" => Some("https://rdap.tld.ee"),
+        "lv" => Some("https://rdap.nic.lv"),
+        "lt" => Some("https://rdap.domreg.lt"),
+        "pl" => Some("https://rdap.dns.pl"),
+        "cz" => Some("https://rdap.nic.cz"),
+        "sk" => Some("https://rdap.sk-nic.sk"),
+        "hu" => Some("https://rdap.nic.hu"),
+        "ro" => Some("https://rdap.rotld.ro"),
+        "bg" => Some("https://rdap.register.bg"),
+        "es" => Some("https://rdap.nic.es"),
+        "pt" => Some("https://rdap.dns.pt"),
+        "it" => Some("https://rdap.nic.it"),
+        "be" => Some("https://rdap.dnsbelgium.be"),
+        "lu" => Some("https://rdap.dns.lu"),
+        "ie" => Some("https://rdap.weare.ie"),
+        "gr" => Some("https://rdap.ics.forth.gr"),
+        "uk" | "co.uk" | "org.uk" => Some("https://rdap.nominet.uk"),
+        "us" => Some("https://rdap.nic.us"),
+        "ca" => Some("https://rdap.ca.fury.ca"),
+        "mx" => Some("https://rdap.mx"),
+        "br" => Some("https://rdap.registro.br"),
+        "ar" => Some("https://rdap.nic.ar"),
+        "co" => Some("https://rdap.nic.co"),
+        "cl" => Some("https://rdap.nic.cl"),
+        "io" => Some("https://rdap.nic.io"),
+        "ai" => Some("https://rdap.nic.ai"),
+        "app" | "dev" | "page" => Some("https://rdap.nic.google"),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn osint_whois(target: String) -> Result<RdapResult, String> {
     let client = build_client()?;
@@ -175,6 +222,11 @@ pub async fn osint_whois(target: String) -> Result<RdapResult, String> {
         candidates.push(format!("https://rdap.afrinic.net/rdap/ip/{}", cleaned));
     } else {
         let tld = cleaned.rsplit('.').next().unwrap_or("").to_string();
+        // Many ccTLDs publish RDAP but never registered with IANA's bootstrap (dns.json
+        // doesn't list them). Hard-code the known ones so .de / .at / .nl / etc. work.
+        if let Some(server) = ccTLD_rdap_server(&tld) {
+            candidates.push(format!("{}/domain/{}", server, cleaned));
+        }
         if let Some(server) = iana_bootstrap_for_tld(&client, &tld).await {
             candidates.push(format!("{}/domain/{}", server, cleaned));
         }
