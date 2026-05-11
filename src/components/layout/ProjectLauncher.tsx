@@ -43,8 +43,13 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
   const [scopeEntries, setScopeEntries] = useState<string[]>([]);
   const [newScopeEntry, setNewScopeEntry] = useState('');
   const [maxTraffic, setMaxTraffic] = useState(10000);
+  const [appVersion, setAppVersion] = useState<string>('');
 
   useEffect(() => { loadProjects(); }, []);
+
+  useEffect(() => {
+    invoke<string>('current_version').then(setAppVersion).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (newTarget) {
@@ -200,7 +205,7 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
         <div className="launcher-sidebar">
           <div className="launcher-brand">
             <img src="/wondersuite_logo.png" alt="WonderSuite" style={{ width: 140, height: 'auto', objectFit: 'contain' }} className="launcher-brand-icon" />
-            <span style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 4 }}>v0.1.0 – Security Platform</span>
+            <span style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 4 }}>{appVersion ? `v${appVersion}` : ''} – Security Platform</span>
           </div>
 
           <div className="launcher-actions">

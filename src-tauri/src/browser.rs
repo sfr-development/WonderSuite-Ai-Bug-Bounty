@@ -236,6 +236,9 @@ fn get_profile_dir() -> PathBuf {
 }
 
 /// Install CA certificate into the Windows user trust store.
+/// Note: kept for legacy paths but no longer called — we now use Burp-style
+/// `--ignore-certificate-errors` on the isolated browser profile instead.
+#[allow(dead_code)]
 fn install_ca_cert(
     ca_cert_path: &PathBuf,
     profile_dir: &PathBuf,
@@ -411,60 +414,75 @@ console.log('%c[WonderSuite] Stealth patches active', 'color: #7aa0ff; font-weig
 pub fn launch_browser(
     browser_path: &str,
     proxy_port: u16,
-    ca_cert_path: Option<&PathBuf>,
+    _ca_cert_path: Option<&PathBuf>,
     use_proxy: bool,
     cdp_port: u16,
 ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+    // Per-launch profile dir keeps Chromium isolated from the user's system Chrome
+    // (cookies, history, extensions, autofill). Same pattern Burp / Caido / ZAP use.
     let profile_dir = get_profile_dir();
     fs::create_dir_all(&profile_dir)?;
-
-    let _ca_installed = if let Some(cert_path) = ca_cert_path {
-        install_ca_cert(cert_path, &profile_dir).unwrap_or(false)
-    } else {
-        false
-    };
 
     let preload_path = write_stealth_preload(&profile_dir)?;
 
     let mut args: Vec<String> = Vec::new();
 
+    // ── Proxy wiring (Burp-style) ────────────────────────────────────────
+    if use_proxy {
+        args.push(format!("--proxy-server=127.0.0.1:{}", proxy_port));
+        // CRITICAL: Chrome 72+ silently bypasses the proxy for localhost / 127.0.0.1
+        // unless we explicitly negate that. Without this, anyone testing a local app
+        // sees empty proxy logs — same gotcha Burp's launcher solves.
+        args.push("--proxy-bypass-list=<-loopback>".into());
+    }
+    // Trust the MITM cert without touching the OS trust store. Burp does the same:
+    // an isolated profile + this flag avoids the certutil dance, UAC prompts, and
+    // the risk of leaving a MITM root trusted system-wide after uninstall.
+    args.push("--ignore-certificate-errors".into());
+    args.push("--allow-insecure-localhost".into());
+    args.push("--test-type".into()); // suppresses the "you are using an unsupported flag" infobar
+
+    // ── Profile / first-run noise ────────────────────────────────────────
+    args.push(format!("--user-data-dir={}", profile_dir.to_string_lossy()));
+    args.push("--no-first-run".into());
+    args.push("--no-default-browser-check".into());
+    args.push("--no-pings".into());
+    args.push("--no-service-autorun".into());
+    args.push("--no-experiments".into());
+    args.push("--disable-default-apps".into());
+    args.push("--disable-sync".into());
+    args.push("--disable-component-update".into());
+    args.push("--disable-background-networking".into());
+    args.push("--disable-breakpad".into());
+    args.push("--disable-crash-reporter".into());
+    args.push("--disable-hang-monitor".into());
+    args.push("--disable-notifications".into());
+    args.push("--disable-translate".into());
+    args.push("--disable-client-side-phishing-detection".into());
+    args.push("--disable-domain-reliability".into());
+    args.push("--disable-ipc-flooding-protection".into());
+    args.push("--disable-infobars".into());
+    args.push("--disable-component-extensions-with-background-pages".into());
+    args.push("--metrics-recording-only".into());
+
+    // Force every request through the wire so the proxy captures them all.
+    args.push("--disk-cache-size=0".into());
+    args.push("--media-cache-size=0".into());
+
+    // ── Feature flags ─────────────────────────────────────────────────────
+    // HttpsUpgrades silently rewrites http:// → https:// and can route around the
+    // proxy on edge cases. ChromeWhatsNewUI is the first-run promo page.
+    args.push("--disable-features=HttpsUpgrades,ChromeWhatsNewUI,IsolateOrigins,site-per-process,AutomationControlled,TranslateUI,OptimizationHints,MediaRouter,DialMediaRouteProvider".into());
+    args.push("--enable-features=NetworkService,NetworkServiceInProcess".into());
+    args.push("--disable-blink-features=AutomationControlled".into());
+
+    // ── CDP for automation hooks (agent_browser module) ──────────────────
     args.push(format!("--remote-debugging-port={}", cdp_port));
     args.push("--remote-allow-origins=*".into());
 
-    if use_proxy {
-        args.push(format!("--proxy-server=127.0.0.1:{}", proxy_port));
-    }
-
-    args.push(format!("--user-data-dir={}", profile_dir.to_string_lossy()));
-
-    args.push("--disable-blink-features=AutomationControlled".into());
-
-    args.push("--disable-infobars".into());
-
-    args.push("--flag-switches-begin".into());
-    args.push("--flag-switches-end".into());
-
-    args.push("--disable-features=IsolateOrigins,site-per-process,AutomationControlled,TranslateUI".into());
-    args.push("--enable-features=NetworkService,NetworkServiceInProcess".into());
-
-    args.push("--disable-client-side-phishing-detection".into());
-    args.push("--disable-default-apps".into());
-    args.push("--disable-component-update".into());
-    args.push("--disable-background-networking".into());
-    args.push("--disable-sync".into());
-    args.push("--disable-translate".into());
-    args.push("--metrics-recording-only".into());
-    args.push("--no-first-run".into());
-    args.push("--no-default-browser-check".into());
-    args.push("--disable-breakpad".into());
-    args.push("--disable-hang-monitor".into());
-
+    // ── Window ────────────────────────────────────────────────────────────
     args.push("--window-size=1920,1080".into());
     args.push("--start-maximized".into());
-
-    args.push("--allow-insecure-localhost".into());
-
-    args.push("--disable-component-extensions-with-background-pages".into());
 
     let browser_ver = get_browser_version(browser_path);
     let chrome_ver = if browser_ver.is_empty() { "136.0.7103.93".to_string() } else { browser_ver };
@@ -473,13 +491,13 @@ pub fn launch_browser(
         chrome_ver
     ));
 
-    args.push("data:text/html,<title>New Tab</title>".into());
+    args.push("about:blank".into());
 
     println!("[WonderBrowser] Launching: {} with {} args", browser_path, args.len());
-    println!("[WonderBrowser] Profile: {}", profile_dir.display());
+    println!("[WonderBrowser] Profile: {} (isolated, Burp-style)", profile_dir.display());
     println!("[WonderBrowser] CDP Port: {}", cdp_port);
     println!(
-        "[WonderBrowser] Proxy: {}",
+        "[WonderBrowser] Proxy: {} (--proxy-bypass-list=<-loopback>, --ignore-certificate-errors)",
         if use_proxy { format!("127.0.0.1:{}", proxy_port) } else { "DIRECT (no proxy)".into() }
     );
 

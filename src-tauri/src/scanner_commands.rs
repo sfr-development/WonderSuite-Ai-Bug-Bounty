@@ -50,6 +50,7 @@ fn normalize_target(raw: &str) -> Result<String, String> {
 #[tauri::command]
 pub async fn scanner_start_active(
     state: tauri::State<'_, ScannerState>,
+    proxy_app_state: tauri::State<'_, crate::proxy_commands::ProxyAppState>,
     target: String,
     config: Option<ScanConfig>,
 ) -> Result<String, String> {
@@ -57,6 +58,7 @@ pub async fn scanner_start_active(
     let cfg = config.unwrap_or_default();
     let scan_id = uuid::Uuid::new_v4().to_string();
     let started_at = iso_now();
+    let proxy_state_for_task = Some(proxy_app_state.proxy_state.clone());
 
     let initial = ScanResult {
         scan_id: scan_id.clone(),
@@ -89,7 +91,9 @@ pub async fn scanner_start_active(
     let target_for_task = target.clone();
     tokio::spawn(async move {
         let start = std::time::Instant::now();
-        let outcome = scanner::run_active_scan(&target_for_task, &cfg, live_for_task.clone()).await;
+        let outcome =
+            scanner::run_active_scan(&target_for_task, &cfg, live_for_task.clone(), proxy_state_for_task)
+                .await;
 
         if let Ok(mut s) = live_for_task.result.lock() {
             s.duration_ms = start.elapsed().as_millis() as u64;

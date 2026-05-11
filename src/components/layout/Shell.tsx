@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { Titlebar } from './Titlebar';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
@@ -105,7 +105,9 @@ export function Shell() {
     );
   }
 
-  const ActiveModule = moduleMap[activeModule];
+  const visitedRef = useRef<Set<string>>(new Set([activeModule]));
+  if (!visitedRef.current.has(activeModule)) visitedRef.current.add(activeModule);
+  const visited = Array.from(visitedRef.current);
 
   return (
     <div className="shell">
@@ -114,12 +116,32 @@ export function Shell() {
         <Sidebar />
         <div className="shell-main">
           <div className="shell-content-container">
-            {/* Only the active module is mounted — inactive modules are fully
-                unmounted, freeing their RAM, stopping their timers/effects */}
+            {/* Modules stay mounted once visited (display:none when inactive)
+                so timers, polling, and in-flight scans keep running and the
+                user does not lose state when switching tabs. Modules are
+                still lazy-loaded on first visit so unvisited ones cost nothing. */}
             <div className="shell-content" style={{ display: 'flex' }}>
-              <Suspense fallback={<ModuleSkeleton />}>
-                {ActiveModule && <ActiveModule />}
-              </Suspense>
+              {visited.map((modId) => {
+                const Mod = moduleMap[modId];
+                if (!Mod) return null;
+                const isActive = modId === activeModule;
+                return (
+                  <div
+                    key={modId}
+                    style={{
+                      display: isActive ? 'flex' : 'none',
+                      flex: 1,
+                      flexDirection: 'column',
+                      minHeight: 0,
+                      width: '100%',
+                    }}
+                  >
+                    <Suspense fallback={<ModuleSkeleton />}>
+                      <Mod />
+                    </Suspense>
+                  </div>
+                );
+              })}
             </div>
           </div>
           <StatusBar
