@@ -33,7 +33,7 @@ http = "1"
 bytes = "1"
 sha2 = "0.10"
 sha1 = "0.10"
-md5 = "0.7"
+md5 = "0.8"
 url = "2"
 # WebSocket: use native-tls backend (no rustls/aws-lc-rs/ring needed)
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
