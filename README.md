@@ -357,7 +357,7 @@ Please run `npm run tauri build` locally before submitting a PR to make sure it 
 
 The WonderSuite name and the original codebase are © SFR Development (<https://sfr-development.de>). The project is licensed under the [MIT License](LICENSE) — you may use, modify, fork, and redistribute it under those terms. Contributions remain copyrighted by their respective authors but are licensed to the project (and downstream users) under the same MIT terms.
 
-## Star History
+## Star History.
 
 [![Star History Chart](https://api.star-history.com/svg?repos=sfr-development/WonderSuite-Ai-Bug-Bounty&type=Date)](https://www.star-history.com/#sfr-development/WonderSuite-Ai-Bug-Bounty&Date)
 
