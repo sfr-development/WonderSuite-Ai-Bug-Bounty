@@ -14,6 +14,7 @@ export type ModuleId =
   | 'organizer'
   | 'agent'
   | 'templates'
+  | 'payloads'
   | 'session'
   | 'websocket'
   | 'oast'

@@ -16,6 +16,7 @@ import {
   FileText,
   Bookmark,
   FileCode2,
+  Package,
   Cookie,
   Cable,
   Radio,
@@ -68,6 +69,7 @@ const navGroups: NavGroup[] = [
       { id: 'comparer', icon: GitCompare, label: 'Comparer', shortcut: '' },
       { id: 'logger', icon: FileText, label: 'Logger', shortcut: '' },
       { id: 'templates', icon: FileCode2, label: 'Templates', shortcut: '' },
+      { id: 'payloads', icon: Package, label: 'Payloads', shortcut: '' },
     ],
   },
   {

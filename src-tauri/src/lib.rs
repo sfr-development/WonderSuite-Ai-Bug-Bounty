@@ -6,6 +6,7 @@ mod intruder;
 mod mcp;
 mod oast;
 mod oast_commands;
+mod payload_commands;
 mod project;
 mod proxy;
 mod proxy_commands;
@@ -143,6 +144,10 @@ pub fn run() {
             commands::mcp_execute_tool,
             commands::save_file_text,
             commands::save_file_bytes,
+            payload_commands::payload_list_categories,
+            payload_commands::payload_download,
+            payload_commands::payload_load,
+            payload_commands::payload_search,
             oast_commands::oast_start_http,
             oast_commands::oast_start_dns,
             oast_commands::oast_start_smtp,

@@ -41,18 +41,30 @@ export function Dashboard() {
   const [browserPid, setBrowserPid] = useState<number | null>(null);
   const [activity, setActivity] = useState<McpActivity[]>([]);
   const [uptime, setUptime] = useState(0);
+  const [payloadStats, setPayloadStats] = useState<{ name: string; n: string; downloaded: boolean }[]>([]);
+  const [payloadTotal, setPayloadTotal] = useState<number>(0);
 
   useEffect(() => {
     (async () => {
       try {
-        const [info, brs, status] = await Promise.all([
+        const [info, brs, status, payloads] = await Promise.all([
           invoke<SystemInfo>('get_system_info'),
           invoke<BrowserInfo[]>('browser_detect'),
           invoke<any>('proxy_status'),
+          invoke<any>('payload_list_categories').catch(() => null),
         ]);
         setSysInfo(info);
         setBrowsers(brs);
         setProxyStatus(status);
+        if (payloads?.categories) {
+          const fmt = (n: number): string => n >= 1000 ? `${(n/1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
+          setPayloadStats(payloads.categories.map((c: any) => ({
+            name: c.name.replace(/_/g, ' ').toUpperCase(),
+            n: c.downloaded ? fmt(c.total_payloads) : '—',
+            downloaded: c.downloaded,
+          })));
+          setPayloadTotal(payloads.total_payloads);
+        }
       } catch {}
     })();
   }, []);
@@ -209,21 +221,28 @@ export function Dashboard() {
 
             {/* Payload Arsenal */}
             <div className="dash-panel">
-              <div className="dash-panel-title">Payload Arsenal — 157,280 loaded</div>
+              <div className="dash-panel-title">
+                Payload Arsenal — {payloadTotal > 0 ? `${payloadTotal.toLocaleString()} loaded` : 'not downloaded'}
+                {payloadStats.length > 0 && (
+                  <button
+                    className="dash-action-btn"
+                    style={{ marginLeft: 'auto', fontSize: 10 }}
+                    onClick={() => setModule('payloads')}>Manage</button>
+                )}
+              </div>
               <div className="dash-payload-grid">
-                {[
-                  { name: 'XSS', n: '19.8k' }, { name: 'Fuzzing', n: '72k' },
-                  { name: 'Traversal', n: '23k' }, { name: 'Auth', n: '21k' },
-                  { name: 'CMDi', n: '9.3k' }, { name: 'LFI', n: '8k' },
-                  { name: 'SQLi', n: '1.9k' }, { name: 'Open Redirect', n: '325' },
-                  { name: 'XXE', n: '225' }, { name: 'SSTI', n: '118' },
-                  { name: 'NoSQL', n: '46' }, { name: 'SSRF', n: '36' },
-                ].map(p => (
-                  <div key={p.name} className="dash-payload-item">
-                    <span>{p.name}</span>
-                    <span className="dash-payload-num">{p.n}</span>
+                {payloadStats.length === 0 ? (
+                  <div className="dash-empty" style={{ gridColumn: '1 / -1' }}>
+                    Open <b>Payloads</b> and click "Download All" to pull SecLists + PayloadsAllTheThings.
                   </div>
-                ))}
+                ) : (
+                  payloadStats.map(p => (
+                    <div key={p.name} className={`dash-payload-item ${!p.downloaded ? 'dim' : ''}`}>
+                      <span>{p.name}</span>
+                      <span className="dash-payload-num">{p.n}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>

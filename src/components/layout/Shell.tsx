@@ -27,6 +27,7 @@ const moduleMap: Record<string, React.LazyExoticComponent<React.ComponentType>> 
   organizer:  lazy(() => import('../../modules/organizer/Organizer').then(m => ({ default: m.Organizer }))),
   agent:      lazy(() => import('../../modules/agent/Agent').then(m => ({ default: m.Agent }))),
   templates:  lazy(() => import('../../modules/templates/Templates').then(m => ({ default: m.Templates }))),
+  payloads:   lazy(() => import('../../modules/payloads/Payloads').then(m => ({ default: m.Payloads }))),
   session:    lazy(() => import('../../modules/session/Session').then(m => ({ default: m.Session }))),
   websocket:  lazy(() => import('../../modules/websocket/WebSocket').then(m => ({ default: m.WebSocket }))),
   oast:       lazy(() => import('../../modules/oast/Oast').then(m => ({ default: m.Oast }))),
