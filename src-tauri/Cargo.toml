@@ -91,6 +91,18 @@ wreq-util = { version = "2", features = ["emulation"] }
 # (boring-sys2 doesn't auto-load SChannel / keychain / NSS roots).
 webpki-root-certs = "1"
 
+# Linux-only: force openssl-sys to vendor its own OpenSSL 3 build. Without
+# this, the linker on Ubuntu picks boring-sys2's static libssl.a/libcrypto.a
+# for native-tls's `-lssl -lcrypto` references — but BoringSSL doesn't export
+# the OpenSSL-3 APIs that native-tls/openssl-sys call (SSL_get1_peer_certificate,
+# ERR_get_error_all, SSL_write_ex, …), so the final link fails with undefined
+# symbols. Vendoring gives openssl-sys its own static OpenSSL 3, so each TLS
+# stack stays isolated. macOS uses Security framework and Windows uses SChannel,
+# so neither hits the conflict — vendoring would just add a ~5min compile for
+# nothing.
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl-sys = { version = "0.9", features = ["vendored"] }
+
 # ── Release Profile ──
 [profile.release]
 strip = "symbols"
