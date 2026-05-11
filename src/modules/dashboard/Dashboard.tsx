@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores';
 import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
@@ -223,12 +224,13 @@ export function Dashboard() {
             <div className="dash-panel">
               <div className="dash-panel-title">
                 Payload Arsenal — {payloadTotal > 0 ? `${payloadTotal.toLocaleString()} loaded` : 'not downloaded'}
-                {payloadStats.length > 0 && (
-                  <button
-                    className="dash-action-btn"
-                    style={{ marginLeft: 'auto', fontSize: 10 }}
-                    onClick={() => setModule('payloads')}>Manage</button>
-                )}
+                <button
+                  className="dash-panel-action"
+                  onClick={() => setModule('payloads')}
+                  title="Open Payloads module">
+                  {payloadTotal > 0 ? 'Manage' : 'Download'}
+                  <ChevronRight size={11} />
+                </button>
               </div>
               <div className="dash-payload-grid">
                 {payloadStats.length === 0 ? (

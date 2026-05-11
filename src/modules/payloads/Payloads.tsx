@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Package, Download, Search, Copy, RefreshCcw, ChevronRight, Send, Zap, Folder, FolderCheck } from 'lucide-react';
+import { Package, Download, Search, Copy, RefreshCcw, ChevronRight, Send, Zap, Folder, FolderCheck, Info, X, ShieldAlert } from 'lucide-react';
 import { useAppStore } from '../../stores';
+import { CATEGORY_INFO } from './category-info';
 import './Payloads.css';
 
 interface Category {
@@ -43,6 +44,7 @@ export function Payloads() {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [infoOpen, setInfoOpen] = useState<string | null>(null);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -54,6 +56,13 @@ export function Payloads() {
   }, [addToast]);
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setInfoOpen(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [infoOpen]);
 
   const downloadCategory = async (cat: string) => {
     setDownloading(cat);
@@ -172,6 +181,14 @@ export function Payloads() {
                   {c.downloaded && (
                     <span className="payloads-cat-count">{c.total_payloads.toLocaleString()}</span>
                   )}
+                  {CATEGORY_INFO[c.name] && (
+                    <button
+                      className="payloads-info-btn"
+                      onClick={(e) => { e.stopPropagation(); setInfoOpen(c.name); }}
+                      title={`What is ${c.name}?`}>
+                      <Info size={11} />
+                    </button>
+                  )}
                 </div>
                 {!c.downloaded && (
                   <button
@@ -262,6 +279,86 @@ export function Payloads() {
             </div>
           )}
         </main>
+      </div>
+
+      {infoOpen && CATEGORY_INFO[infoOpen] && (
+        <CategoryInfoModal
+          slug={infoOpen}
+          onClose={() => setInfoOpen(null)}
+          onCopy={copyPayload}
+          onSendRepeater={sendToRepeaterRaw}
+          onSendIntruder={sendToAttack} />
+      )}
+    </div>
+  );
+}
+
+function CategoryInfoModal({
+  slug, onClose, onCopy, onSendRepeater, onSendIntruder,
+}: {
+  slug: string;
+  onClose: () => void;
+  onCopy: (p: string) => void;
+  onSendRepeater: (p: string) => void;
+  onSendIntruder: (p: string) => void;
+}) {
+  const info = CATEGORY_INFO[slug];
+  if (!info) return null;
+  return (
+    <div className="payloads-modal-overlay" onClick={onClose}>
+      <div className="payloads-modal" onClick={e => e.stopPropagation()}>
+        <header className="payloads-modal-head">
+          <div className="payloads-modal-title-wrap">
+            <ShieldAlert size={16} />
+            <span className="payloads-modal-slug">{slug}</span>
+            <span className="payloads-modal-label">{info.label}</span>
+          </div>
+          <button className="payloads-modal-close" onClick={onClose} title="Close (Esc)"><X size={14} /></button>
+        </header>
+
+        <div className="payloads-modal-body">
+          <p className="payloads-modal-desc">{info.description}</p>
+
+          <section>
+            <h4>Where to inject</h4>
+            <ul className="payloads-modal-list">
+              {info.inject_at.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          </section>
+
+          <section>
+            <h4>Example payloads</h4>
+            <div className="payloads-modal-examples">
+              {info.examples.map((ex, i) => (
+                <div key={i} className="payloads-modal-example">
+                  <code className="payloads-modal-payload">{ex.payload}</code>
+                  <p className="payloads-modal-explain">{ex.explain}</p>
+                  <div className="payloads-modal-actions">
+                    <button onClick={() => onCopy(ex.payload)} title="Copy"><Copy size={10} /> Copy</button>
+                    <button onClick={() => onSendRepeater(ex.payload)} title="Send to Repeater"><Send size={10} /> Repeater</button>
+                    <button onClick={() => onSendIntruder(ex.payload)} title="Send to Intruder"><Zap size={10} /> Intruder</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h4>Notable real-world cases</h4>
+            <ul className="payloads-modal-cases">
+              {info.famous.map((c, i) => (
+                <li key={i}>
+                  <strong>{c.title}</strong> — {c.detail}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section>
+            <h4>Mitigation</h4>
+            <p className="payloads-modal-mitigation">{info.mitigation}</p>
+          </section>
+        </div>
       </div>
     </div>
   );

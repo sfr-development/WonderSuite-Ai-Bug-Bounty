@@ -96,6 +96,27 @@
   background: var(--bg-1); font-size: 10px; color: var(--text-2);
 }
 .dash-payload-num { font-weight: 700; color: var(--text-0); font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.dash-payload-item.dim { opacity: 0.45; }
+.dash-payload-item.dim .dash-payload-num { color: var(--text-3); }
+
+.dash-panel-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 3px 9px;
+  background: rgba(232,161,69,0.10);
+  border: 1px solid rgba(232,161,69,0.35);
+  color: var(--accent);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dash-panel-action:hover { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
 
 /* ── Activity Feed ── */
 .dash-activity-list { flex: 1; overflow-y: auto; min-height: 0; }
