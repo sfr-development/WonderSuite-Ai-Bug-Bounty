@@ -16,6 +16,7 @@ mod scanner_commands;
 mod session;
 mod session_commands;
 mod system;
+mod updater;
 mod websocket_commands;
 
 use proxy_commands::ProxyAppState;
@@ -148,6 +149,8 @@ pub fn run() {
             payload_commands::payload_download,
             payload_commands::payload_load,
             payload_commands::payload_search,
+            updater::check_for_update,
+            updater::current_version,
             oast_commands::oast_start_http,
             oast_commands::oast_start_dns,
             oast_commands::oast_start_smtp,
