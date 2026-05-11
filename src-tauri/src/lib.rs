@@ -8,6 +8,7 @@ mod oast;
 mod oast_commands;
 mod osint_commands;
 mod payload_commands;
+mod port_commands;
 mod project;
 mod proxy;
 mod proxy_commands;
@@ -152,6 +153,8 @@ pub fn run() {
             payload_commands::payload_search,
             osint_commands::osint_whois,
             osint_commands::osint_crtsh,
+            port_commands::port_status,
+            port_commands::kill_process,
             updater::check_for_update,
             updater::current_version,
             oast_commands::oast_start_http,
@@ -223,6 +226,11 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+                browser::kill_all_launched();
+            }
+        });
 }

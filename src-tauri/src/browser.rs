@@ -30,6 +30,39 @@ pub struct NetworkEntry {
 static BROWSER_NETWORK_LOG: std::sync::OnceLock<Arc<Mutex<Vec<NetworkEntry>>>> = std::sync::OnceLock::new();
 /// Flag: is the CDP network listener actively capturing?
 static NETWORK_CAPTURE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// PIDs of browser processes we spawned — used to clean up on app exit.
+static LAUNCHED_PIDS: std::sync::OnceLock<Mutex<Vec<u32>>> = std::sync::OnceLock::new();
+
+fn launched_pids() -> &'static Mutex<Vec<u32>> {
+    LAUNCHED_PIDS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn track_launched_pid(pid: u32) {
+    if let Ok(mut v) = launched_pids().lock() {
+        v.push(pid);
+    }
+}
+
+pub fn kill_all_launched() {
+    let pids: Vec<u32> = launched_pids().lock().map(|v| v.clone()).unwrap_or_default();
+    if pids.is_empty() {
+        return;
+    }
+    println!("[WonderBrowser] Cleaning up {} spawned browser process(es) on shutdown", pids.len());
+    for pid in pids {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new_hidden("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+        }
+    }
+    if let Ok(mut v) = launched_pids().lock() {
+        v.clear();
+    }
+}
 
 fn network_log() -> &'static Arc<Mutex<Vec<NetworkEntry>>> {
     BROWSER_NETWORK_LOG.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
@@ -453,6 +486,7 @@ pub fn launch_browser(
     let child = Command::new(browser_path).args(&args).spawn()?;
 
     let pid = child.id();
+    track_launched_pid(pid);
 
     CDP_PORT.store(cdp_port, std::sync::atomic::Ordering::Relaxed);
     CDP_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -633,18 +667,67 @@ pub async fn browser_launch(
 
     let browser = browser.ok_or("No Chromium-based browser found. Install Chrome, Edge, or Brave.")?;
 
+    // If the user pinned a specific port and it is in use, return a structured
+    // error so the frontend can show a kill-the-process modal.
+    if let Some(p) = proxy_port {
+        let s = crate::port_commands::port_status(p);
+        if s.in_use {
+            return Err(serde_json::to_string(&serde_json::json!({
+                "kind": "port_in_use",
+                "role": "proxy",
+                "port": p,
+                "holders": s.holders,
+            }))
+            .unwrap_or_else(|_| format!("Proxy port {} is in use", p)));
+        }
+    }
+    if let Some(p) = cdp_port {
+        let s = crate::port_commands::port_status(p);
+        if s.in_use {
+            return Err(serde_json::to_string(&serde_json::json!({
+                "kind": "port_in_use",
+                "role": "cdp",
+                "port": p,
+                "holders": s.holders,
+            }))
+            .unwrap_or_else(|_| format!("CDP port {} is in use", p)));
+        }
+    }
+
     let port = if let Some(p) = proxy_port {
         p
     } else {
-        find_available_port(8080, 8090)
-            .ok_or("All proxy ports 8080-8090 are in use. Close other applications using these ports.")?
+        match find_available_port(8080, 8090) {
+            Some(p) => p,
+            None => {
+                let s = crate::port_commands::port_status(8080);
+                return Err(serde_json::to_string(&serde_json::json!({
+                    "kind": "port_in_use",
+                    "role": "proxy",
+                    "port": 8080,
+                    "holders": s.holders,
+                }))
+                .unwrap_or_else(|_| "All proxy ports 8080-8090 are in use".into()));
+            }
+        }
     };
 
     let cdp = if let Some(p) = cdp_port {
         p
     } else {
-        find_available_port(9222, 9232)
-            .ok_or("All CDP ports 9222-9232 are in use. Close other browser debug sessions.")?
+        match find_available_port(9222, 9232) {
+            Some(p) => p,
+            None => {
+                let s = crate::port_commands::port_status(9222);
+                return Err(serde_json::to_string(&serde_json::json!({
+                    "kind": "port_in_use",
+                    "role": "cdp",
+                    "port": 9222,
+                    "holders": s.holders,
+                }))
+                .unwrap_or_else(|_| "All CDP ports 9222-9232 are in use".into()));
+            }
+        }
     };
 
     let should_use_proxy = use_proxy.unwrap_or(true);

@@ -44,6 +44,12 @@ export function Dashboard() {
   const [uptime, setUptime] = useState(0);
   const [payloadStats, setPayloadStats] = useState<{ name: string; n: string; downloaded: boolean }[]>([]);
   const [payloadTotal, setPayloadTotal] = useState<number>(0);
+  const [portConflict, setPortConflict] = useState<null | {
+    role: string;
+    port: number;
+    holders: { pid: number; name: string; command: string; addr: string }[];
+  }>(null);
+  const [killingPid, setKillingPid] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -96,9 +102,39 @@ export function Dashboard() {
       if (!proxyStatus?.running) await invoke('proxy_start', { port: 8080 });
       const r = await invoke<any>('browser_launch', { browserName: null, proxyPort: 8080 });
       setBrowserPid(r.pid);
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      const msg = typeof e === 'string' ? e : (e?.toString?.() ?? '');
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed?.kind === 'port_in_use') {
+          setPortConflict({
+            role: parsed.role || 'port',
+            port: parsed.port,
+            holders: parsed.holders || [],
+          });
+        } else {
+          console.error(e);
+        }
+      } catch {
+        console.error(e);
+      }
+    }
     setLaunching(false);
   }, [proxyStatus]);
+
+  const killHolder = useCallback(async (pid: number) => {
+    setKillingPid(pid);
+    try {
+      await invoke('kill_process', { pid });
+      await new Promise(r => setTimeout(r, 300));
+      setPortConflict(null);
+      setKillingPid(null);
+      launchBrowser();
+    } catch (e) {
+      console.error(e);
+      setKillingPid(null);
+    }
+  }, [launchBrowser]);
 
   const fmt = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -296,6 +332,46 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {portConflict && (
+        <div className="dash-modal-overlay" onClick={() => setPortConflict(null)}>
+          <div className="dash-modal" onClick={e => e.stopPropagation()}>
+            <div className="dash-modal-head">
+              <strong>Port {portConflict.port} ({portConflict.role}) is already in use</strong>
+              <button className="dash-modal-x" onClick={() => setPortConflict(null)}>×</button>
+            </div>
+            <p className="dash-modal-msg">
+              {portConflict.holders.length === 0
+                ? 'Could not identify which process is holding the port. Close other apps that may be using it and retry.'
+                : `WonderSuite needs port ${portConflict.port} to launch the browser. The process${portConflict.holders.length > 1 ? 'es' : ''} listed below currently hold${portConflict.holders.length > 1 ? '' : 's'} it. You can terminate ${portConflict.holders.length > 1 ? 'them' : 'it'} and retry.`}
+            </p>
+            {portConflict.holders.length > 0 && (
+              <div className="dash-modal-holders">
+                {portConflict.holders.map(h => (
+                  <div key={h.pid} className="dash-modal-holder">
+                    <div className="dash-modal-holder-info">
+                      <span className="dash-modal-holder-name">{h.name || '(unknown)'}</span>
+                      <span className="dash-modal-holder-meta">PID {h.pid} · {h.addr}</span>
+                    </div>
+                    <button
+                      className="dash-modal-kill"
+                      disabled={killingPid !== null}
+                      onClick={() => killHolder(h.pid)}>
+                      {killingPid === h.pid ? 'Killing…' : 'Terminate'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="dash-modal-foot">
+              <button className="dash-modal-btn-secondary" onClick={() => setPortConflict(null)}>Close</button>
+              <button className="dash-modal-btn-primary" onClick={() => { setPortConflict(null); launchBrowser(); }}>
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

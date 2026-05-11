@@ -118,6 +118,82 @@
 }
 .dash-panel-action:hover { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
 
+/* ── Port-conflict modal ── */
+.dash-modal-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px;
+}
+.dash-modal {
+  width: min(540px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  box-shadow: 0 30px 80px -20px rgba(0,0,0,0.9), 0 0 0 1px rgba(239,68,68,0.15);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.dash-modal-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px;
+  background: rgba(239,68,68,0.10);
+  border-bottom: 1px solid rgba(239,68,68,0.25);
+  color: #fecaca;
+  font-size: 13px;
+}
+.dash-modal-head strong { flex: 1; }
+.dash-modal-x {
+  background: transparent; border: 1px solid var(--border-0);
+  color: var(--text-2); width: 24px; height: 24px;
+  border-radius: 4px; cursor: pointer; font-size: 16px; line-height: 1;
+}
+.dash-modal-x:hover { background: var(--bg-2); color: var(--text-0); }
+.dash-modal-msg {
+  padding: 14px 16px 8px;
+  font-size: 12px; line-height: 1.5; color: var(--text-1);
+}
+.dash-modal-holders { padding: 0 16px 8px; display: flex; flex-direction: column; gap: 6px; }
+.dash-modal-holder {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: 6px;
+}
+.dash-modal-holder-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.dash-modal-holder-name { font-size: 12px; font-weight: 600; color: var(--text-0); font-family: ui-monospace, monospace; }
+.dash-modal-holder-meta { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; }
+.dash-modal-kill {
+  font-size: 11px; font-weight: 600;
+  padding: 5px 12px;
+  background: rgba(239,68,68,0.12);
+  border: 1px solid rgba(239,68,68,0.45);
+  color: #fca5a5;
+  border-radius: 5px; cursor: pointer;
+  transition: all 0.12s;
+}
+.dash-modal-kill:hover:not(:disabled) { background: #ef4444; color: #fff; border-color: #ef4444; }
+.dash-modal-kill:disabled { opacity: 0.5; cursor: wait; }
+.dash-modal-foot {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-0);
+  background: var(--bg-0);
+}
+.dash-modal-btn-secondary, .dash-modal-btn-primary {
+  font-size: 11px; padding: 6px 14px; border-radius: 5px; cursor: pointer;
+  transition: all 0.12s;
+}
+.dash-modal-btn-secondary {
+  background: transparent; border: 1px solid var(--border-0); color: var(--text-1);
+}
+.dash-modal-btn-secondary:hover { background: var(--bg-2); color: var(--text-0); }
+.dash-modal-btn-primary {
+  background: var(--accent); border: 1px solid var(--accent); color: #000; font-weight: 600;
+}
+.dash-modal-btn-primary:hover { background: var(--accent-hover, var(--accent)); }
+
 /* ── Activity Feed ── */
 .dash-activity-list { flex: 1; overflow-y: auto; min-height: 0; }
 .dash-activity-list::-webkit-scrollbar { width: 3px; }
