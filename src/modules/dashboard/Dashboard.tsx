@@ -100,7 +100,16 @@ export function Dashboard() {
     setLaunching(true);
     try {
       if (!proxyStatus?.running) await invoke('proxy_start', { port: 8080 });
-      const r = await invoke<any>('browser_launch', { browserName: null, proxyPort: 8080 });
+      const preferSystem = localStorage.getItem('ws_prefer_system_browser') === '1';
+      const noSandbox = localStorage.getItem('ws_browser_no_sandbox') === '1';
+      const tlsImpersonate = localStorage.getItem('ws_tls_impersonate') !== '0';
+      try { await invoke('proxy_set_tls_impersonate', { enabled: tlsImpersonate }); } catch {}
+      const r = await invoke<any>('browser_launch', {
+        browserName: null,
+        proxyPort: 8080,
+        preferSystemBrowser: preferSystem,
+        noSandbox,
+      });
       setBrowserPid(r.pid);
     } catch (e: any) {
       const msg = typeof e === 'string' ? e : (e?.toString?.() ?? '');

@@ -1,6 +1,11 @@
 mod agent_browser;
 mod browser;
+mod browser_migration;
+mod chromium;
+mod chromium_commands;
 mod commands;
+pub mod crawler;
+mod crawler_commands;
 mod http2;
 mod intruder;
 mod mcp;
@@ -18,6 +23,7 @@ mod scanner_commands;
 mod session;
 mod session_commands;
 mod system;
+mod tls_impersonate;
 mod updater;
 mod websocket_commands;
 
@@ -95,6 +101,8 @@ pub fn run() {
             proxy_commands::proxy_remove_tls_passthrough,
             proxy_commands::proxy_get_upstream,
             proxy_commands::proxy_set_upstream,
+            proxy_commands::proxy_get_tls_impersonate,
+            proxy_commands::proxy_set_tls_impersonate,
             proxy_commands::proxy_get_websocket_messages,
             proxy_commands::proxy_get_listeners,
             proxy_commands::proxy_add_listener,
@@ -157,6 +165,13 @@ pub fn run() {
             osint_commands::osint_crtsh,
             port_commands::port_status,
             port_commands::kill_process,
+            chromium_commands::chromium_status,
+            chromium_commands::chromium_ensure,
+            chromium_commands::chromium_reinstall,
+            chromium_commands::reveal_in_explorer,
+            browser_migration::browser_migration_check,
+            browser_migration::browser_migration_remove_ca,
+            crawler_commands::crawler_run,
             updater::check_for_update,
             updater::current_version,
             oast_commands::oast_start_http,
@@ -226,6 +241,15 @@ pub fn run() {
                 Ok(_) => println!("[MCP] Auto-started on port {}", server.bound_port),
                 Err(e) => eprintln!("[MCP] Auto-start failed: {}", e),
             }
+            drop(server);
+
+            // Best-effort GC of old Chromium versions on startup. Burp leaves
+            // every previously-shipped version on disk forever; we don't.
+            match chromium::ChromiumManager::new(app.handle()) {
+                Ok(mgr) => mgr.gc(),
+                Err(e) => eprintln!("[Chromium] startup GC skipped: {}", e),
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())

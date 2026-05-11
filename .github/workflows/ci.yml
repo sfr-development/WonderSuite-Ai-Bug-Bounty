@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux deps for Tauri
+      - name: Install Linux deps for Tauri + boring-sys2
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -46,7 +46,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            build-essential
+            build-essential \
+            nasm \
+            cmake \
+            clang \
+            libclang-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

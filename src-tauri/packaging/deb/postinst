@@ -1,0 +1,22 @@
+#!/bin/sh
+# postinst — WonderSuite .deb installation hook.
+#
+# Installs the AppArmor profile that lets the bundled Chromium use user
+# namespaces on Ubuntu 24.04+. Best-effort; non-fatal if AppArmor is absent.
+
+set -e
+
+case "$1" in
+    configure)
+        if [ -d /etc/apparmor.d ] && command -v apparmor_parser >/dev/null 2>&1; then
+            install -m 0644 \
+                /usr/share/wondersuite/apparmor/wondersuite-browser \
+                /etc/apparmor.d/wondersuite-browser
+            apparmor_parser -r /etc/apparmor.d/wondersuite-browser >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

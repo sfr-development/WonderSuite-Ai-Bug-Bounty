@@ -1,0 +1,226 @@
+.bdl-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9997;
+  padding: 32px;
+  animation: bdl-fade 0.18s ease-out;
+}
+
+@keyframes bdl-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.bdl-modal {
+  width: min(560px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(124, 194, 255, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: bdl-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes bdl-pop {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.bdl-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border-bottom: 1px solid var(--border-0);
+}
+.bdl-head-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(124, 194, 255, 0.12);
+  color: var(--cyan, #7cc2ff);
+}
+.bdl-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+}
+.bdl-tag {
+  font-size: 9.5px;
+  letter-spacing: 0.6px;
+  color: var(--cyan, #7cc2ff);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bdl-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-0);
+}
+.bdl-sub {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.bdl-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.bdl-close:hover {
+  background: var(--bg-0);
+  color: var(--text-0);
+}
+
+.bdl-body {
+  padding: 18px;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bdl-bar {
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bdl-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan, #7cc2ff), var(--accent, #e8a145));
+  transition: width 0.15s ease-out;
+}
+.bdl-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+}
+.bdl-hint {
+  margin: 4px 0 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.bdl-spinner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-1);
+  padding: 12px 0;
+}
+.bdl-spin { animation: bdl-rot 1s linear infinite; }
+@keyframes bdl-rot {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
+}
+
+.bdl-ready {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 0;
+  text-align: center;
+}
+.bdl-ready-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-0);
+}
+.bdl-ready-sub {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.bdl-error {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 107, 53, 0.06);
+  border: 1px solid rgba(255, 107, 53, 0.25);
+  border-radius: 6px;
+}
+.bdl-error-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-1);
+}
+.bdl-error-hint {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.bdl-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-0);
+  background: var(--bg-0);
+}
+.bdl-foot-spacer { flex: 1; }
+.bdl-foot-note {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-style: italic;
+}
+.bdl-btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-0);
+  border-radius: 5px;
+  padding: 6px 12px;
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.12s;
+}
+.bdl-btn-secondary:hover {
+  background: var(--bg-2);
+  border-color: var(--border-1);
+  color: var(--text-0);
+}
+.bdl-btn-primary {
+  background: var(--cyan, #7cc2ff);
+  border: 1px solid var(--cyan, #7cc2ff);
+  border-radius: 5px;
+  padding: 6px 14px;
+  color: #0a1320;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.12s;
+}
+.bdl-btn-primary:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}

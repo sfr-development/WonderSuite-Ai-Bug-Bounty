@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal } from 'lucide-react';
+import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe } from 'lucide-react';
+import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores';
 import './Settings.css';
@@ -83,7 +84,7 @@ function IdeIconComponent({ type, size = 20 }: { type: string; size?: number }) 
   }
 }
 
-type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance';
+type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance' | 'browser';
 
 
 interface McpToolEntry {
@@ -255,6 +256,9 @@ export function Settings() {
         </button>
         <button className={`settings-nav-item ${tab === 'appearance' ? 'active' : ''}`} onClick={() => setTab('appearance')}>
           <Palette size={14} /> Appearance
+        </button>
+        <button className={`settings-nav-item ${tab === 'browser' ? 'active' : ''}`} onClick={() => setTab('browser')}>
+          <Globe size={14} /> Browser
         </button>
       </div>
 
@@ -467,11 +471,13 @@ export function Settings() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><LayoutGrid size={12} /> Compact Mode</div>
                 <span>Reduce margins and padding to fit more data</span>
               </div>
-              <button className={`settings-toggle ${appearance.compactMode ? 'on' : ''}`} 
+              <button className={`settings-toggle ${appearance.compactMode ? 'on' : ''}`}
                       onClick={() => updateAppearance({ compactMode: !appearance.compactMode })} />
             </div>
           </div>
         )}
+
+        {tab === 'browser' && <BrowserSettingsPanel />}
       </div>
     </div>
   );

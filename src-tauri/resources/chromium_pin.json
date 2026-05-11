@@ -1,0 +1,27 @@
+{
+  "_comment": "Pin file for the bundled Chromium. Updated by .github/workflows/update-chromium-pin.yml each Monday. Manual refresh: run `node scripts/refresh-chromium-pin.mjs` then commit.",
+  "chromium_version": "148.0.7778.97",
+  "manifest_uri": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+  "platforms": {
+    "win64": {
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/win64/chrome-win64.zip",
+      "sha256": "6bcb14a148136428a6780df42f7fd0b951ceea679ca6d79c4e46e6473c6c40cc",
+      "binary_subpath": "chrome-win64/chrome.exe"
+    },
+    "mac-arm64": {
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/mac-arm64/chrome-mac-arm64.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "binary_subpath": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+    },
+    "mac-x64": {
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/mac-x64/chrome-mac-x64.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "binary_subpath": "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+    },
+    "linux64": {
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/linux64/chrome-linux64.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "binary_subpath": "chrome-linux64/chrome"
+    }
+  }
+}

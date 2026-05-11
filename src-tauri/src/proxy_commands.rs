@@ -407,6 +407,20 @@ pub async fn proxy_set_upstream(
 }
 
 #[tauri::command]
+pub async fn proxy_set_tls_impersonate(
+    enabled: bool,
+    state: tauri::State<'_, ProxyAppState>,
+) -> Result<bool, String> {
+    state.proxy_state.tls_impersonate.store(enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub async fn proxy_get_tls_impersonate(state: tauri::State<'_, ProxyAppState>) -> Result<bool, String> {
+    Ok(state.proxy_state.tls_impersonate.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+#[tauri::command]
 pub async fn proxy_get_websocket_messages(
     state: tauri::State<'_, ProxyAppState>,
 ) -> Result<Vec<WebSocketMessage>, String> {

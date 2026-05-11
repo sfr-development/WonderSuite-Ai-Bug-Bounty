@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WonderSuite",
-  "version": "0.1.5",
+  "version": "0.3.0",
   "identifier": "com.wondersuite.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -47,7 +47,27 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "resources/chromium_pin.json": "chromium_pin.json",
+      "resources/wondersuite-extension/manifest.json": "wondersuite-extension/manifest.json",
+      "resources/wondersuite-extension/background.js": "wondersuite-extension/background.js",
+      "resources/wondersuite-extension/content/stealth.js": "wondersuite-extension/content/stealth.js",
+      "resources/wondersuite-extension/content/hooks.js": "wondersuite-extension/content/hooks.js",
+      "resources/wondersuite-extension/content/relay.js": "wondersuite-extension/content/relay.js",
+      "resources/wondersuite-extension/images/icon-16.png": "wondersuite-extension/images/icon-16.png",
+      "resources/wondersuite-extension/images/icon-48.png": "wondersuite-extension/images/icon-48.png",
+      "resources/wondersuite-extension/images/icon-128.png": "wondersuite-extension/images/icon-128.png"
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/wondersuite/apparmor/wondersuite-browser": "packaging/deb/wondersuite-browser.apparmor"
+        },
+        "postInstallScript": "packaging/deb/postinst",
+        "postRemoveScript": "packaging/deb/postrm"
+      }
+    }
   },
   "plugins": {
     "updater": {

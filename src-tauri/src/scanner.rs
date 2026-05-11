@@ -551,6 +551,16 @@ pub async fn run_active_scan(
     );
     check_cancel!(live);
 
+    // Optional seed phase: run the v0.2.0 crawler's robots.txt + sitemap.xml +
+    // well-known-paths discovery and merge the discovered URLs into our BFS
+    // queue. Only runs for the deep scan modes; lightweight + passive skip it.
+    let crawler_seeds: Vec<(String, &'static str)> =
+        if matches!(config.scan_type.as_str(), "crawl_and_audit" | "owasp_top10") {
+            seed_from_crawler_discovery(target, config).await
+        } else {
+            Vec::new()
+        };
+
     if config.auto_crawl {
         let base_url = url::Url::parse(target).ok();
         let base_host = base_url.as_ref().and_then(|u| u.host_str()).unwrap_or("").to_string();
@@ -563,6 +573,15 @@ pub async fn run_active_scan(
         let mut visited: std::collections::HashSet<String> =
             std::collections::HashSet::from_iter([target.to_string()]);
         let max_depth = config.crawl_depth.max(1);
+
+        // Seed the queue with high-priority URLs discovered by the crawler module.
+        // robots.txt's Disallow entries and well-known paths land here first so
+        // the BFS budget gets spent on security-interesting paths early.
+        for (url, _reason) in &crawler_seeds {
+            if visited.insert(url.clone()) {
+                queue.push_front((url.clone(), 1));
+            }
+        }
 
         let extract_links = |body: &str, from_url: &str| -> Vec<String> {
             let from_parsed = url::Url::parse(from_url).ok();
@@ -2223,4 +2242,68 @@ fn rand_id(len: usize) -> String {
     const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
     (0..len).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
+}
+
+/// Phase-0 discovery: run the v0.2.0 crawler module's `robots.txt`,
+/// `sitemap.xml`, and well-known-path probes against `target`. Returns a list
+/// of (url, reason) pairs that the main scanner queue should consume FIRST.
+///
+/// We don't run the full crawler engine here (no SPA render, no JS endpoint
+/// extraction) — those need a live browser. This is the cheap "hint the
+/// scanner where to look" pass.
+async fn seed_from_crawler_discovery(target: &str, config: &ScanConfig) -> Vec<(String, &'static str)> {
+    use crate::crawler::well_known::well_known_paths;
+    let mut out = Vec::new();
+
+    let base = match url::Url::parse(target) {
+        Ok(u) => u,
+        Err(_) => return out,
+    };
+
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_millis(config.timeout_ms.min(8_000)))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .user_agent(&config.user_agent)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return out,
+    };
+
+    // robots.txt → Disallow paths are high-priority security targets
+    if let Ok(robots_url) = base.join("/robots.txt") {
+        if let Ok(resp) = client.get(robots_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(body) = resp.text().await {
+                    let r = crate::crawler::robots::parse_robots(&body);
+                    for path in &r.disallowed {
+                        if let Ok(joined) = base.join(path) {
+                            out.push((joined.to_string(), "robots-disallowed"));
+                        }
+                    }
+                    // Also fetch each sitemap referenced
+                    for sm_url in r.sitemaps.iter().take(4) {
+                        if let Ok(resp) = client.get(sm_url).send().await {
+                            if let Ok(body) = resp.text().await {
+                                let sm = crate::crawler::sitemap::parse_sitemap(&body);
+                                for u in sm.urls.iter().map(|u| u.loc.clone()).take(50) {
+                                    out.push((u, "sitemap"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Well-known paths — head probes only, cheap and high-signal
+    for p in well_known_paths().take(60) {
+        if let Ok(joined) = base.join(p) {
+            out.push((joined.to_string(), "well-known"));
+        }
+    }
+
+    out
 }

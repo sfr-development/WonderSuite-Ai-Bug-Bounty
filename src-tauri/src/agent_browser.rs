@@ -197,76 +197,50 @@ pub async fn agent_browser_launch(
     let is_headless = headless.unwrap_or(false);
 
     if !proxy_state.proxy_state.is_running() {
-        let _ = crate::proxy_commands::proxy_start(port, proxy_state.clone(), app).await;
+        let _ = crate::proxy_commands::proxy_start(port, proxy_state.clone(), app.clone()).await;
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
     }
 
-    let browsers = crate::browser::detect_browsers();
-    let browser = browsers.first().ok_or("No Chromium browser found")?;
+    // Use the same browser-resolution path as the user-facing browser:
+    // bundled WonderBrowser first, system browser as fallback. This makes the
+    // agent automation behave identically to what the user sees.
+    let (browser_path, browser_label) = crate::browser::resolve_browser_binary(&app, false, None).await?;
+
+    // Load the same WonderSuite extension for navigator/WebGL/fetch hooks.
+    let extension_path = match crate::chromium::ChromiumManager::new(&app) {
+        Ok(mgr) => mgr.extension_path().ok(),
+        Err(_) => None,
+    };
 
     let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
-    let profile_dir = format!("{}/.wondersuite/agent-browser-profile", home);
+    let profile_dir = std::path::PathBuf::from(format!("{}/.wondersuite/agent-browser-profile", home));
     std::fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
 
-    let mut args: Vec<String> = vec![
-        format!("--remote-debugging-port={}", cdp),
-        "--remote-allow-origins=*".into(),
-        format!("--proxy-server=127.0.0.1:{}", port),
-        format!("--user-data-dir={}", profile_dir),
-        "--disable-blink-features=AutomationControlled".into(),
-        "--disable-infobars".into(),
-        "--flag-switches-begin".into(),
-        "--flag-switches-end".into(),
-        "--disable-features=IsolateOrigins,site-per-process,AutomationControlled,TranslateUI".into(),
-        "--disable-site-isolation-trials".into(),
-        "--disable-ipc-flooding-protection".into(),
-        "--disable-client-side-phishing-detection".into(),
-        "--disable-default-apps".into(),
-        "--disable-component-update".into(),
-        "--disable-background-networking".into(),
-        "--disable-sync".into(),
-        "--disable-translate".into(),
-        "--metrics-recording-only".into(),
-        "--no-first-run".into(),
-        "--no-default-browser-check".into(),
-        "--disable-hang-monitor".into(),
-        "--window-size=1920,1080".into(),
-        "--start-maximized".into(),
-        "--ignore-certificate-errors".into(),
-        "--allow-insecure-localhost".into(),
-        "--disable-extensions".into(),
-    ];
-    if is_headless {
-        args.push("--headless=new".into());
-    }
-    if let Some(ref ua) = user_agent {
-        args.push(format!("--user-agent={}", ua));
-    }
-    args.push("about:blank".into());
-
-    #[cfg(target_os = "windows")]
-    let child = {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new(&browser.path)
-            .args(&args)
-            .creation_flags(0x08000000)
-            .spawn()
-            .map_err(|e| format!("Launch failed: {}", e))?
+    let opts = crate::browser::LaunchOptions {
+        proxy_port: port,
+        use_proxy: true,
+        cdp_port: cdp,
+        extension_path,
+        profile_dir: Some(profile_dir.clone()),
+        no_sandbox: false,
+        headless: is_headless,
     };
-    #[cfg(not(target_os = "windows"))]
-    let child = std::process::Command::new(&browser.path)
-        .args(&args)
-        .spawn()
+    let pid = crate::browser::launch_browser(&browser_path.to_string_lossy(), &opts)
         .map_err(|e| format!("Launch failed: {}", e))?;
 
-    let pid = child.id();
     state.running.store(true, Ordering::Relaxed);
     state.headless.store(is_headless, Ordering::Relaxed);
     *state.pid.lock().await = Some(pid);
     *state.cdp_port.lock().await = cdp;
     *state.proxy_port.lock().await = port;
 
-    println!("[AgentBrowser] ✓ Launched {} PID={} CDP={} Proxy={}", browser.name, pid, cdp, port);
+    // user_agent override is currently ignored — the bundled extension shim
+    // already handles UA spoofing if needed. Apply via CDP after attach for now.
+    if let Some(_ua) = user_agent {
+        // TODO(v0.2.1): drive Network.setUserAgentOverride via CDP after attach.
+    }
+
+    println!("[AgentBrowser] ✓ Launched {} PID={} CDP={} Proxy={}", browser_label, pid, cdp, port);
 
     let sc = state.inner().clone();
     tokio::spawn(async move {
@@ -275,7 +249,7 @@ pub async fn agent_browser_launch(
     });
 
     Ok(serde_json::json!({
-        "success": true, "pid": pid, "browser": browser.name,
+        "success": true, "pid": pid, "browser": browser_label,
         "cdp_port": cdp, "proxy_port": port, "headless": is_headless, "stealth": true,
     }))
 }

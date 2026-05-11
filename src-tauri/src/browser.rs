@@ -411,19 +411,60 @@ console.log('%c[WonderSuite] Stealth patches active', 'color: #7aa0ff; font-weig
 /// 1. Chrome flags that remove automation indicators
 /// 2. JavaScript preload script that patches navigator/WebGL/permissions
 /// 3. Realistic user-agent and window properties
+/// Options controlling how `launch_browser` builds its command line.
+#[derive(Debug, Clone)]
+pub struct LaunchOptions {
+    pub proxy_port: u16,
+    pub use_proxy: bool,
+    pub cdp_port: u16,
+    /// Path to an unpacked Chrome extension dir. None disables `--load-extension`.
+    pub extension_path: Option<PathBuf>,
+    /// Per-session profile dir override. None falls back to the legacy
+    /// `~/.wondersuite/browser-profile` path used by v0.1.x.
+    pub profile_dir: Option<PathBuf>,
+    /// Disable the Linux sandbox. Should only be set when the user explicitly
+    /// opts in via Settings. Matches Burp's "Allow Burp's browser to run
+    /// without a sandbox" toggle.
+    pub no_sandbox: bool,
+    /// Run with --headless=new for the CDP crawl pass.
+    pub headless: bool,
+}
+
+impl Default for LaunchOptions {
+    fn default() -> Self {
+        Self {
+            proxy_port: 8080,
+            use_proxy: true,
+            cdp_port: 9222,
+            extension_path: None,
+            profile_dir: None,
+            no_sandbox: false,
+            headless: false,
+        }
+    }
+}
+
 pub fn launch_browser(
     browser_path: &str,
-    proxy_port: u16,
-    _ca_cert_path: Option<&PathBuf>,
-    use_proxy: bool,
-    cdp_port: u16,
+    opts: &LaunchOptions,
 ) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
+    let proxy_port = opts.proxy_port;
+    let cdp_port = opts.cdp_port;
+    let use_proxy = opts.use_proxy;
+
     // Per-launch profile dir keeps Chromium isolated from the user's system Chrome
     // (cookies, history, extensions, autofill). Same pattern Burp / Caido / ZAP use.
-    let profile_dir = get_profile_dir();
+    let profile_dir = opts.profile_dir.clone().unwrap_or_else(get_profile_dir);
     fs::create_dir_all(&profile_dir)?;
 
-    let preload_path = write_stealth_preload(&profile_dir)?;
+    // Stealth used to be injected via CDP (Page.addScriptToEvaluateOnNewDocument).
+    // v0.2.0 moved it into the bundled WonderSuite Chrome extension, which runs the
+    // same patches in the page's MAIN world at document_start — strictly better
+    // because it doesn't leave CDP runtime fingerprint markers (window.cdc_*,
+    // Runtime.evaluate execution-context anomalies, the /json/version endpoint
+    // probe). We only fall back to CDP injection if the extension isn't loaded.
+    let cdp_stealth_fallback = opts.extension_path.is_none();
+    let preload_path = if cdp_stealth_fallback { Some(write_stealth_preload(&profile_dir)?) } else { None };
 
     let mut args: Vec<String> = Vec::new();
 
@@ -476,48 +517,127 @@ pub fn launch_browser(
     args.push("--enable-features=NetworkService,NetworkServiceInProcess".into());
     args.push("--disable-blink-features=AutomationControlled".into());
 
-    // ── CDP for automation hooks (agent_browser module) ──────────────────
-    args.push(format!("--remote-debugging-port={}", cdp_port));
-    args.push("--remote-allow-origins=*".into());
+    // ── CDP for automation hooks (agent_browser + crawler JS-render) ─────
+    // CDP increases fingerprint surface (window.cdc_*, /json/version probes).
+    // Only enable when the caller asks for it — set `cdp_port` to 0 to skip.
+    if cdp_port != 0 {
+        args.push(format!("--remote-debugging-port={}", cdp_port));
+        args.push("--remote-allow-origins=*".into());
+    }
+
+    // ── WonderSuite extension (stealth + endpoint hooks) ─────────────────
+    if let Some(ext) = &opts.extension_path {
+        args.push(format!("--load-extension={}", ext.to_string_lossy()));
+        args.push(format!("--disable-extensions-except={}", ext.to_string_lossy()));
+    }
+
+    // ── Optional headless mode (used by the crawler's JS-render pass) ────
+    if opts.headless {
+        args.push("--headless=new".into());
+        args.push("--hide-scrollbars".into());
+        args.push("--mute-audio".into());
+    }
+
+    // ── Optional sandbox-off toggle (Linux root, hardened-kernel users) ──
+    if opts.no_sandbox {
+        args.push("--no-sandbox".into());
+    }
 
     // ── Window ────────────────────────────────────────────────────────────
     args.push("--window-size=1920,1080".into());
-    args.push("--start-maximized".into());
+    if !opts.headless {
+        args.push("--start-maximized".into());
+    }
 
-    let browser_ver = get_browser_version(browser_path);
-    let chrome_ver = if browser_ver.is_empty() { "136.0.7103.93".to_string() } else { browser_ver };
-    args.push(format!(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{} Safari/537.36",
-        chrome_ver
-    ));
+    // Intentionally NOT setting --user-agent. Hardcoding a stale UA string
+    // (we previously claimed Chrome 136) created a glaring mismatch against
+    // the real underlying Chromium build (148.x) — every bot detector picks
+    // up the inconsistency. Let CfT's native UA stand. Callers who really
+    // want to spoof can set it after attach via CDP Network.setUserAgentOverride.
 
     args.push("about:blank".into());
+
+    // Hard pre-flight check: refuse to spawn if the binary or the extension
+    // dir is missing. Without these checks the user sees a silent failure
+    // (chrome.exe exits ms after launch) and has no idea what went wrong.
+    let bin_path_buf = PathBuf::from(browser_path);
+    if !bin_path_buf.exists() {
+        return Err(format!(
+            "browser binary not found at {} (did the Chromium download finish? — check Settings -> Browser)",
+            browser_path
+        )
+        .into());
+    }
+    if let Some(ext) = &opts.extension_path {
+        if !ext.exists() {
+            return Err(format!(
+                "extension dir not found at {} — reinstall via Settings -> Browser, or disable extension loading by reinstalling without --load-extension",
+                ext.display()
+            )
+            .into());
+        }
+        if !ext.join("manifest.json").exists() {
+            return Err(format!(
+                "extension manifest missing at {} — the bundled wondersuite-extension didn't get copied",
+                ext.join("manifest.json").display()
+            )
+            .into());
+        }
+    }
 
     println!("[WonderBrowser] Launching: {} with {} args", browser_path, args.len());
     println!("[WonderBrowser] Profile: {} (isolated, Burp-style)", profile_dir.display());
     println!("[WonderBrowser] CDP Port: {}", cdp_port);
+    if let Some(ext) = &opts.extension_path {
+        println!("[WonderBrowser] Extension: {}", ext.display());
+    }
     println!(
         "[WonderBrowser] Proxy: {} (--proxy-bypass-list=<-loopback>, --ignore-certificate-errors)",
         if use_proxy { format!("127.0.0.1:{}", proxy_port) } else { "DIRECT (no proxy)".into() }
     );
 
-    let child = Command::new(browser_path).args(&args).spawn()?;
+    let child = Command::new(browser_path)
+        .args(&args)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn browser process: {} (path: {})", e, browser_path))?;
 
     let pid = child.id();
     track_launched_pid(pid);
 
-    CDP_PORT.store(cdp_port, std::sync::atomic::Ordering::Relaxed);
-    CDP_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+    if cdp_port != 0 {
+        CDP_PORT.store(cdp_port, std::sync::atomic::Ordering::Relaxed);
+        CDP_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
 
-    let stealth_js = fs::read_to_string(&preload_path).unwrap_or_default();
-    let cdp_port_clone = cdp_port;
-    tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        inject_stealth_via_cdp(cdp_port_clone, &stealth_js).await;
-        start_network_capture_cdp(cdp_port_clone).await;
-    });
+        // Fallback CDP stealth injection — only runs when the extension is NOT
+        // loaded (e.g. system browser fallback after bundled-Chromium download
+        // failed). Skipping this when the extension is loaded avoids running
+        // the same patches twice and leaves no CDP runtime trace.
+        if cdp_stealth_fallback {
+            if let Some(path) = preload_path {
+                let stealth_js = fs::read_to_string(&path).unwrap_or_default();
+                let cdp_port_clone = cdp_port;
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    inject_stealth_via_cdp(cdp_port_clone, &stealth_js).await;
+                    start_network_capture_cdp(cdp_port_clone).await;
+                });
+            }
+        } else {
+            // Extension handles stealth; we only need CDP for network capture.
+            let cdp_port_clone = cdp_port;
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                start_network_capture_cdp(cdp_port_clone).await;
+            });
+        }
+    }
 
-    println!("[WonderBrowser] ✓ Started with PID: {} (CDP on port {}, stealth active)", pid, cdp_port);
+    println!(
+        "[WonderBrowser] ✓ Started with PID: {} (CDP={}, stealth={})",
+        pid,
+        if cdp_port != 0 { format!("port {}", cdp_port) } else { "off".into() },
+        if cdp_stealth_fallback { "CDP-fallback" } else { "extension" }
+    );
 
     Ok(pid)
 }
@@ -666,24 +786,64 @@ pub async fn browser_status() -> Result<BrowserStatus, String> {
     })
 }
 
+/// Resolve which Chromium binary to launch. Tries the bundled WonderBrowser
+/// (ChromiumManager) first; falls back to a detected system browser only when
+/// the user opted in via Settings (or when bundled download failed and the
+/// fallback flag was set explicitly via `prefer_system`).
+pub async fn resolve_browser_binary(
+    app: &tauri::AppHandle,
+    prefer_system: bool,
+    system_name_hint: Option<&str>,
+) -> Result<(PathBuf, String), String> {
+    if !prefer_system {
+        match crate::chromium::ChromiumManager::new(app) {
+            Ok(mgr) => {
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                match mgr.ensure(cancel).await {
+                    Ok(p) => {
+                        return Ok((p, format!("WonderBrowser (Chromium {})", mgr.pinned_version())));
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[WonderBrowser] Bundled Chromium unavailable: {}. Falling back to system browser detection.",
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[WonderBrowser] ChromiumManager init failed: {}", e);
+            }
+        }
+    }
+    let browsers = detect_browsers();
+    let chosen = if let Some(name) = system_name_hint {
+        browsers.iter().find(|b| b.name.to_lowercase().contains(&name.to_lowercase()))
+    } else {
+        browsers.first()
+    };
+    let chosen = chosen.ok_or_else(|| {
+        "No browser available. The bundled Chromium failed to download and no system Chrome/Edge/Brave was found."
+            .to_string()
+    })?;
+    Ok((PathBuf::from(&chosen.path), chosen.name.clone()))
+}
+
 #[tauri::command]
 pub async fn browser_launch(
     browser_name: Option<String>,
     proxy_port: Option<u16>,
     cdp_port: Option<u16>,
     use_proxy: Option<bool>,
+    prefer_system_browser: Option<bool>,
+    no_sandbox: Option<bool>,
     state: tauri::State<'_, crate::proxy_commands::ProxyAppState>,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    let browsers = detect_browsers();
-
-    let browser = if let Some(name) = &browser_name {
-        browsers.iter().find(|b| b.name.to_lowercase().contains(&name.to_lowercase()))
-    } else {
-        browsers.first()
-    };
-
-    let browser = browser.ok_or("No Chromium-based browser found. Install Chrome, Edge, or Brave.")?;
+    let prefer_system = prefer_system_browser.unwrap_or(false);
+    let no_sandbox = no_sandbox.unwrap_or(false);
+    let (browser_path, browser_label) =
+        resolve_browser_binary(&app, prefer_system, browser_name.as_deref()).await?;
 
     let our_pid = std::process::id();
     let proxy_already_ours = if state.proxy_state.is_running() {
@@ -746,31 +906,21 @@ pub async fn browser_launch(
         }
     };
 
-    let cdp = if let Some(p) = cdp_port {
-        p
-    } else {
-        match find_available_port(9222, 9232) {
-            Some(p) => p,
-            None => {
-                let s = crate::port_commands::port_status(9222);
-                let foreign: Vec<_> = s.holders.into_iter().filter(|h| h.pid != our_pid).collect();
-                return Err(serde_json::to_string(&serde_json::json!({
-                    "kind": "port_in_use",
-                    "role": "cdp",
-                    "port": 9222,
-                    "holders": foreign,
-                }))
-                .unwrap_or_else(|_| "All CDP ports 9222-9232 are in use".into()));
-            }
-        }
-    };
+    // CDP defaults OFF for user-launched browser sessions. The flag
+    // --remote-debugging-port=N causes Chromium 148+ to set
+    // navigator.webdriver=true internally (the previous workaround
+    // --disable-blink-features=AutomationControlled no longer fully
+    // suppresses it). Off-by-default keeps the fingerprint clean.
+    // Callers that need CDP (agent_browser, crawler JS-render pass) pass
+    // an explicit cdp_port; pass 0 to keep CDP off.
+    let cdp = cdp_port.unwrap_or(0);
 
     let should_use_proxy = use_proxy.unwrap_or(true);
 
     let mut proxy_active = state.proxy_state.is_running();
     if should_use_proxy && !proxy_active {
         println!("[WonderBrowser] Proxy not running — auto-starting on port {}", port);
-        match crate::proxy_commands::proxy_start(port, state.clone(), app).await {
+        match crate::proxy_commands::proxy_start(port, state.clone(), app.clone()).await {
             Ok(msg) => {
                 println!("[WonderBrowser] {}", msg);
                 proxy_active = true;
@@ -783,22 +933,33 @@ pub async fn browser_launch(
         }
     }
 
-    let ca_path = {
-        let ca = state.ca.lock().await;
-        ca.as_ref().map(|c| c.ca_cert_path())
+    let extension_path = match crate::chromium::ChromiumManager::new(&app) {
+        Ok(mgr) => mgr.extension_path().ok(),
+        Err(_) => None,
     };
 
-    let pid = launch_browser(&browser.path, port, ca_path.as_ref(), should_use_proxy && proxy_active, cdp)
+    let profile_dir = get_profile_dir();
+    let opts = LaunchOptions {
+        proxy_port: port,
+        use_proxy: should_use_proxy && proxy_active,
+        cdp_port: cdp,
+        extension_path: extension_path.clone(),
+        profile_dir: Some(profile_dir.clone()),
+        no_sandbox,
+        headless: false,
+    };
+
+    let pid = launch_browser(&browser_path.to_string_lossy(), &opts)
         .map_err(|e| format!("Failed to launch browser: {}", e))?;
 
     Ok(serde_json::json!({
         "pid": pid,
-        "browser": browser.name,
+        "browser": browser_label,
         "proxy_port": port,
         "cdp_port": cdp,
         "proxy_active": should_use_proxy && proxy_active,
-        "profile_dir": get_profile_dir().to_string_lossy(),
-        "ca_installed": ca_path.is_some(),
+        "profile_dir": profile_dir.to_string_lossy(),
+        "extension_loaded": extension_path.is_some(),
         "cdp_url": format!("http://127.0.0.1:{}", cdp),
         "stealth": true,
     }))

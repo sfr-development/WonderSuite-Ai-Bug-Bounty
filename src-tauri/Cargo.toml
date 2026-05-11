@@ -1,6 +1,6 @@
 [package]
 name = "wondersuite"
-version = "0.1.5"
+version = "0.3.0"
 description = "AI-Native Web Security Testing Platform"
 authors = ["WonderSuite Team"]
 edition = "2021"
@@ -20,7 +20,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "socks", "stream"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 axum = "0.8"
@@ -63,6 +63,33 @@ p12 = "0.6"
 
 # ── Platform directories ──
 dirs = "5"
+
+# ── Chromium download + extraction (browser vendoring, v0.2.0) ──
+zip = { version = "2", default-features = false, features = ["deflate"] }
+thiserror = "2"
+flate2 = "1"
+
+# ── HTML/XML parsing helpers (crawler, v0.2.0) ──
+# The crawler uses regex + url + flate2 for the hot paths; idna handles
+# punycode hostnames for the path canonicalizer. Other parser crates are
+# intentionally not pulled in to keep build times short — the regex pass
+# covers the same ~85% surface area as a full DOM parser for our purposes.
+idna = "1"
+
+# ── TLS impersonation (proxy outbound JA3/JA4 + HTTP/2 fingerprint, v0.3.0) ──
+# wreq is a reqwest-style client built on BoringSSL (via boring2-sys) with
+# bundled Chrome / Firefox / Safari fingerprint profiles. Used by
+# tls_impersonate.rs for the proxy's upstream connections — replaces the
+# native-tls/SChannel fingerprint that Cloudflare / Akamai / DataDome flag.
+#
+# Cost: ~15 MB binary increase + ~5 min first build (BoringSSL compile).
+# CI requirement: cmake + nasm + perl on Windows runners (chocolatey).
+wreq = { version = "5", default-features = false, features = ["json", "stream", "gzip", "brotli", "deflate", "socks"] }
+wreq-util = { version = "2", features = ["emulation"] }
+# Mozilla's root CA bundle in raw DER. Fed to wreq's CertStore so the BoringSSL
+# stack can validate upstream certs without relying on the OS trust store
+# (boring-sys2 doesn't auto-load SChannel / keychain / NSS roots).
+webpki-root-certs = "1"
 
 # ── Release Profile ──
 [profile.release]

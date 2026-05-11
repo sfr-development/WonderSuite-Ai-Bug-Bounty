@@ -205,6 +205,10 @@ pub struct ProxyState {
     pub listeners: RwLock<Vec<ProxyListener>>,
     pub max_traffic_entries: AtomicU64,
     pub max_response_size: AtomicU64,
+    /// When true, the proxy uses wreq (BoringSSL + Chrome JA3/JA4/H2
+    /// fingerprint) for upstream requests instead of reqwest+native-tls.
+    /// Toggled via Settings -> Browser -> "Impersonate Chrome TLS".
+    pub tls_impersonate: AtomicBool,
 }
 
 impl ProxyState {
@@ -234,6 +238,7 @@ impl ProxyState {
             }]),
             max_traffic_entries: AtomicU64::new(5000),
             max_response_size: AtomicU64::new(10 * 1024 * 1024), // 10MB
+            tls_impersonate: AtomicBool::new(true),
         })
     }
 

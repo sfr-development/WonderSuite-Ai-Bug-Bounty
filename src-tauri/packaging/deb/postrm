@@ -1,0 +1,18 @@
+#!/bin/sh
+# postrm — clean up the AppArmor profile on uninstall.
+set -e
+
+case "$1" in
+    remove|purge)
+        if [ -f /etc/apparmor.d/wondersuite-browser ]; then
+            if command -v apparmor_parser >/dev/null 2>&1; then
+                apparmor_parser -R /etc/apparmor.d/wondersuite-browser >/dev/null 2>&1 || true
+            fi
+            rm -f /etc/apparmor.d/wondersuite-browser
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

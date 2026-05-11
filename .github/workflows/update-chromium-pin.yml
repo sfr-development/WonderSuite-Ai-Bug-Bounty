@@ -1,0 +1,82 @@
+name: Update Chromium pin
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC. Burp bumps every 3-6 weeks; weekly cron
+    # gives us ~1 week response time on critical CVEs without spamming PRs.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read current pin
+        id: current
+        shell: bash
+        run: |
+          if [ -f src-tauri/resources/chromium_pin.json ]; then
+            CURRENT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("src-tauri/resources/chromium_pin.json","utf8")).chromium_version)')
+          else
+            CURRENT="none"
+          fi
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Current pin: $CURRENT"
+
+      - name: Fetch latest CfT Stable version
+        id: latest
+        shell: bash
+        run: |
+          LATEST=$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
+            | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).channels.Stable.version))')
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest CfT Stable: $LATEST"
+
+      - name: Skip if up to date
+        if: steps.current.outputs.current == steps.latest.outputs.latest
+        run: |
+          echo "Already pinned to ${{ steps.latest.outputs.latest }}. Nothing to do."
+          echo "skip=1" >> "$GITHUB_ENV"
+
+      - name: Refresh pin (downloads + SHA-256 across all platforms)
+        if: env.skip != '1'
+        run: node scripts/refresh-chromium-pin.mjs --force
+
+      - name: Open pull request
+        if: env.skip != '1'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/chromium-pin-${{ steps.latest.outputs.latest }}
+          delete-branch: true
+          title: "chore: bump Chromium pin to ${{ steps.latest.outputs.latest }}"
+          commit-message: "chore: bump Chromium pin to ${{ steps.latest.outputs.latest }}"
+          body: |
+            ## Auto-update Chromium pin
+
+            - **Previous**: ${{ steps.current.outputs.current }}
+            - **New**: ${{ steps.latest.outputs.latest }}
+
+            Pulled from [Chrome for Testing Stable channel](https://googlechromelabs.github.io/chrome-for-testing/).
+
+            All four platform zips were re-hashed by `scripts/refresh-chromium-pin.mjs --force`.
+
+            Review checklist:
+            - [ ] Check upstream Chrome release notes for the new version
+            - [ ] Look for any breaking flag renames affecting `browser.rs`'s launch args
+            - [ ] Verify the WonderSuite extension manifest is still valid (Chromium MV3 changes)
+            - [ ] Once merged, the next WonderSuite release ships this Chromium version
+          labels: |
+            dependencies
+            chromium

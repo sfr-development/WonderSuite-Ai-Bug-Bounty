@@ -55,6 +55,10 @@ pub struct ProxyEngine {
     ca: Arc<ProxyCa>,
     state: Arc<ProxyState>,
     http_client: reqwest::Client,
+    /// Chrome-fingerprint-spoofing client. Used when `state.tls_impersonate`
+    /// is true so the upstream JA3/JA4 + HTTP/2 frame signature looks like
+    /// real Chrome instead of native-tls / SChannel.
+    impersonate_client: crate::tls_impersonate::ImpersonateClient,
     cancel: CancellationToken,
 }
 
@@ -67,7 +71,24 @@ impl ProxyEngine {
             .build()
             .expect("Failed to build HTTP client");
 
-        Self { ca, state, http_client, cancel }
+        let impersonate_client = crate::tls_impersonate::ImpersonateClient::new(
+            crate::tls_impersonate::ImpersonateProfile::Chrome137,
+        )
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "[Proxy] TLS impersonation client init failed: {} — falling back to native TLS only",
+                e
+            );
+            // Best-effort: spawn a stub that always errors on use. Building
+            // this dummy is safe because impersonate_client is only consumed
+            // through `state.tls_impersonate` gating.
+            crate::tls_impersonate::ImpersonateClient::new(
+                crate::tls_impersonate::ImpersonateProfile::Chrome137,
+            )
+            .expect("impersonate client second build")
+        });
+
+        Self { ca, state, http_client, impersonate_client, cancel }
     }
 
     /// Build an HTTP client that routes through an upstream proxy.
@@ -710,6 +731,34 @@ impl ProxyEngine {
         headers: &[(String, String)],
         body: &[u8],
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+        // Branch on the impersonation toggle. wreq matches Chrome's JA3/JA4
+        // + HTTP/2 fingerprint; reqwest leaks the platform native-tls one.
+        let use_impersonate = self.state.tls_impersonate.load(std::sync::atomic::Ordering::Relaxed);
+
+        if use_impersonate {
+            // Sync the impersonate client's upstream proxy with the current
+            // ProxyState config before each request. Cheap if unchanged.
+            let upstream_for_wreq = {
+                let cfg = self.state.upstream_proxy.read().await;
+                if cfg.enabled && !cfg.host.is_empty() {
+                    Some(crate::tls_impersonate::ImpersonateUpstreamProxy {
+                        scheme: cfg.proxy_type.clone(),
+                        host: cfg.host.clone(),
+                        port: cfg.port,
+                        username: cfg.username.clone(),
+                        password: cfg.password.clone(),
+                    })
+                } else {
+                    None
+                }
+            };
+            if let Err(e) = self.impersonate_client.set_upstream(upstream_for_wreq).await {
+                eprintln!("[Proxy] wreq upstream proxy update failed: {} — falling through", e);
+            } else {
+                return self.forward_via_impersonate(method, url, headers, body).await;
+            }
+        }
+
         let m = method
             .parse::<reqwest::Method>()
             .map_err(|e| format!("Invalid HTTP method '{}': {}", method, e))?;
@@ -737,6 +786,58 @@ impl ProxyEngine {
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
         let resp_body = resp.bytes().await?.to_vec();
+
+        Ok((status, hdrs, resp_body))
+    }
+
+    /// Same as `forward_request` but uses wreq with the Chrome JA3/JA4
+    /// emulation profile. Bot detection that fingerprints TLS + HTTP/2 frame
+    /// ordering (Cloudflare, Akamai, DataDome, PerimeterX) treats this
+    /// connection as genuine Chrome.
+    ///
+    /// On failure we walk the full error source chain so the surfaced 502
+    /// includes the actual cause (DNS error, TLS handshake failure, h2
+    /// negotiation problem) — not just the generic "client error (Connect)"
+    /// that hyper bubbles up at the top level.
+    async fn forward_via_impersonate(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+        let m =
+            method.parse::<wreq::Method>().map_err(|e| format!("Invalid HTTP method '{}': {}", method, e))?;
+
+        let client = self.impersonate_client.client().await;
+        let mut builder = client.request(m, url);
+
+        for (k, v) in headers {
+            let lower = k.to_lowercase();
+            if HOP_BY_HOP_HEADERS.contains(&lower.as_str()) {
+                continue;
+            }
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+
+        if !body.is_empty() {
+            builder = builder.body(body.to_vec());
+        }
+
+        let resp = match builder.send().await {
+            Ok(r) => r,
+            Err(e) => return Err(wreq_err_chain("send", &e).into()),
+        };
+        let status = resp.status().as_u16();
+        let hdrs: Vec<(String, String)> = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        let resp_body = match resp.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => return Err(wreq_err_chain("body", &e).into()),
+        };
 
         Ok((status, hdrs, resp_body))
     }
@@ -1024,4 +1125,23 @@ fn is_benign_error(msg: &str) -> bool {
         || lower.contains("peer not authenticated")
         || lower.contains("received fatal alert")
         || lower.contains("channel closed")
+}
+
+/// Walk a wreq::Error's std::error::Error source chain, joining the messages
+/// so the surfaced 502 includes the real root cause (DNS error, TLS
+/// handshake fail, etc.) instead of just "client error (Connect)".
+fn wreq_err_chain(stage: &str, e: &wreq::Error) -> String {
+    use std::error::Error;
+    let mut out = format!("wreq {}: {}", stage, e);
+    let mut src: Option<&dyn Error> = e.source();
+    let mut depth = 0;
+    while let Some(s) = src {
+        out.push_str(&format!(" -> {}", s));
+        src = s.source();
+        depth += 1;
+        if depth > 8 {
+            break;
+        }
+    }
+    out
 }

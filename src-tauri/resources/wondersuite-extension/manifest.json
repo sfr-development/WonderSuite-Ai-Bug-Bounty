@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "WonderSuite",
+  "version": "0.2.1",
+  "description": "Minimal navigator.webdriver stripper for the bundled WonderBrowser.",
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/stealth.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "images/icon-16.png",
+    "48": "images/icon-48.png",
+    "128": "images/icon-128.png"
+  }
+}

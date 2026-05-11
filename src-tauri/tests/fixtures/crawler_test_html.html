@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WonderSuite crawler-test offline fixture</title>
+<meta name="description" content="Offline replica of selected crawler-test.com pages, used to regression-test the WonderSuite crawler without network.">
+<meta name="generator" content="WonderSuite Fixtures 0.2.0">
+<meta name="csrf-token" content="ABC123XYZ">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="content-security-policy" content="default-src 'self'">
+<meta http-equiv="refresh" content="3;url=/redirected">
+<link rel="canonical" href="https://crawler-test.com/canonical-target">
+<link rel="alternate" hreflang="de" href="https://crawler-test.com/de/">
+<link rel="alternate" hreflang="fr" href="https://crawler-test.com/fr/">
+<link rel="icon" href="/favicon.ico">
+<meta property="og:title" content="crawler-test fixture">
+<meta property="og:image" content="/og-image.png">
+<meta name="twitter:card" content="summary">
+</head>
+<body>
+<h1>crawler-test offline fixture</h1>
+<a href="/about">About</a>
+<a href="/products">Products</a>
+<a href="/contact">Contact</a>
+<a href="https://other-host.example/cross-host">Cross-host link</a>
+<a href="javascript:void(0)">JS link</a>
+<a href="mailto:contact@example.com">Mailto</a>
+<a href="/admin">Admin</a>
+<a href="/api/v1/users">API endpoint</a>
+<form action="/search" method="GET">
+  <input name="q" placeholder="search">
+</form>
+<form action="/api/login" method="POST">
+  <input name="username">
+  <input name="password" type="password">
+  <input name="csrf_token" type="hidden" value="ABC123XYZ">
+</form>
+<div id="__NEXT_DATA__">{"page":"/"}</div>
+<script src="/_next/static/chunks/main.js"></script>
+<noscript>You need to enable JavaScript to run this app.</noscript>
+</body>
+</html>

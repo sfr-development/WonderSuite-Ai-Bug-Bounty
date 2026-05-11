@@ -71,11 +71,28 @@ jobs:
             console.log("Bumped to", v);
           '
 
-      - name: Install dependencies (ubuntu only)
+      - name: Install dependencies (ubuntu)
         if: matrix.settings.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            nasm cmake clang libclang-dev
+
+      - name: Install build dependencies for boring-sys2 (macOS)
+        if: matrix.settings.platform == 'macos-latest'
+        run: brew install nasm cmake
+
+      - name: Install build dependencies for boring-sys2 (Windows)
+        if: matrix.settings.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          choco install llvm --no-progress -y
+          # Make NASM + libclang reachable for the rest of the job
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup node
         uses: actions/setup-node@v4

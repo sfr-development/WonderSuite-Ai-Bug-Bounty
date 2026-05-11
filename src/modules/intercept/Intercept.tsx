@@ -1556,7 +1556,18 @@ export function Intercept() {
         )}
 
         <button className="intercept-proxy-btn browser" onClick={async () => {
-          try { const { invoke } = await import('@tauri-apps/api/core'); if (!proxyRunning) await invoke('proxy_start', { port: 8080 }); await invoke('browser_launch', { browserName: null, proxyPort: 8080 }); } catch (e) { console.error(e); alert(e); }
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            if (!proxyRunning) await invoke('proxy_start', { port: 8080 });
+            const preferSystem = localStorage.getItem('ws_prefer_system_browser') === '1';
+            const noSandbox = localStorage.getItem('ws_browser_no_sandbox') === '1';
+            await invoke('browser_launch', {
+              browserName: null,
+              proxyPort: 8080,
+              preferSystemBrowser: preferSystem,
+              noSandbox,
+            });
+          } catch (e) { console.error(e); alert(e); }
         }}>
           <Globe size={12} /> WonderBrowser
         </button>

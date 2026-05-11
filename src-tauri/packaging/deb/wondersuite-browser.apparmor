@@ -1,0 +1,20 @@
+# AppArmor profile for WonderSuite's bundled Chromium.
+#
+# Ubuntu 24.04+ restricts unprivileged user namespaces by default via AppArmor,
+# which breaks Chromium's sandbox initialization. Without this profile, the
+# WonderBrowser launch fails with "namespace sandbox could not start". This
+# profile grants the bundled chrome binary permission to create user namespaces
+# while leaving the rest of the AppArmor policy intact.
+#
+# Profile path: per-user cache under $HOME/.local/share/WonderSuite/chromium/*/chrome-linux64/chrome
+# (the `**` is intentional — the Chromium version subdir changes between WonderSuite releases)
+#
+# Reloaded by debian/postinst on package install.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile wondersuite-browser @{HOME}/.local/share/WonderSuite/chromium/**/chrome-linux64/chrome flags=(unconfined) {
+  userns,
+  include if exists <local/wondersuite-browser>
+}
