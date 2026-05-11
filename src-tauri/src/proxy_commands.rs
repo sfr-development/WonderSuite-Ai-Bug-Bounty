@@ -183,18 +183,32 @@ pub async fn proxy_status(state: tauri::State<'_, ProxyAppState>) -> Result<serd
     }))
 }
 
+#[derive(serde::Serialize)]
+pub struct ToggleInterceptResult {
+    pub enabled: bool,
+    pub response_enabled: bool,
+    pub drained: usize,
+}
+
 #[tauri::command]
 pub async fn proxy_toggle_intercept(
     enabled: bool,
     state: tauri::State<'_, ProxyAppState>,
-) -> Result<bool, String> {
+) -> Result<ToggleInterceptResult, String> {
     state.proxy_state.set_intercept(enabled);
 
+    let mut drained = 0usize;
+    let mut response_enabled = state.proxy_state.is_response_intercept_enabled();
+
     if !enabled {
-        state.proxy_state.drain_pending_intercepts().await;
+        // Master OFF: kill response intercept too and forward everything that
+        // was sitting in the queue so the user's traffic doesn't hang.
+        state.proxy_state.set_response_intercept(false);
+        response_enabled = false;
+        drained = state.proxy_state.drain_pending_intercepts().await;
     }
 
-    Ok(enabled)
+    Ok(ToggleInterceptResult { enabled, response_enabled, drained })
 }
 
 #[tauri::command]

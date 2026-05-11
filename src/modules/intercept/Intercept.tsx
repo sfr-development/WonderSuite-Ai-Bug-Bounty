@@ -913,10 +913,27 @@ export function Intercept() {
       const { invoke } = await import('@tauri-apps/api/core');
       if (!proxyRunning) await startProxy();
       const next = !interceptOn;
-      await invoke('proxy_toggle_intercept', { enabled: next });
+      const result = await invoke<any>('proxy_toggle_intercept', { enabled: next });
       setInterceptOn(next);
+      if (!next) {
+        // Master off: response intercept is killed server-side, mirror it locally
+        // and surface the auto-forwarded count.
+        setResponseInterceptOn(false);
+        const drained: number = result?.drained ?? 0;
+        setQueue([]);
+        setCurrent(null);
+        if (drained > 0) {
+          addToast({
+            title: 'Intercept off',
+            message: `${drained} pending request${drained === 1 ? '' : 's'} auto-forwarded.`,
+            type: 'success',
+          });
+        } else {
+          addToast({ title: 'Intercept off', message: 'Queue was empty.', type: 'info' });
+        }
+      }
     } catch (e) { console.error(e); }
-  }, [interceptOn, proxyRunning, startProxy]);
+  }, [interceptOn, proxyRunning, startProxy, addToast]);
 
   const toggleResponseIntercept = useCallback(async () => {
     try {

@@ -297,9 +297,10 @@ impl ProxyState {
         self.response_intercept_enabled.store(enabled, Ordering::SeqCst);
     }
 
-    /// Drain all pending intercepts by auto-forwarding them.
-    /// Called when intercept is toggled OFF to prevent requests from hanging.
-    pub async fn drain_pending_intercepts(&self) {
+    /// Drain all pending intercepts by auto-forwarding them with their original
+    /// payload. Called when intercept is toggled OFF so requests don't hang.
+    /// Returns the number of intercepts that were drained.
+    pub async fn drain_pending_intercepts(&self) -> usize {
         let mut intercepts = self.pending_intercepts.lock().await;
         let ids: Vec<String> = intercepts.keys().cloned().collect();
         let count = ids.len();
@@ -312,6 +313,7 @@ impl ProxyState {
         if count > 0 {
             println!("[Proxy] Drained {} pending intercepts (toggle off)", count);
         }
+        count
     }
 
     pub fn is_running(&self) -> bool {
