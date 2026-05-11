@@ -36,7 +36,7 @@ sha1 = "0.10"
 md5 = "0.7"
 url = "2"
 # WebSocket: use native-tls backend (no rustls/aws-lc-rs/ring needed)
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 futures-util = "0.3"
 lazy_static = "1"
 base64 = "0.22"
