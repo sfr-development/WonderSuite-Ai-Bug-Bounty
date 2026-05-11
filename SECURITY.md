@@ -16,7 +16,7 @@ WonderSuite is in active development. Security fixes are applied to the latest `
 Report privately via one of:
 
 - **GitHub Security Advisories** (preferred): use the [**Report a vulnerability**](../../security/advisories/new) button on the Security tab. This keeps the report private until a fix is ready.
-- **Email**: `security@sfr-development.de` (PGP key available on request).
+- **Email**: `info@sfr-development.de` (PGP key available on request).
 
 Include in the report:
 
