@@ -51,9 +51,9 @@ A pinned Chromium build (CfT 148.0.7778.97) shipped inside WonderSuite — versi
 
 Multi-level fetcher with robots.txt + sitemap.xml + `/.well-known/` + JS endpoint extraction discovery, soft-404 detection, SPA-aware rendering hooks, cookie + path canonicalization. Regex-based fast path for static apps; for SPAs the browser MCP surface is the better tool.
 
-### MCP Server — 83 Tools
+### MCP Server — 84 Tools + Operator Skill
 
-Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsurf, VS Code, Antigravity, Gemini CLI, …) to autonomously conduct security research against WonderSuite's tool surface.
+Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsurf, VS Code, Antigravity, Gemini CLI, …) to autonomously conduct security research against WonderSuite's tool surface. Ships with a project-level Claude skill ([`.claude/skills/wondersuite.md`](.claude/skills/wondersuite.md)) that teaches the AI workflows, error-recovery, and when-to-ask-vs-act — see [Skill File](#skill-file--teach-your-ai-how-to-use-wondersuite) below.
 
 | Category | Tools |
 |----------|-------|
@@ -312,6 +312,40 @@ The MCP server auto-starts on `http://127.0.0.1:3100/mcp`. The **Settings → MC
   }
 }
 ```
+
+### Skill File — Teach Your AI How to Use WonderSuite
+
+WonderSuite ships a project-level Claude skill that turns your AI client into a senior pentester instead of a tool-calling chatbot. The skill is at [`.claude/skills/wondersuite.md`](.claude/skills/wondersuite.md) and contains:
+
+- The pre-flight sequence (proxy check + recon basics) the AI should run on every new engagement
+- Workflows: recon→crawl→triage, manual browser testing, OAST blind-vuln hunt, JWT analysis, SQLi/XSS hunting, race conditions, HTTP smuggling
+- A decision tree for `browser_open` vs `browser_attach` vs `browser_attach({auto_launch, use_real_profile})`
+- Tool-by-tool reference for all 84 MCP tools (parameters, when to use, killer-feature notes)
+- Error-code recovery table (`PROXY_DOWN`, `STALE_REF`, `CDP_LOST`, `PROFILE_LOCKED` …)
+- Anti-patterns and ask-vs-act guidance
+
+**Install into your own project (one-time):**
+
+```powershell
+# Windows PowerShell
+mkdir .claude\skills -Force
+iwr https://raw.githubusercontent.com/sfr-development/WonderSuite-Ai-Bug-Bounty/main/.claude/skills/wondersuite.md -OutFile .claude\skills\wondersuite.md
+```
+
+```bash
+# macOS / Linux
+mkdir -p .claude/skills
+curl -fsSL https://raw.githubusercontent.com/sfr-development/WonderSuite-Ai-Bug-Bounty/main/.claude/skills/wondersuite.md -o .claude/skills/wondersuite.md
+```
+
+Or clone the repo and copy the file:
+```bash
+cp WonderSuite-Ai-Bug-Bounty/.claude/skills/wondersuite.md .claude/skills/
+```
+
+**Use:** open a Claude Code / compatible session in that directory. The skill auto-loads — its frontmatter tells Claude to apply it whenever the user says things like "test this target", "scan", "pentest", "find vulnerabilities", "attach to my browser". You can also force-invoke it with `/wondersuite`.
+
+**Keep it current:** the skill is versioned with the rest of the repo. After a release, re-run the install command above to pick up new tools / workflow improvements.
 
 ## Project Structure
 

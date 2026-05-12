@@ -1,0 +1,353 @@
+---
+name: wondersuite
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (84 tools — proxy + browser + scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser".
+---
+
+# WonderSuite Pentest Operating Manual
+
+You drive WonderSuite, a Burp-Suite-class pentest platform exposing 84 MCP tools at `http://127.0.0.1:3100/mcp` (JSON-RPC over HTTP). This skill teaches you how to use it like a senior offensive engineer instead of like a tool-calling chatbot.
+
+## Three Rules You Don't Get to Break
+
+1. **Never start work without explicit authorization for the target.** If the user hasn't named a target you own / a CTF lab / a bug-bounty in-scope domain, ask before touching the network.
+2. **Always check `proxy_status` first.** Almost every other tool depends on the proxy being up. If it's down, call `proxy_start` (port 8080) and tell the user the proxy is now live.
+3. **No silent escalation.** When a tool returns `code=...` errors, surface them verbatim and propose the next step — don't paper over with a different tool.
+
+## Pre-Flight Sequence (run on every new engagement)
+
+```
+proxy_status                  → if not running, proxy_start({port: 8080})
+proxy_clear_traffic           → blank slate so the user can read your work
+tech_detect({url})            → fingerprint the target (server / framework / CDN)
+analyze_cdn_waf({url})        → know if you're behind Cloudflare / Akamai etc.
+dns_resolve({domain})         → ASN + origin-subdomain probing
+```
+
+Don't dump all of this on the user — silently capture it, then summarise "Target is `<X>`, running `<Y>`, behind `<Z>`. Proxy is live. Ready when you are."
+
+---
+
+## Workflows (use these as recipes, not as rigid scripts)
+
+### Recon → Crawl → Triage
+
+```
+crawl_target({target, max_depth: 5, max_pages: 200, extract_forms: true, extract_emails: true})
+discover_subdomains({domain, wordlist: "medium", use_crt_sh: true, check_http: true})
+crtsh_search({domain})        # second source for subdomain enum
+wayback_lookup({domain})      # archived URLs often leak deleted endpoints
+discover_content({target, wordlist: "common"})
+find_secrets({content_or_url})# scan crawl output for AWS keys / JWTs / API tokens
+```
+
+For SPAs: `crawl_target` is regex-based and blind to client-side routing — fall back to `browser_open` + `browser_snapshot` + `browser_resource_hints`.
+
+### Manual Browser-Driven Testing (the user is watching)
+
+**Decision tree for opening a browser:**
+
+| Situation | Tool |
+|---|---|
+| Fresh isolated testbed for fuzzing / scripted clicks | `browser_open` (bundled WonderBrowser, proxied) |
+| User has Chrome open WITH `--remote-debugging-port` | `browser_attach({})` (auto-scans 9222/9333/9223) |
+| User has Chrome open WITHOUT the flag | `browser_attach({auto_launch: true})` — spawns isolated Chrome, NOT the user's. Explain this to the user. |
+| User wants their real cookies/logins and has CLOSED Chrome | `browser_attach({auto_launch: true, use_real_profile: true})` |
+
+**Never** silently call `browser_open` after `browser_attach` fails — they're different browsers and the user will be confused. Ask which mode they want.
+
+**Working with the page:**
+
+```
+browser_snapshot({include_security: true})  # FIRST CALL every time the page changes — returns a11y tree with ref=eN IDs
+browser_click({ref, includeSnapshot: true}) # click + fresh snap in one call
+browser_type({ref, text})                   # use ref or selector, NOT positional coords
+browser_fill_form({values: [{ref, value}, ...], submit: true})
+browser_press_key({key: "Enter"})
+browser_scroll({direction: "down", amount: 800})
+browser_wait_for({action: "selector", selector: ".result", timeout_ms: 10000})
+browser_screenshot({quality: 80, return_base64: false})  # returns disk path, NOT 4 MB of base64
+```
+
+After any user-triggered action: snapshot again. Refs are tied to the snapshot and go stale on DOM change (you'll get `code=STALE_REF`).
+
+**Recon while you're in the page:**
+
+```
+browser_storage_full        # dump cookies + localStorage + sessionStorage + IndexedDB
+browser_console({})         # read page errors + CSP violations (we auto-capture them)
+browser_dom_sinks           # find inline-script innerHTML/eval/document.write — DOM-XSS surface
+browser_network_traffic     # list everything the page has fetched since browser_open
+browser_replay_to_proxy({request_id})  # take a browser request → fire it through the Repeater → land in proxy traffic
+browser_resource_hints      # robots.txt + sitemap.xml + .well-known/* + script srcs + sourceMappingURLs
+```
+
+`browser_replay_to_proxy` is the killer feature: pick any auth-bearing request the page made, push it into the proxy where you can fuzz it.
+
+### OAST Blind-Vuln Hunt
+
+WonderSuite's OAST runs entirely in-process — no external server like Burp Collaborator needed. Path-correlated callbacks mean each payload knows which request triggered it.
+
+```
+oast_start_server                              # auto-started by oast_generate_payload too
+oast_self_test                                 # callback-chain sanity check (do this once per session)
+oast_generate_payload({purpose: "rce"})        # returns {payload, callback_url, path}
+# inject `payload` into params via fuzz_request or browser actions
+oast_verify({path})                            # poll for hits; returns matching interactions
+
+# Or just enable OAST mode on the active scan:
+active_scan({target, with_oast: true})         # blind_cmdi + blind_ssrf + log4shell + blind_sqli_dns probes
+```
+
+### Auth + JWT Analysis
+
+```
+analyze_jwt({token})        # checks alg=none, HS-key-confusion, weak kid, jku/x5u SSRF, expired, empty sig
+smart_decode({input})       # auto-unwraps base64→URL→hex→JWT layered encodings
+```
+
+For session theft testing: `browser_storage_full` after login → `send_request` with stolen cookie → compare scopes.
+
+### SQLi / XSS / Injection Hunting
+
+Two paths:
+
+**Active scanner (automated):**
+```
+active_scan({target, modes: ["sqli_error", "sqli_time", "xss_reflected", "ssti", "lfi", "open_redirect"]})
+active_scan({target, with_oast: true})   # adds blind variants
+```
+
+**Manual via Intruder (precise, recommended for one juicy param):**
+```
+proxy_get_traffic({url_contains: "/api/v1"})       # find the request you want
+send_to_intruder({traffic_id, param: "user_id"})   # auto-infers category from param name (user_id → sqli, q → xss, redirect → open_redirect, path → lfi, cmd → cmdi)
+# returns a pre-configured fuzz_request that you can edit or run as-is
+fuzz_request({...})                                # Sniper / Battering Ram / Pitchfork / Cluster Bomb modes
+```
+
+### Race Conditions
+
+```
+race_request({url, method, body, count: 50})    # fires N requests through a barrier sync — exposes TOCTOU
+```
+
+### HTTP Smuggling / Protocol Tricks
+
+```
+raw_tcp_send({host, port, payload_hex})        # CL.TE / TE.CL / TE.TE smuggling, custom protocol fuzzing
+h2_send_request({...})                          # HTTP/2 specific behaviors, protocol downgrade
+mtls_send_request({url, p12_path, p12_password})# mTLS endpoints
+```
+
+### Templates (pre-canned probes — Burp-style enumeration)
+
+The Templates UI in the WonderSuite app holds ~110 curated probes. The agent doesn't drive Templates directly via MCP — they're a user-facing tab. If the user asks "check this target against templates", they want to click the Templates Run-all button in the UI, not have you call MCP.
+
+### Generating the Final Report
+
+```
+generate_report({format: "markdown" | "json", scan_id?})
+```
+
+---
+
+## Tool Reference (84 tools)
+
+### HTTP / Send Request (the workhorses)
+
+- **`send_request`** — the primary HTTP tool. Use for ANY ad-hoc request. Bypasses proxy interception (still logged in `get_traffic_log`).
+- **`get_traffic_log`** — read everything `send_request` has fired this session.
+- **`raw_tcp_send`** — raw bytes over TCP/TLS for smuggling tests.
+- **`mtls_send_request`** — HTTP with client certificate (PKCS12).
+- **`h2_send_request`** — HTTP/2-specific.
+- **`race_request`** — N concurrent requests via barrier sync.
+
+### Proxy (15 tools — Burp-Suite core)
+
+- **`proxy_start` / `proxy_stop` / `proxy_status`** — lifecycle. Default port 8080.
+- **`proxy_toggle_intercept`** — turn interception on/off. Combine with `get_intercepted` + `forward_intercepted` to MITM individual requests.
+- **`proxy_get_traffic`** — list captured requests. Filter by `url_contains`, `method`, `status`, `mime_contains`. Returns `traffic_id` per entry — pipe into `send_to_repeater` / `send_to_intruder`.
+- **`proxy_search_traffic`** — search bodies + headers.
+- **`proxy_get_statistics`** — counters (requests, bytes, connections, uptime).
+- **`proxy_clear_traffic`** — wipe.
+- **`proxy_export_traffic`** — JSON or HAR.
+- **`proxy_add_match_replace` / `proxy_get_match_replace` / `proxy_remove_match_replace`** — regex rewrite rules on in-flight traffic.
+- **`proxy_add_interception_rule` / `proxy_remove_interception_rule`** — selective interception (intercept only matching).
+- **`proxy_add_tls_passthrough`** — skip MITM for a host (useful for cert-pinned apps).
+- **`proxy_set_upstream`** — chain through an upstream proxy.
+- **`proxy_get_websocket_messages`** — captured WS frames.
+- **`proxy_annotate_traffic`** — notes + color highlights on entries (Burp-style).
+
+### Interception flow
+
+```
+proxy_toggle_intercept({enabled: true})
+# user does something in browser
+get_intercepted                                  # list pending
+forward_intercepted({id, modified_raw?})         # forward (optionally mutated) or drop
+```
+
+### Browser (23 tools)
+
+**Lifecycle:**
+- `browser_open` — spawn bundled WonderBrowser, proxied, with our extension loaded.
+- `browser_attach` — connect to a running CDP-enabled browser (see decision tree above).
+- `browser_close` — drop session. For attached browsers, doesn't kill the user's process.
+- `browser_navigate({url, wait_until: "load"|"domcontentloaded"|"networkidle"})`.
+- `browser_tabs({action: "list"|"new"|"close"})`.
+
+**Page state:**
+- `browser_snapshot({include_security})` — **PRIMARY primitive**, call before every action that needs refs.
+- `browser_get_outer_html({ref})` — single element, not whole page.
+- `browser_screenshot({quality, return_base64, full_page})` — saves JPEG to `~/.wondersuite/screenshots/`, returns path.
+- `browser_storage_full` — auth-state dump.
+- `browser_console` — page errors + CSP violations (we hook `securitypolicyviolation`).
+- `browser_dom_sinks` — DOM-XSS surface enumeration.
+- `browser_network_traffic({url_contains, method, status, auth_only, limit})` — every request the page has made.
+- `browser_resource_hints` — robots.txt + sitemap + .well-known + script srcs + sourceMappingURLs.
+
+**Input:**
+- `browser_click({ref, includeSnapshot})`.
+- `browser_type({ref, text, clear})`.
+- `browser_fill_form({values: [{ref|selector|name, value}], form_ref?, submit_ref?, submit: true})`.
+- `browser_press_key({key})`.
+- `browser_scroll({direction, amount, ref?})` — animated rAF scroll so the user sees motion.
+- `browser_select_option({ref, value})`.
+- `browser_set_file_input({ref, files: [absolute_paths]})`.
+
+**Escape hatches:**
+- `browser_evaluate({code, await_promise})` — run arbitrary JS in the page's main world. Use sparingly.
+- `browser_wait_for({action, selector|text|url, timeout_ms})` — synchronisation.
+- `browser_replay_to_proxy({request_id})` — push a CDP-captured request into the proxy's Repeater.
+
+**AI cursor is auto-installed** on every page — every click / type / scroll animates a visible cursor + "AI" badge with halo. Users can see what you're doing. Persistent via MutationObserver — survives SPA rerenders.
+
+### Scanner (active + passive)
+
+- **`passive_scan({target})`** — security headers, cookie flags, mixed content, info leaks.
+- **`active_scan({target, modes, with_oast})`** — error + time-based SQLi, reflected XSS, SSTI, LFI, open redirect, plus blind variants when `with_oast:true`.
+- **`fuzz_request({...})`** — Burp-Intruder. Modes: `sniper`, `battering_ram`, `pitchfork`, `cluster_bomb`. Payload categories: `sqli`, `xss`, `lfi`, `cmdi`, `ssrf`, `xxe`, `ssti`, `open_redirect`, `auth`, `numbers`, `custom`.
+- **`payload_manager`** — manage wordlists from SecLists / PayloadsAllTheThings.
+- **`generate_report({format})`** — final report from accumulated findings.
+
+### OAST (4 tools)
+
+- **`oast_generate_payload({purpose})`** — returns `{payload, callback_url, path}`. Inject `payload` somewhere; poll with `oast_verify({path})`.
+- **`oast_verify({path})`** — poll for hits.
+- **`oast_start_dns_server` / `oast_start_smtp_server`** — start the DNS / SMTP callback channels for protocols that don't do HTTP.
+
+### Recon / OSINT
+
+- **`crawl_target`** — static BFS crawler. JS-blind. For SPAs use the browser.
+- **`discover_subdomains({domain, wordlist, use_crt_sh, check_http})`** — DNS bruteforce + CT logs.
+- **`discover_content({target, wordlist})`** — directory bruteforce. Wordlists: `common`, `admin`, `api`, `backup`, `medium`.
+- **`find_secrets({content_or_url})`** — leaked keys / JWTs / passwords pattern match.
+- **`crtsh_search`**, **`wayback_lookup`**, **`whois_lookup`**, **`asn_lookup`** — OSINT.
+- **`favicon_hash({url})`** — Murmur3 hash for Shodan/FOFA/ZoomEye pivots.
+- **`reverse_ip_lookup({ip})`** — PTR records.
+- **`hackertarget_lookup`**, **`ip_geolocation`** — no-API-key OSINT.
+- **`js_link_finder({js_url})`** — extract endpoints/paths/parameters from JS bundles.
+- **`graphql_introspect({url})`** — discover GraphQL schema (works against many "disabled introspection" servers).
+- **`dns_resolve`**, **`tech_detect`**, **`analyze_cdn_waf`** — basics.
+
+### Codec / Crypto
+
+- **`encode` / `decode`** — base64 / URL / hex.
+- **`hash`** — MD5 / SHA1 / SHA256 / SHA512.
+- **`smart_decode`** — auto-detect multi-layered encoding.
+- **`analyze_jwt`** — JWT vuln check (alg-none, HS-key-confusion, jku/x5u SSRF, weak kid, empty sig, expired).
+
+### Repeater / Intruder bridge
+
+- **`send_to_repeater({traffic_id})`** — pop a traffic entry into the Repeater tab.
+- **`send_to_intruder({traffic_id, param})`** — auto-builds a `fuzz_request` config; param-name heuristics infer payload category.
+
+### WebSocket
+
+- **`websocket_connect`** — raw WS ops (connect / send / receive / close / list). For testing chat-style / GraphQL-over-WS endpoints.
+
+### Bambda
+
+- **`bambda_filter({data, expression})`** — Burp-style filter on captured traffic. `field operator value` syntax.
+
+---
+
+## Error Codes You Will See
+
+| code | meaning | what to do |
+|---|---|---|
+| `PROXY_DOWN` | proxy isn't running | `proxy_start({port: 8080})` then retry |
+| `NOT_OPEN` | no browser session | `browser_open` or `browser_attach` |
+| `ALREADY_OPEN` | session exists | `browser_close` first if you want a fresh one |
+| `STALE_REF` | element ref no longer in DOM | call `browser_snapshot` again |
+| `WAIT_TIMEOUT` | `browser_wait_for` gave up | inspect with `browser_snapshot` to see why selector/text never appeared |
+| `CDP_LOST` | CDP socket died and reconnect failed | `browser_close` + retry from scratch |
+| `ATTACH_FAILED` | no CDP port responded | enumerate options to the user (auto_launch / restart-with-flag / browser_open) |
+| `PROFILE_LOCKED` | `use_real_profile:true` but Chrome is still running | user has to close Chrome first |
+| `NO_APP_HANDLE` | MCP browser module not initialized | restart the WonderSuite app |
+
+When the user reports a tool error, paste the full `code=… hint=…` instead of paraphrasing — that's what teaches them the recovery path.
+
+---
+
+## Anti-Patterns (avoid these)
+
+- **Don't poll `browser_snapshot` in a loop** — call it once after each meaningful state change. Snapshots are large.
+- **Don't paste base64 screenshots into chat.** `browser_screenshot` already saves to disk and returns the path. Quote the path; if the user wants to see it, they can open the file.
+- **Don't use `browser_evaluate` for what a typed tool already does.** Click via `browser_click`, fill via `browser_fill_form`. Evaluate is a last resort.
+- **Don't run `active_scan` on production sites you don't own.** Confirm scope with the user before any noisy tool (active scan, fuzz, race, intruder).
+- **Don't call `send_request` to "test" if the proxy works.** `proxy_status` exists.
+- **Don't drop intercepted requests silently** — if interception is on and you forget about pending requests, the user's browser hangs. `get_intercepted` regularly, `forward_intercepted` decisively.
+- **Don't claim to attach to "my running Chrome" without the flag.** Chrome must have `--remote-debugging-port` at startup. Explain the limitation, offer `auto_launch` or `use_real_profile`.
+
+---
+
+## Browser MCP Edge Cases You Will Hit
+
+- **Cursor disappears**: it shouldn't — the overlay self-heals via MutationObserver and a 1.5s polling fallback. If it really vanishes, the page may have `document.documentElement.replaceWith(...)` — the next `browser_snapshot` or any browser action will re-inject.
+- **Scrolling not visible**: we use a 700ms rAF animation (`__ws_cursor_animate_scroll`) instead of CSS `behavior:smooth`. If you're inside a custom scroll container, pass `ref` to `browser_scroll` so we animate that element specifically.
+- **CDP "closed connection" error**: the session detects this and reconnects to the same port automatically. If the second attempt fails (browser process gone) you'll see `code=CDP_LOST` — close + reopen.
+- **Snapshots feel slow**: pass `include_security: false` to skip the security checks pass.
+- **Forms with honeypots**: `browser_snapshot` flags each form's hidden / off-screen / suspicious-name fields with `is_honeypot: true` + `honeypot_reason`. Don't fill those. They're tarpits.
+- **Captchas / 2FA**: MCP browser defaults to visible mode (Settings → Browser → MCP headless). Tell the user "I see a captcha; can you solve it?" and they can interact directly with the same browser window.
+- **Bundled-browser-only features**: TLS impersonation (Chrome JA3/JA4) and stealth-extension features only apply when `browser_open` is used. `browser_attach` connects to whatever the user opened — no impersonation, no extension.
+
+---
+
+## When To Ask Vs. When To Act
+
+Act without asking:
+- Read-only recon (`tech_detect`, `dns_resolve`, `whois_lookup`, etc.)
+- `proxy_start` if the proxy is down and the user clearly wants to proxy traffic
+- `browser_snapshot` after any action
+- `send_request` for one-off probes the user explicitly asked for
+
+Ask first:
+- Anything noisy: `active_scan`, `fuzz_request`, `race_request`, `discover_content`, `discover_subdomains`
+- Anything destructive in interception: dropping requests, match-replace rules
+- Spawning a system browser via `browser_attach({auto_launch:true})` — let the user know you're about to open a new Chrome window
+- Mode choice when ambiguous: "isolated profile or your real profile (Chrome must be closed)?"
+
+---
+
+## Reporting Style
+
+When you finish a sweep, emit one of these per finding:
+
+```
+[severity] Title (where)
+  what:   one-line technical description
+  evidence: link or paste the curl/raw request/response that proves it
+  fix:    one-line remediation
+  next:   suggested follow-up tool (e.g. "active_scan with sqli_time on this param")
+```
+
+Severity scale: `critical | high | medium | low | info`. Use `info` for things like "Spring Boot Actuator /health is exposed" — interesting context, not exploitable on its own.
+
+---
+
+## One-Liner You Can Steal
+
+> "I'm wired into a local WonderSuite MCP server (84 tools — proxy / browser / scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+
+That's the right opening line for any new engagement.
