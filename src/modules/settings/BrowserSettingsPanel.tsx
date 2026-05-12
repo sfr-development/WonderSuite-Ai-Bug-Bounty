@@ -44,6 +44,10 @@ export function BrowserSettingsPanel() {
   const [tlsImpersonate, setTlsImpersonate] = useState<boolean>(
     () => localStorage.getItem('ws_tls_impersonate') !== '0',  // default ON
   );
+  // MCP browser visible by default — user can intervene on captchas etc.
+  const [mcpHeadless, setMcpHeadless] = useState<boolean>(
+    () => localStorage.getItem('ws_mcp_browser_headless') === '1',
+  );
 
   const [migration, setMigration] = useState<MigrationReport | null>(null);
   const [busyCa, setBusyCa] = useState(false);
@@ -82,6 +86,16 @@ export function BrowserSettingsPanel() {
       }
       setTlsImpersonate(want);
     } catch {}
+
+    // Sync MCP-browser-headless preference to backend on every mount.
+    try {
+      const want = localStorage.getItem('ws_mcp_browser_headless') === '1';
+      const current = await invoke<boolean>('mcp_browser_get_headless');
+      if (current !== want) {
+        await invoke('mcp_browser_set_headless', { headless: want });
+      }
+      setMcpHeadless(want);
+    } catch {}
   }, [addToast]);
 
   const removeLegacyCa = async () => {
@@ -119,6 +133,27 @@ export function BrowserSettingsPanel() {
     setNoSandbox(next);
     if (next) localStorage.setItem('ws_browser_no_sandbox', '1');
     else localStorage.removeItem('ws_browser_no_sandbox');
+  };
+
+  const toggleMcpHeadless = async (next: boolean) => {
+    setMcpHeadless(next);
+    if (next) localStorage.setItem('ws_mcp_browser_headless', '1');
+    else localStorage.removeItem('ws_mcp_browser_headless');
+    try {
+      await invoke('mcp_browser_set_headless', { headless: next });
+      addToast({
+        title: 'MCP browser',
+        message: next
+          ? 'Headless — agent runs the browser invisibly'
+          : 'Visible — window stays open so you can step in on captchas',
+        type: 'success',
+      });
+    } catch (e: any) {
+      addToast({ title: 'MCP browser', message: `Toggle failed: ${e}`, type: 'error' });
+      setMcpHeadless(!next);
+      if (!next) localStorage.setItem('ws_mcp_browser_headless', '1');
+      else localStorage.removeItem('ws_mcp_browser_headless');
+    }
   };
 
   const toggleTlsImpersonate = async (next: boolean) => {
@@ -283,15 +318,27 @@ export function BrowserSettingsPanel() {
             <Globe size={12} /> Impersonate Chrome TLS (JA3/JA4 + HTTP/2)
           </div>
           <span>
-            Route the proxy's <strong>upstream</strong> requests through a BoringSSL stack tuned to match
-            Chrome 137's exact TLS ClientHello, JA3 / JA4 signature, and HTTP/2 SETTINGS frame ordering.
-            This is what defeats Cloudflare, Akamai Bot Manager, DataDome, and PerimeterX. Off only if
-            the upstream blocks all impersonation patterns (rare).
+            Proxy upstream uses Chrome 137 JA3/JA4 + HTTP/2 fingerprint. Defeats Cloudflare, Akamai, DataDome, PerimeterX.
           </span>
         </div>
         <button
           className={`settings-toggle ${tlsImpersonate ? 'on' : ''}`}
           onClick={() => toggleTlsImpersonate(!tlsImpersonate)}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Globe size={12} /> Run MCP browser headless
+          </div>
+          <span>
+            Hide the MCP browser window. Off by default — keep visible so you can help on captchas / 2FA.
+          </span>
+        </div>
+        <button
+          className={`settings-toggle ${mcpHeadless ? 'on' : ''}`}
+          onClick={() => toggleMcpHeadless(!mcpHeadless)}
         />
       </div>
 

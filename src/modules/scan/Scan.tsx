@@ -151,7 +151,14 @@ export function Scan() {
     const u = f.request_info?.url || f.url; const m = f.request_info?.method || 'GET';
     const req = f.request_info ? `${m} ${u} HTTP/1.1\n${f.request_info.request_headers.join('\n')}${f.request_info.request_body ? '\n\n' + f.request_info.request_body : ''}` : `GET ${u} HTTP/1.1\nHost: ${new URL(u).hostname}`;
     const res = f.request_info ? `HTTP/1.1 ${f.request_info.response_status}\n${f.request_info.response_headers.join('\n')}\n\n${f.request_info.response_body_preview || ''}` : undefined;
-    openContextMenu(e.clientX, e.clientY, { method: m, url: u, requestRaw: req, responseRaw: res });
+    openContextMenu(e.clientX, e.clientY, {
+      method: m, url: u, requestRaw: req, responseRaw: res,
+      source: 'scanner',
+      onDelete: () => {
+        setFindings(prev => prev.filter(x => x.id !== f.id));
+        if (selectedFinding?.id === f.id) setSelectedFinding(null);
+      },
+    });
   };
 
   const copyFinding = (f: ScanFinding) => {

@@ -44,6 +44,7 @@ export function Dashboard() {
   const [uptime, setUptime] = useState(0);
   const [payloadStats, setPayloadStats] = useState<{ name: string; n: string; downloaded: boolean }[]>([]);
   const [payloadTotal, setPayloadTotal] = useState<number>(0);
+  const [mcpToolCount, setMcpToolCount] = useState<number>(0);
   const [portConflict, setPortConflict] = useState<null | {
     role: string;
     port: number;
@@ -54,15 +55,17 @@ export function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [info, brs, status, payloads] = await Promise.all([
+        const [info, brs, status, payloads, tools] = await Promise.all([
           invoke<SystemInfo>('get_system_info'),
           invoke<BrowserInfo[]>('browser_detect'),
           invoke<any>('proxy_status'),
           invoke<any>('payload_list_categories').catch(() => null),
+          invoke<Array<{ name: string }>>('mcp_list_tools').catch(() => [] as Array<{ name: string }>),
         ]);
         setSysInfo(info);
         setBrowsers(brs);
         setProxyStatus(status);
+        setMcpToolCount(tools.length);
         if (payloads?.categories) {
           const fmt = (n: number): string => n >= 1000 ? `${(n/1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`;
           setPayloadStats(payloads.categories.map((c: any) => ({
@@ -205,7 +208,7 @@ export function Dashboard() {
           <div className="dash-status-sep" />
           <div className="dash-status-item">
             <span className="dash-status-label">MCP Tools</span>
-            <span className="dash-status-val accent">66</span>
+            <span className="dash-status-val accent">{mcpToolCount || '—'}</span>
           </div>
         </div>
 

@@ -47,6 +47,9 @@ pub struct OastPayload {
     pub full_url: String,
     pub dns_payload: String,
     pub http_payload: String,
+    /// Path-based callback URL that works whether server_domain is an IP or DNS
+    /// name. Listener correlates by the path segment.
+    pub callback_url: String,
     pub smtp_payload: String,
     pub created_at: String,
     pub description: String,
@@ -69,6 +72,43 @@ pub fn get_interactions() -> &'static Mutex<Vec<OastInteraction>> {
     INTERACTIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+// Track the running OAST HTTP listener so other tools (active_scan with_oast,
+// oast_generate_payload) can route callbacks to the same instance.
+static HTTP_LISTENER_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+pub fn http_listener_port() -> Option<u16> {
+    let p = HTTP_LISTENER_PORT.load(std::sync::atomic::Ordering::Relaxed);
+    if p == 0 {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+pub fn set_http_listener_port(port: u16) {
+    HTTP_LISTENER_PORT.store(port, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Resolve the callback host to embed in OAST payloads. Defaults to
+/// 127.0.0.1 (works for localhost targets). Override with WS_OAST_HOST for
+/// external targets (your public IP or a tunneled hostname).
+pub fn callback_host() -> String {
+    std::env::var("WS_OAST_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+/// Idempotently make sure the HTTP callback listener is running. Returns the
+/// port it's bound to. Safe to call repeatedly.
+pub async fn ensure_http_listener(default_port: u16) -> Result<u16, String> {
+    if let Some(p) = http_listener_port() {
+        return Ok(p);
+    }
+    start_http_callback_server(default_port).await?;
+    set_http_listener_port(default_port);
+    // Brief settle so the listener is ready before the first probe.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    Ok(default_port)
+}
+
 pub fn generate_oast_payload(description: &str, server_domain: &str) -> OastPayload {
     let correlation_id = generate_random_string(16);
     let random_part = generate_random_string(12);
@@ -81,6 +121,7 @@ pub fn generate_oast_payload(description: &str, server_domain: &str) -> OastPayl
         full_url: format!("http://{}", subdomain),
         dns_payload: subdomain.clone(),
         http_payload: format!("http://{}/", subdomain),
+        callback_url: format!("http://{}/{}", server_domain, correlation_id),
         smtp_payload: format!("oast-{}@{}", correlation_id, server_domain),
         created_at: iso_now(),
         description: description.to_string(),
@@ -236,11 +277,19 @@ pub async fn start_http_callback_server(port: u16) -> Result<(), String> {
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
         let host = headers.get("host").cloned().unwrap_or_default();
-        let parts: Vec<&str> = host.split('.').collect();
-        let correlation_id = if parts.len() >= 3 {
-            parts[1].to_string()
-        } else if path.len() > 1 {
-            path.trim_start_matches('/').split('/').next().unwrap_or("unknown").to_string()
+        // Path-based correlation works for both IP-only and DNS-based listeners.
+        // Only fall back to subdomain extraction if the path doesn't carry one.
+        let path_corr = path.trim_start_matches('/').split('/').next().unwrap_or("");
+        let is_ip_host = host.split(':').next().unwrap_or("").chars().all(|c| c.is_ascii_digit() || c == '.');
+        let correlation_id = if !path_corr.is_empty() && path_corr != "favicon.ico" {
+            path_corr.to_string()
+        } else if !is_ip_host {
+            let parts: Vec<&str> = host.split('.').collect();
+            if parts.len() >= 3 {
+                parts[1].to_string()
+            } else {
+                "unknown".to_string()
+            }
         } else {
             "unknown".to_string()
         };

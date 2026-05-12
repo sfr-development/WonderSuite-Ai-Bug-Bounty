@@ -32,9 +32,7 @@ pub fn tool_category(name: &str) -> &'static str {
         }
         "smuggling_send" | "detect_smuggling" | "raw_tcp_send" | "test_auth_bypass"
         | "test_open_redirect" => "exploit",
-        "browser_navigate" | "browser_execute_js" | "session_from_browser" | "browser_network_traffic" => {
-            "browser"
-        }
+        s if s.starts_with("browser_") => "browser",
         "encode" | "decode" | "hash" | "smart_decode" | "analyze_jwt" | "h2_translate"
         | "process_payload" | "generate_payload" => "codec",
         "proxy_start"
@@ -51,7 +49,6 @@ pub fn tool_category(name: &str) -> &'static str {
         | "proxy_add_tls_passthrough"
         | "proxy_set_upstream"
         | "proxy_get_websocket_messages"
-        | "proxy_get_capabilities"
         | "proxy_get_statistics"
         | "proxy_clear_traffic"
         | "proxy_export_traffic"
@@ -60,9 +57,7 @@ pub fn tool_category(name: &str) -> &'static str {
         | "proxy_annotate_traffic"
         | "get_traffic_log" => "proxy",
         "oast_generate_payload"
-        | "oast_poll_interactions"
         | "oast_verify"
-        | "oast_start_server"
         | "oast_start_dns_server"
         | "oast_start_smtp_server"
         | "collaborator_everywhere" => "oast",
@@ -79,7 +74,6 @@ pub fn tool_category(name: &str) -> &'static str {
         | "hackertarget_lookup"
         | "ip_geolocation"
         | "tech_detect" => "osint",
-        "session_manage" => "session",
         "bambda_filter" => "filter",
         _ => "other",
     }
@@ -102,11 +96,16 @@ fn summarize_params(name: &str, params: &serde_json::Value) -> String {
 
     match name {
         "send_request" | "h2_send_request" => format!("{} {}", method, url),
-        "browser_navigate" => format!("{} → {}", action, url),
-        "browser_execute_js" => {
+        "browser_navigate" | "browser_open" => format!("→ {}", url),
+        "browser_evaluate" | "browser_console" => {
             let code = params["code"].as_str().unwrap_or("");
             format!("JS: {}…", &code[..code.len().min(60)])
         }
+        "browser_click" | "browser_type" | "browser_get_outer_html" | "browser_set_file_input" => {
+            params["ref"].as_str().unwrap_or("(no ref)").to_string()
+        }
+        "browser_snapshot" => "page-state".into(),
+        "browser_replay_to_proxy" => params["request_id"].as_str().unwrap_or("").to_string(),
         "active_scan" | "crawl_target" | "full_auto_scan" => format!("Target: {}", url),
         "smuggling_send" => {
             let tech = params["technique"].as_str().unwrap_or("manual");

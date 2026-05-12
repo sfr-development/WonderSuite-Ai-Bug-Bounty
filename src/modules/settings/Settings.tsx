@@ -97,7 +97,6 @@ function categorize(name: string): string {
   if (/^proxy_(get_traffic|search_traffic|clear_traffic|export_traffic)/.test(name)) return 'traffic';
   if (name.startsWith('proxy_')) return 'proxy';
   if (name.startsWith('browser_')) return 'browser';
-  if (name.startsWith('agent_browser_')) return 'browser';
   if (name.startsWith('session_')) return 'session';
   if (name.startsWith('websocket_') || name.startsWith('ws_')) return 'websocket';
   if (name.startsWith('oast_')) return 'oast';

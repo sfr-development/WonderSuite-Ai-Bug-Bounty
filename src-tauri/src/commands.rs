@@ -240,6 +240,18 @@ pub async fn mcp_execute_tool(name: String, params: serde_json::Value) -> Result
     crate::mcp::handle_tool_call(&name, &params).await
 }
 
+/// Settings → MCP browser default-headless toggle. The UI flips this; the next
+/// `browser_open` MCP call uses it as the default when `headless` isn't given.
+#[tauri::command]
+pub fn mcp_browser_get_headless() -> bool {
+    crate::mcp::browser::default_headless()
+}
+
+#[tauri::command]
+pub fn mcp_browser_set_headless(headless: bool) {
+    crate::mcp::browser::set_default_headless(headless);
+}
+
 /// Write text content to a file path — restricted to safe paths
 #[tauri::command]
 pub async fn save_file_text(path: String, content: String) -> Result<(), String> {

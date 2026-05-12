@@ -18,8 +18,8 @@ interface AppState {
   addScope: (pattern: string) => void;
   removeScope: (pattern: string) => void;
   isInScope: (url: string) => boolean;
-  contextMenu: { isOpen: boolean; x: number; y: number; data: { method: string; url: string; requestRaw: string; responseRaw?: string } | null };
-  openContextMenu: (x: number, y: number, data: { method: string; url: string; requestRaw: string; responseRaw?: string }) => void;
+  contextMenu: { isOpen: boolean; x: number; y: number; data: { method: string; url: string; requestRaw: string; responseRaw?: string; source?: string; onDelete?: () => void } | null };
+  openContextMenu: (x: number, y: number, data: { method: string; url: string; requestRaw: string; responseRaw?: string; source?: string; onDelete?: () => void }) => void;
   closeContextMenu: () => void;
   toasts: ToastConfig[];
   addToast: (toast: Omit<ToastConfig, 'id'>) => void;

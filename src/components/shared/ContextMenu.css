@@ -48,14 +48,17 @@
   max-width: 230px;
 }
 
-/* Scrollable body */
+/* Scrollable body. overflow-x must be visible so absolutely-positioned
+   submenus can render outside the right edge — without this they got
+   clipped to nothing and clicks looked like no-ops. Vertical scroll keeps
+   working because overflow-y is explicit. */
 .context-menu-actions {
   display: flex;
   flex-direction: column;
   padding: 4px 0;
   max-height: calc(80vh - 50px);
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: visible;
 }
 
 .context-menu-actions::-webkit-scrollbar { width: 4px; }
@@ -162,8 +165,21 @@
   right: -12px;
 }
 
-.context-submenu-trigger:hover > .context-submenu {
+/* Hover-open (kept as a UX nicety on desktop) AND click-open (React state)
+   both flip the submenu visible. The `.is-open` class is toggled by the
+   parent button onClick — hover alone wasn't reliable inside the scroll
+   container in Tauri's WebView. */
+.context-submenu-trigger:hover > .context-submenu,
+.context-submenu.is-open {
   display: flex;
+}
+
+/* Highlight the open trigger so it's obvious which one is expanded */
+.context-submenu-trigger.open > button {
+  background: var(--bg-2);
+}
+.context-submenu-trigger.open > button::after {
+  color: var(--accent);
 }
 
 /* Submenu items */

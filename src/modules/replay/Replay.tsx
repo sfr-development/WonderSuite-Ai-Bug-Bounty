@@ -1,8 +1,126 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Send, Plus, X, ArrowRight, Loader2, Copy, Clock, Code, Settings2 } from 'lucide-react';
+import { Send, Plus, X, ArrowRight, Loader2, Copy, Clock, Code, Settings2, ClipboardPaste } from 'lucide-react';
 import { useReplayStore, useAppStore } from '../../stores';
 import { invoke } from '@tauri-apps/api/core';
 import './Replay.css';
+
+/** Best-effort parser for pasted requests. Accepts:
+ *   - Raw HTTP/1.1 (`POST /api HTTP/1.1\nHost: ex.com\n...`)
+ *   - Absolute-URL request line (`GET https://ex.com/api HTTP/1.1\n...`)
+ *   - cURL command (`curl 'https://...' -X POST -H ... -d '...'`)
+ *   - JS fetch() snippet (`fetch('https://...', { method, headers, body })`)
+ * Returns null if it can't figure the format out.
+ */
+function parsePastedRequest(text: string): null | {
+  method: string;
+  url: string;
+  requestRaw: string;
+  format: string;
+} {
+  const t = text.trim();
+  if (!t) return null;
+
+  // cURL ────────────────────────────────────────────────────────────────────
+  if (/^curl\b/i.test(t)) {
+    const flat = t.replace(/\\\s*\n/g, ' ').replace(/\s+/g, ' ');
+    let method = 'GET';
+    const m = flat.match(/-X\s+([A-Z]+)/i);
+    if (m) method = m[1].toUpperCase();
+    const urlMatch = flat.match(/curl\s+(?:-[A-Za-z]\s+\S+\s+)*['"]?(https?:\/\/[^\s'"]+)['"]?/);
+    let url = urlMatch?.[1] || '';
+    if (!url) {
+      // fallback: first http(s) URL anywhere
+      const any = flat.match(/https?:\/\/[^\s'"]+/);
+      url = any?.[0] || '';
+    }
+    const headers: Record<string, string> = {};
+    const hdrRe = /-H\s+['"]([^:'"]+):\s*([^'"]*)['"]/g;
+    let mm;
+    while ((mm = hdrRe.exec(flat)) !== null) headers[mm[1].trim()] = mm[2].trim();
+    let body = '';
+    const dataMatch = flat.match(/(?:--data(?:-raw|-binary|-urlencode)?|-d)\s+['"]([\s\S]+?)['"](?=\s|$)/);
+    if (dataMatch) {
+      body = dataMatch[1];
+      if (!method || method === 'GET') method = 'POST';
+    }
+    if (!url) return null;
+    try {
+      const u = new URL(url);
+      if (!headers['Host'] && !headers['host']) headers['Host'] = u.host;
+    } catch { return null; }
+    const path = (() => { try { return new URL(url).pathname + new URL(url).search; } catch { return '/'; } })();
+    const raw =
+      `${method} ${path} HTTP/1.1\r\n` +
+      Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') +
+      (body ? `\r\n\r\n${body}` : '\r\n\r\n');
+    return { method, url, requestRaw: raw, format: 'curl' };
+  }
+
+  // fetch() JS ──────────────────────────────────────────────────────────────
+  if (/^fetch\s*\(/i.test(t)) {
+    const urlMatch = t.match(/fetch\s*\(\s*['"]([^'"]+)['"]/);
+    const url = urlMatch?.[1] || '';
+    if (!url) return null;
+    let method = 'GET';
+    const mm = t.match(/method\s*:\s*['"]([A-Z]+)['"]/i);
+    if (mm) method = mm[1].toUpperCase();
+    const headers: Record<string, string> = {};
+    const headersBlock = t.match(/headers\s*:\s*\{([\s\S]*?)\}/);
+    if (headersBlock) {
+      const re = /['"]([^'"]+)['"]\s*:\s*['"]([^'"]*)['"]/g;
+      let h;
+      while ((h = re.exec(headersBlock[1])) !== null) headers[h[1]] = h[2];
+    }
+    let body = '';
+    const bodyMatch = t.match(/body\s*:\s*['"]([^'"]*)['"]/) ||
+                      t.match(/body\s*:\s*JSON\.stringify\s*\(\s*([\s\S]+?)\s*\)/);
+    if (bodyMatch) {
+      body = bodyMatch[1];
+      if (method === 'GET') method = 'POST';
+    }
+    try {
+      const u = new URL(url);
+      if (!headers['Host'] && !headers['host']) headers['Host'] = u.host;
+      const path = u.pathname + u.search;
+      const raw =
+        `${method} ${path} HTTP/1.1\r\n` +
+        Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') +
+        (body ? `\r\n\r\n${body}` : '\r\n\r\n');
+      return { method, url, requestRaw: raw, format: 'fetch' };
+    } catch { return null; }
+  }
+
+  // Raw HTTP ────────────────────────────────────────────────────────────────
+  const lines = t.split(/\r?\n/);
+  const reqLine = lines[0] || '';
+  const reqLineMatch = reqLine.match(/^([A-Z]+)\s+(\S+)\s+HTTP\/\d/i);
+  if (!reqLineMatch) return null;
+  const method = reqLineMatch[1].toUpperCase();
+  const target = reqLineMatch[2];
+  const headers: Record<string, string> = {};
+  let bodyStart = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') { bodyStart = i + 1; break; }
+    const c = lines[i].indexOf(':');
+    if (c > 0) headers[lines[i].slice(0, c).trim()] = lines[i].slice(c + 1).trim();
+  }
+  // body is preserved inside requestRaw — we don't need to surface it separately
+  void bodyStart;
+
+  // Reconstruct absolute URL: either target is absolute, or Host header + path
+  let url = '';
+  if (/^https?:\/\//i.test(target)) {
+    url = target;
+  } else {
+    const host = headers['Host'] || headers['host'];
+    if (!host) return null;
+    // Best guess on scheme: HTTPS if explicit `:443`/known, else https for any
+    // host without port (most public services), http only if explicit `:80`.
+    const scheme = /(:80)$/.test(host) ? 'http' : 'https';
+    url = `${scheme}://${host}${target.startsWith('/') ? target : '/' + target}`;
+  }
+  return { method, url, requestRaw: t.replace(/\r?\n/g, '\r\n'), format: 'raw_http' };
+}
 
 function statusClass(code: number | null) {
   if (!code) return '';
@@ -48,9 +166,44 @@ export function Replay() {
   const [showSettings, setShowSettings] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImport = () => {
+    setImportError(null);
+    const parsed = parsePastedRequest(importText);
+    if (!parsed) {
+      setImportError("Couldn't recognise format. Paste a raw HTTP request, cURL command, or fetch() snippet.");
+      return;
+    }
+    // Reuse the active tab if it's blank, else open a new one.
+    let host = 'imported';
+    try { host = new URL(parsed.url).hostname; } catch {}
+    const target = tab && !tab.url && !tab.requestRaw.trim() ? tab.id : `tab-${Date.now()}`;
+    if (target === tab?.id) {
+      updateTab(target, {
+        method: parsed.method, url: parsed.url,
+        requestRaw: parsed.requestRaw, responseRaw: '',
+        statusCode: null, responseTimeMs: null, responseSize: null,
+        name: host,
+      });
+    } else {
+      addTab({
+        id: target, name: host,
+        method: parsed.method, url: parsed.url,
+        requestRaw: parsed.requestRaw, responseRaw: '',
+        statusCode: null, responseTimeMs: null, responseSize: null,
+        isLoading: false,
+      });
+    }
+    addToast({ title: `Imported (${parsed.format})`, message: `${parsed.method} ${parsed.url}`, type: 'success' });
+    setShowImport(false);
+    setImportText('');
+  };
 
 
-  const { pendingSendTo, clearSendTo } = useAppStore();
+  const { pendingSendTo, clearSendTo, addToast } = useAppStore();
   useEffect(() => {
     if (pendingSendTo && pendingSendTo.tool === 'repeater') {
       const id = `tab-${Date.now()}`;
@@ -268,6 +421,9 @@ export function Replay() {
 
             <button className="replay-action-btn" onClick={duplicateTab} title="Duplicate tab"><Copy size={12} /></button>
             <button className="replay-action-btn" onClick={copyCurl} title="Copy as cURL"><Code size={12} /></button>
+            <button className={`replay-action-btn ${showImport ? 'active' : ''}`} onClick={() => setShowImport(s => !s)} title="Import raw HTTP / cURL / fetch">
+              <ClipboardPaste size={12} />
+            </button>
             <button className={`replay-action-btn ${showHistory ? 'active' : ''}`} onClick={() => setShowHistory(!showHistory)} title="Show history">
               <Clock size={12} />
               {tabHistory.length > 0 && <span className="replay-history-badge">{tabHistory.length}</span>}
@@ -287,6 +443,42 @@ export function Replay() {
                 <input type="checkbox" checked={autoContentLength} onChange={e => setAutoContentLength(e.target.checked)} />
                 Auto Content-Length
               </label>
+            </div>
+          )}
+
+          {showImport && (
+            <div className="replay-import-panel">
+              <div className="replay-import-header">
+                <ClipboardPaste size={12} />
+                <span>Paste a request — raw HTTP, cURL, or fetch()</span>
+                <button className="replay-import-close" onClick={() => { setShowImport(false); setImportError(null); setImportText(''); }} title="Close"><X size={12} /></button>
+              </div>
+              <textarea
+                className="replay-import-textarea"
+                value={importText}
+                onChange={e => { setImportText(e.target.value); setImportError(null); }}
+                onPaste={e => {
+                  // Auto-import on paste if textarea is empty
+                  if (!importText.trim()) {
+                    const pasted = e.clipboardData.getData('text');
+                    setImportText(pasted);
+                    setTimeout(() => {
+                      const ok = parsePastedRequest(pasted);
+                      if (ok) handleImport();
+                    }, 0);
+                    e.preventDefault();
+                  }
+                }}
+                placeholder={`Paste here. Examples:\n\nPOST /api/login HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\n{"u":"a","p":"b"}\n\n— or —\n\ncurl 'https://example.com/api/login' -X POST -H 'Content-Type: application/json' -d '{"u":"a","p":"b"}'\n\n— or —\n\nfetch('https://example.com/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{"u":"a","p":"b"}' })`}
+                spellCheck={false}
+                autoFocus
+              />
+              <div className="replay-import-footer">
+                {importError && <span className="replay-import-error">{importError}</span>}
+                <button className="replay-import-btn" onClick={handleImport} disabled={!importText.trim()}>
+                  Detect &amp; import
+                </button>
+              </div>
             </div>
           )}
 

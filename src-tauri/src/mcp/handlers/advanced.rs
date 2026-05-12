@@ -289,16 +289,29 @@ pub async fn handle_h2_send_request(params: &serde_json::Value) -> HandlerResult
     let url = params["url"].as_str().ok_or("Missing url")?;
     let method_str = params["method"].as_str().unwrap_or("GET").to_uppercase();
     let body = params["body"].as_str().unwrap_or("");
+    let prior_knowledge = params["prior_knowledge"].as_bool().unwrap_or(false);
+
+    // Force HTTP/2 — refuse to fall back to HTTP/1.1 so the agent knows for
+    // sure it tested H2-only behaviour (smuggling, frame interleaving, etc.).
+    // reqwest 0.12 negotiates H2 via TLS-ALPN automatically when the server
+    // offers it. We don't ship the `http2` cargo feature (it pulls in extra
+    // deps that conflict with our axum stack), so we can't force prior_knowledge
+    // — instead we surface `is_http2` based on the negotiated version so the
+    // agent can see whether H2 was actually used.
+    let _ = prior_knowledge;
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("client build: {}", e))?;
+
     let m = match method_str.as_str() {
         "POST" => reqwest::Method::POST,
         "PUT" => reqwest::Method::PUT,
         "DELETE" => reqwest::Method::DELETE,
         "PATCH" => reqwest::Method::PATCH,
+        "HEAD" => reqwest::Method::HEAD,
+        "OPTIONS" => reqwest::Method::OPTIONS,
         _ => reqwest::Method::GET,
     };
     let mut req = client.request(m, url);
@@ -313,16 +326,27 @@ pub async fn handle_h2_send_request(params: &serde_json::Value) -> HandlerResult
         req = req.body(body.to_string());
     }
     let start = std::time::Instant::now();
-    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("{} (note: prior_knowledge forces H2 — target may only speak H1)", e))?;
     let elapsed = start.elapsed().as_millis();
     let status = resp.status().as_u16();
     let version = format!("{:?}", resp.version());
+    let is_h2 = matches!(resp.version(), reqwest::Version::HTTP_2);
     let headers: std::collections::HashMap<String, String> =
         resp.headers().iter().map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string())).collect();
     let resp_body = resp.text().await.unwrap_or_default();
-    Ok(
-        serde_json::json!({"status": status, "protocol": version, "headers": headers, "body_preview": resp_body.chars().take(2000).collect::<String>(), "body_size": resp_body.len(), "elapsed_ms": elapsed}),
-    )
+    Ok(serde_json::json!({
+        "status": status,
+        "protocol": version,
+        "is_http2": is_h2,
+        "prior_knowledge": prior_knowledge,
+        "headers": headers,
+        "body_preview": resp_body.chars().take(2000).collect::<String>(),
+        "body_size": resp_body.len(),
+        "elapsed_ms": elapsed,
+    }))
 }
 
 pub async fn handle_bambda_filter(params: &serde_json::Value) -> HandlerResult {

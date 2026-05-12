@@ -175,6 +175,8 @@ function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onT
       method: (node.method || 'GET') as string, url: url as string,
       requestRaw: node.trafficEntries?.[0]?.request_headers || `${node.method||'GET'} ${node.name} HTTP/1.1\r\nHost: target\r\n\r\n`,
       responseRaw: node.trafficEntries?.[0]?.response_headers || 'HTTP/1.1 200 OK\r\n\r\n',
+      source: 'sitemap',
+      // sitemap-specific delete is handled by the existing pendingDeleteUrl pipeline
     });
   };
 

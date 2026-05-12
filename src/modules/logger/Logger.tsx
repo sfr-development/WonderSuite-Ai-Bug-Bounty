@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { FileText, Search, Trash2, Download } from 'lucide-react';
+import { useAppStore } from '../../stores';
 import './Logger.css';
 
 interface LogEntry {
@@ -20,6 +21,7 @@ interface LogEntry {
 export function Logger() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
+  const { openContextMenu } = useAppStore();
   const [search, setSearch] = useState('');
   const [toolFilter, setToolFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
@@ -131,7 +133,17 @@ export function Logger() {
           </thead>
           <tbody>
             {filtered.map(e => (
-              <tr key={e.id} className={selected === e.id ? 'selected' : ''} onClick={() => setSelected(e.id)}>
+              <tr key={e.id} className={selected === e.id ? 'selected' : ''} onClick={() => setSelected(e.id)}
+                  onContextMenu={ev => {
+                    ev.preventDefault();
+                    openContextMenu(ev.clientX, ev.clientY, {
+                      method: e.method, url: e.url,
+                      requestRaw: `${e.method} ${e.url} HTTP/1.1\r\nHost: ${e.host}\r\n\r\n`,
+                      responseRaw: `HTTP/1.1 ${e.status}\r\nContent-Length: ${e.length}\r\nContent-Type: ${e.mime || ''}\r\n\r\n`,
+                      source: 'logger',
+                      onDelete: () => { setEntries(prev => prev.filter(x => x.id !== e.id)); if (selected === e.id) setSelected(null); },
+                    });
+                  }}>
                 <td className="logger-dim">{e.id}</td>
                 <td><span className={`logger-tool-badge ${e.tool.toLowerCase()}`}>{e.tool}</span></td>
                 <td><span className="logger-method" style={{ color: e.method === 'GET' ? 'var(--green)' : e.method === 'POST' ? '#f0c040' : e.method === 'DELETE' ? 'var(--red)' : 'var(--text-1)' }}>{e.method}</span></td>

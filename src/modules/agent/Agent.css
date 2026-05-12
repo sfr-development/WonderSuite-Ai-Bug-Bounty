@@ -788,6 +788,14 @@
   animation: agent-pulse 1s ease-in-out infinite;
 }
 
+.agent-spin {
+  animation: agent-spin 1s linear infinite;
+  color: #f0c040;
+}
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+
 .agent-detail-cell {
   max-width: 300px;
   overflow: hidden;

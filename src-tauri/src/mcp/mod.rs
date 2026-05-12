@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod browser;
 pub mod client;
 pub mod router;
 pub mod state;
@@ -141,14 +142,19 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "proxy_add_match_replace".into(),
-            description: "Add a match-and-replace rule for proxied traffic. Supports regex and directional filtering.".into(),
+            description: "Add a match-and-replace rule for proxied traffic. Supports regex.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" }, "target": { "type": "string", "description": "header, body, url" },
-                    "match_pattern": { "type": "string" }, "replace_value": { "type": "string" },
-                    "is_regex": { "type": "boolean", "default": false },
-                    "direction": { "type": "string", "enum": ["request", "response", "both"], "default": "both" }
+                    "name": { "type": "string" },
+                    "target": {
+                        "type": "string",
+                        "enum": ["request_header", "request_body", "request_url", "response_header", "response_body"],
+                        "description": "Which part of the message to rewrite."
+                    },
+                    "match_pattern": { "type": "string" },
+                    "replace_value": { "type": "string" },
+                    "is_regex": { "type": "boolean", "default": false }
                 },
                 "required": ["name", "target", "match_pattern", "replace_value"]
             }),
@@ -201,11 +207,6 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "proxy_get_capabilities".into(),
-            description: "List all proxy capabilities and supported features.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
-        },
-        ToolDef {
             name: "proxy_get_statistics".into(),
             description: "Get proxy runtime statistics (requests, bytes, connections, uptime).".into(),
             input_schema: serde_json::json!({ "type": "object", "properties": {} }),
@@ -220,75 +221,279 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             description: "Export proxy traffic in JSON or HAR format.".into(),
             input_schema: serde_json::json!({ "type": "object", "properties": { "format": { "type": "string", "enum": ["json", "har"], "default": "json" } } }),
         },
+        // ─────────────────────────────────────────────────────────────────────
+        // BROWSER (pentest-grade, v0.4.0). Drives the bundled WonderBrowser via
+        // a single persistent CDP session. All input tools address elements by
+        // `ref=eN` from the latest browser_snapshot — refs go stale on
+        // navigation/DOM mutation, in which case the tool returns
+        // `code=STALE_REF` with a hint to re-snap.
+        // ─────────────────────────────────────────────────────────────────────
         ToolDef {
-            name: "browser_navigate".into(),
-            description: "Launch or navigate the Chromium browser via CDP. Actions: 'open' (launch+navigate), 'navigate' (CDP navigate), 'get_page' (fetch+parse HTML).".into(),
+            name: "browser_open".into(),
+            description: "[lifecycle] Launch the bundled WonderBrowser through the WonderSuite proxy (auto-starts the proxy if needed). Returns once CDP is attached and event listeners are armed. Call browser_snapshot next.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["open", "navigate", "get_page"] },
-                    "url": { "type": "string" },
-                    "wait_ms": { "type": "integer", "default": 2000 }
-                },
-                "required": ["action", "url"]
+                    "url": { "type": "string", "description": "Initial URL to navigate to." },
+                    "proxy_port": { "type": "integer", "default": 8080 },
+                    "cdp_port": { "type": "integer", "default": 9333 },
+                    "headless": { "type": "boolean", "default": false }
+                }
             }),
         },
         ToolDef {
-            name: "browser_execute_js".into(),
-            description: "Execute JavaScript in the browser via CDP Runtime.evaluate. Supports async/await. Use for DOM manipulation, data extraction, XSS testing.".into(),
+            name: "browser_attach".into(),
+            description: "[lifecycle] Attach to a Chrome/Edge/Brave running with --remote-debugging-port. With no cdp_port, scans the common ports (9222 → 9333 → 9223). If nothing is reachable, set auto_launch:true to have WonderSuite spawn a fresh system Chrome with --remote-debugging-port and a persistent attach-profile (logins survive between attaches). Use this whenever browser_open fails or the user wants to drive their own browser instead of the bundled one.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "code": { "type": "string", "description": "JavaScript code to execute" },
-                    "await_promise": { "type": "boolean", "default": true },
-                    "timeout_ms": { "type": "integer", "default": 10000 },
-                    "tab_id": { "type": "integer", "description": "Target tab index (default: first page tab)" }
+                    "cdp_port": { "type": "integer", "description": "Specific port to attach to. Omit to scan 9222/9333/9223." },
+                    "proxy_port": { "type": "integer", "default": 8080 },
+                    "url": { "type": "string", "description": "Optional URL to navigate to after attaching." },
+                    "auto_launch": { "type": "boolean", "default": false, "description": "If no CDP server is reachable, spawn a system Chrome ourselves with --remote-debugging-port. Uses a dedicated user-data-dir so it won't fight the user's running Chrome." },
+                    "prefer": { "type": "string", "enum": ["chrome", "edge", "brave", "chromium"], "description": "Preferred system browser for auto_launch (default: first detected, Chrome first)." },
+                    "use_proxy": { "type": "boolean", "default": false, "description": "Route the auto-launched browser through the WonderSuite proxy. Off by default so the attached browser carries the user's real network identity; switch on if you want traffic captured." }
+                }
+            }),
+        },
+        ToolDef {
+            name: "browser_close".into(),
+            description: "[lifecycle] Close the bundled browser and drop the CDP session. For attached browsers only the CDP session is dropped — the user's browser is left alone.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "browser_navigate".into(),
+            description: "[lifecycle] Navigate the current page. Returns once the chosen lifecycle event fires.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string" },
+                    "wait_until": { "type": "string", "enum": ["load", "domcontentloaded", "networkidle"], "default": "load" },
+                    "timeout_ms": { "type": "integer", "default": 15000 }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDef {
+            name: "browser_snapshot".into(),
+            description: "[read-only] PRIMARY page-state primitive. Returns the accessibility tree as an indented outline with stable `ref=eN` IDs, plus form analysis with resolved labels and is_token hints on hidden CSRF/XSRF fields, plus a security block (CSP parsed findings, frame-ancestors, mixed content, cookies set on-page). Pass include_security:false to skip the security block for speed.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "include_security": { "type": "boolean", "default": true }
+                }
+            }),
+        },
+        ToolDef {
+            name: "browser_screenshot".into(),
+            description: "[read-only] Capture a JPEG screenshot of the viewport (default), a single element (`ref`), or the full page (`full_page:true`). Writes the file under `.wondersuite/screenshots/` and returns the absolute `path` + `size_bytes`. Default does NOT include base64 (keeps responses small for LLM context); set `return_base64:true` if you need inline data for a vision model.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string", "description": "If set, screenshot only this element's bounding box." },
+                    "full_page": { "type": "boolean", "default": false },
+                    "quality": { "type": "integer", "default": 80 },
+                    "return_base64": { "type": "boolean", "default": false, "description": "Also return the JPEG bytes inline as `base64`. Off by default — file path is the canonical handle." }
+                }
+            }),
+        },
+        ToolDef {
+            name: "browser_click".into(),
+            description: "[input] Click an element by ref. Set includeSnapshot:true to receive a fresh snapshot in the response (saves a round-trip).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "includeSnapshot": { "type": "boolean", "default": false },
+                    "includeSecurity": { "type": "boolean", "default": false }
+                },
+                "required": ["ref"]
+            }),
+        },
+        ToolDef {
+            name: "browser_type".into(),
+            description: "[input] Type text into an input/textarea by ref. Uses the native value setter so React/Vue controlled inputs update correctly. clear:true (default) wipes existing content first.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "text": { "type": "string" },
+                    "clear": { "type": "boolean", "default": true },
+                    "includeSnapshot": { "type": "boolean", "default": false }
+                },
+                "required": ["ref", "text"]
+            }),
+        },
+        ToolDef {
+            name: "browser_fill_form".into(),
+            description: "[input] Batch-fill a form. Each value is {value, AND one of: ref|selector|name}. ref = from a snapshot, selector = CSS, name = HTML name attribute (looked up via [name=X] or id). Submit by passing one of submit_ref, submit_selector, form_ref, form_selector — or omit and rely on the single-form auto-submit fallback.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ref": { "type": "string", "description": "ref=eN from browser_snapshot" },
+                                "selector": { "type": "string", "description": "CSS selector" },
+                                "name": { "type": "string", "description": "HTML name= or id" },
+                                "value": { "type": "string" }
+                            },
+                            "required": ["value"]
+                        }
+                    },
+                    "submit": { "type": "boolean", "default": false },
+                    "form_ref": { "type": "string" },
+                    "form_selector": { "type": "string" },
+                    "submit_ref": { "type": "string" },
+                    "submit_selector": { "type": "string" },
+                    "includeSnapshot": { "type": "boolean", "default": false }
+                },
+                "required": ["values"]
+            }),
+        },
+        ToolDef {
+            name: "browser_press_key".into(),
+            description: "[input] Dispatch a synthetic key event (keyDown+keyUp). Common keys: Enter, Tab, Escape, Backspace, ArrowDown/Up/Left/Right.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string" },
+                    "includeSnapshot": { "type": "boolean", "default": false }
+                },
+                "required": ["key"]
+            }),
+        },
+        ToolDef {
+            name: "browser_scroll".into(),
+            description: "[input] Scroll the page or a specific element by direction+amount (pixels).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "direction": { "type": "string", "enum": ["up", "down", "left", "right"], "default": "down" },
+                    "amount": { "type": "integer", "default": 500 }
+                }
+            }),
+        },
+        ToolDef {
+            name: "browser_select_option".into(),
+            description: "[input] Select an <option> in a <select> by its value or visible text.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "ref": { "type": "string" }, "value": { "type": "string" } },
+                "required": ["ref", "value"]
+            }),
+        },
+        ToolDef {
+            name: "browser_set_file_input".into(),
+            description: "[input] Attach files to a file <input>. Wraps CDP DOM.setFileInputFiles. Paths must be absolute and reachable from the desktop host.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "files": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["ref", "files"]
+            }),
+        },
+        ToolDef {
+            name: "browser_get_outer_html".into(),
+            description: "[read-only] Get outerHTML of a single element by ref. Full-page HTML is intentionally not exposed — use browser_snapshot for the agent-friendly view.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "ref": { "type": "string" } },
+                "required": ["ref"]
+            }),
+        },
+        ToolDef {
+            name: "browser_evaluate".into(),
+            description: "[escape-hatch] Run arbitrary JavaScript in the page's main world via CDP Runtime.evaluate. Use for DOM manipulation, XSS probes, custom data extraction the other tools don't cover.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "code": { "type": "string" },
+                    "await_promise": { "type": "boolean", "default": true }
                 },
                 "required": ["code"]
             }),
         },
         ToolDef {
-            name: "session_from_browser".into(),
-            description: "Extract cookies, localStorage, and sessionStorage from the running browser via CDP. Returns a ready-to-use Cookie header.".into(),
+            name: "browser_storage_full".into(),
+            description: "[read-only] Auth-state dump: cookies + localStorage + sessionStorage + IndexedDB database names + ServiceWorker registrations + Cache API keys. Returns a ready-to-use `cookie_header` for replay. The pentest one-shot for capturing a logged-in session.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "domain": { "type": "string", "description": "Filter cookies by domain substring." } }
+            }),
+        },
+        ToolDef {
+            name: "browser_console".into(),
+            description: "[read+write] Read console messages (including page errors and CSP violations our extension forwards), clear them, or inject a probe expression. action: get|clear|inject.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "domain": { "type": "string", "description": "Filter cookies by domain" },
-                    "include_local_storage": { "type": "boolean", "default": true },
-                    "include_session_storage": { "type": "boolean", "default": true },
-                    "auto_apply": { "type": "boolean", "default": true }
+                    "action": { "type": "string", "enum": ["get", "clear", "inject"], "default": "get" },
+                    "code": { "type": "string", "description": "Required for action=inject." },
+                    "limit": { "type": "integer", "default": 200 }
                 }
             }),
+        },
+        ToolDef {
+            name: "browser_dom_sinks".into(),
+            description: "[read-only] Hunt DOM-based XSS surfaces: enumerates inline-script callers of innerHTML, document.write, eval, plus inline event handlers and javascript: URLs. Pentest-specific — no general-purpose browser MCP exposes this.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
         },
         ToolDef {
             name: "browser_network_traffic".into(),
-            description: "Read captured network traffic from the WonderBrowser via CDP. Automatically captures all HTTP requests/responses when the browser is running. Use this to see login flows, API calls, tokens, and more. Actions: get (list traffic with filters), clear, status, start_capture.".into(),
+            description: "[read-only] List requests the browser has made since browser_open, with stable CDP request IDs. Filter by url_contains, method, status, or auth_only:true. Every entry has a `request_id` you can hand to browser_replay_to_proxy.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["get", "filter", "clear", "status", "start_capture"], "default": "get", "description": "Action: get/filter (read traffic), clear (reset log), status (check capture state), start_capture (manual start)" },
-                    "limit": { "type": "integer", "default": 100, "description": "Max entries to return" },
-                    "url_contains": { "type": "string", "description": "Filter by URL substring (e.g. 'api/identity')" },
-                    "method": { "type": "string", "description": "Filter by HTTP method (GET, POST, etc.)" },
-                    "status": { "type": "integer", "description": "Filter by HTTP status code" },
-                    "resource_type": { "type": "string", "description": "Filter by type: XHR, Fetch, Document, Script, etc." },
-                    "exclude_static": { "type": "boolean", "default": true, "description": "Exclude Image/Font/Media resources" }
+                    "url_contains": { "type": "string" },
+                    "method": { "type": "string" },
+                    "status": { "type": "integer" },
+                    "auth_only": { "type": "boolean", "default": false, "description": "Show only login/oauth/identity/refresh-style URLs." },
+                    "limit": { "type": "integer", "default": 100 }
                 }
             }),
         },
         ToolDef {
-            name: "session_manage".into(),
-            description: "Manage session state: cookies, macros. Actions: get_cookies, set_cookie, clear_cookies, remove_cookie, create_macro, run_macro, list_macros.".into(),
+            name: "browser_replay_to_proxy".into(),
+            description: "[killer-feature] Take a CDP request_id from browser_network_traffic and re-send it through the proxy's Repeater path so it lands in proxy traffic for fuzzing/inspection. Closes the loop between the browser observing a request and the proxy fuzzing it.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "request_id": { "type": "string" } },
+                "required": ["request_id"]
+            }),
+        },
+        ToolDef {
+            name: "browser_resource_hints".into(),
+            description: "[read-only] Fetch the origin's /robots.txt, /sitemap.xml, .well-known endpoints (security.txt, openid-configuration, oauth-authorization-server, change-password), enumerate script[src] tags, and surface sourceMappingURL comments from each. One-shot recon of the live origin.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "browser_wait_for".into(),
+            description: "[sync] Block until a selector appears (action=selector), a text fragment becomes visible (action=text), or a lifecycle event fires (action=load|domcontentloaded|networkidle).".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["get_cookies", "set_cookie", "clear_cookies", "remove_cookie", "create_macro", "run_macro", "list_macros"] },
-                    "domain": { "type": "string" }, "cookie_name": { "type": "string" }, "cookie_value": { "type": "string" },
-                    "cookie_path": { "type": "string", "default": "/" },
-                    "macro_name": { "type": "string" }, "macro_id": { "type": "string" },
-                    "macro_steps": { "type": "array", "items": { "type": "object" } }
-                },
-                "required": ["action"]
+                    "action": { "type": "string", "enum": ["selector", "text", "load", "domcontentloaded", "networkidle"], "default": "load" },
+                    "value": { "type": "string" },
+                    "timeout_ms": { "type": "integer", "default": 10000 }
+                }
+            }),
+        },
+        ToolDef {
+            name: "browser_tabs".into(),
+            description: "[lifecycle] Tab management. action: list|new|close. For 'new' pass `url`; for 'close' pass `target_id` from list.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "new", "close"], "default": "list" },
+                    "url": { "type": "string" },
+                    "target_id": { "type": "string" }
+                }
             }),
         },
         ToolDef {
@@ -309,7 +514,7 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "crawl_target".into(),
-            description: "Crawl a web target — discovers pages, forms, scripts, comments, emails, and API endpoints via BFS traversal.".into(),
+            description: "Static crawler (regex-based BFS) — discovers pages, forms, scripts, comments, emails, API endpoints. Does NOT execute JS, so SPAs are mostly invisible — for SPA targets call `browser_open` + `browser_snapshot` instead.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -373,27 +578,15 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "oast_generate_payload".into(),
-            description: "Generate OAST callback payloads for blind vulnerability detection. Supports blind_sqli, blind_ssrf, blind_xxe, blind_cmdi, blind_xss, blind_ssti.".into(),
+            description: "Generate OAST callback payloads for blind-vuln detection (auto-starts the HTTP listener on `port` so the returned URLs are immediately reachable; set WS_OAST_HOST env var to expose externally). Supports blind_sqli, blind_ssrf, blind_xxe, blind_cmdi, blind_xss, blind_ssti. After firing the payload, poll `oast_verify action=get_interactions` for callbacks.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "description": { "type": "string", "description": "What this payload tests" },
-                    "vuln_type": { "type": "string", "enum": ["generic", "blind_sqli", "blind_ssrf", "blind_xxe", "blind_cmdi", "blind_xss", "blind_ssti"], "default": "generic" }
+                    "description": { "type": "string" },
+                    "vuln_type": { "type": "string", "enum": ["generic", "blind_sqli", "blind_ssrf", "blind_xxe", "blind_cmdi", "blind_xss", "blind_ssti"], "default": "generic" },
+                    "port": { "type": "integer", "default": 8888 }
                 }
             }),
-        },
-        ToolDef {
-            name: "oast_poll_interactions".into(),
-            description: "Poll for OAST callback interactions. Filter by correlation_id.".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": { "correlation_id": { "type": "string" } }
-            }),
-        },
-        ToolDef {
-            name: "oast_start_server".into(),
-            description: "Start OAST HTTP callback server.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "http_port": { "type": "integer", "default": 8888 } } }),
         },
         ToolDef {
             name: "oast_start_dns_server".into(),
@@ -646,15 +839,18 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "active_scan".into(),
-            description: "Active vulnerability scanner — probes for SQLi (error + time-based blind), XSS (reflected), SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. Uses downloaded payloads.".into(),
+            description: "Active vulnerability scanner — error-based + time-based SQLi, reflected XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. With `with_oast: true` (default when scan_types=['all']) also probes blind SQLi, blind cmdi, blind SSRF and log4shell via the bundled OAST listener — every callback becomes a critical, certain-confidence finding.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "target": { "type": "string", "description": "Target URL with query parameters to test" },
-                    "scan_types": { "type": "array", "items": { "type": "string" }, "description": "Scan types: all, sqli, xss, ssti, lfi, open_redirect, header_injection", "default": ["all"] },
-                    "max_payloads_per_type": { "type": "integer", "default": 25, "description": "Max payloads per vulnerability type" },
+                    "scan_types": { "type": "array", "items": { "type": "string" }, "description": "all | sqli | xss | ssti | lfi | open_redirect | header_injection", "default": ["all"] },
+                    "max_payloads_per_type": { "type": "integer", "default": 25 },
                     "max_concurrent": { "type": "integer", "default": 5 },
-                    "timeout_secs": { "type": "integer", "default": 15 }
+                    "timeout_secs": { "type": "integer", "default": 15 },
+                    "with_oast": { "type": "boolean", "description": "Include OAST blind probes (auto-starts listener). Defaults to true when scan_types includes 'all'.", "default": true },
+                    "oast_port": { "type": "integer", "default": 8888 },
+                    "oast_wait_ms": { "type": "integer", "default": 15000, "description": "How long to wait for OAST callbacks after the last probe." }
                 },
                 "required": ["target"]
             }),
@@ -816,7 +1012,7 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_traffic_log".into(),
-            description: "Read the full traffic log from all MCP HTTP requests. Returns complete request/response data (headers + bodies) with auto-detected CDN presence and security findings. Use this instead of browser_network_traffic — it captures ALL requests made via send_request with full detail. Filter by URL, method, status code range.".into(),
+            description: "Read the send_request-only traffic log (requests fired by the agent via `send_request`/`h2_send_request`/`mtls_send_request`). For browser-initiated requests use `browser_network_traffic`. For the proxy's MITM history use `proxy_get_traffic`. Filter by URL, method, status code range.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

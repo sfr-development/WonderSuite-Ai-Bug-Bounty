@@ -16,7 +16,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 [**Features**](#core-capabilities) ·
 [**Screenshots**](#screenshots) ·
 [**Getting Started**](#getting-started) ·
-[**MCP Tools**](#mcp-server--69-tools) ·
+[**MCP Tools**](#mcp-server--83-tools) ·
 [**Contributing**](#contributing)
 
 </div>
@@ -27,7 +27,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 
 **WonderSuite** is a desktop-native offensive security engine that combines Burp Suite-class tooling with autonomous AI agent capabilities. It provides a fully integrated environment for web application security testing, network reconnaissance, and exploit development — all orchestrated through an MCP-compatible AI interface.
 
-The platform ships with **69 purpose-built security tools** accessible via JSON-RPC, a full MITM proxy with real-time request interception, a stealth-patched Chromium browser with CDP network capture, and automated vulnerability scanning across multiple injection categories.
+The platform ships with **83 purpose-built security tools** accessible via JSON-RPC, a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
 
 <div align="center">
 <img src="docs/screenshots/dashboard.png" alt="WonderSuite Dashboard" width="900" />
@@ -37,34 +37,41 @@ The platform ships with **69 purpose-built security tools** accessible via JSON-
 
 ### Intercepting Proxy
 
-Full man-in-the-middle proxy with TLS interception and dynamic certificate authority generation. Supports real-time request and response modification, match-and-replace rules with regex, WebSocket message capture, upstream proxy chaining (HTTP/SOCKS5), traffic annotation with color highlighting, and HAR/JSON export.
+Full man-in-the-middle proxy with TLS interception and dynamic certificate authority generation. Supports real-time request and response modification, match-and-replace rules with regex (5 targets: request_header/body/url, response_header/body), WebSocket message capture, upstream proxy chaining (HTTP/SOCKS5), traffic annotation with color highlighting, and proper HAR/JSON export (headers, queryString, statusText all populated). Upstream requests can be re-originated through a **BoringSSL stack tuned to match Chrome 137's exact ClientHello, JA3/JA4 fingerprint and HTTP/2 SETTINGS frame ordering** — bypasses Cloudflare, Akamai Bot Manager, DataDome, and PerimeterX.
 
-### WonderBrowser (CDP Integration)
+### WonderBrowser — Bundled Chrome-for-Testing 148
 
-Built-in Chromium instance with stealth anti-detection patches injected at the protocol level. Features live network traffic capture via the CDP Network domain — every XHR, Fetch, and Document request is automatically recorded and made available to the AI agent. Includes cookie, localStorage, and sessionStorage extraction, JavaScript execution via `Runtime.evaluate`, and automatic authentication token discovery from browser sessions.
+A pinned Chromium build (CfT 148.0.7778.97) shipped inside WonderSuite — version-locked, SHA-256-verified, never auto-updates, per-version cached. Uses a separate `.wondersuite/` profile so it doesn't touch the user's system Chrome. The bundled WonderSuite extension applies minimal stealth at `document_start` (deletes `navigator.webdriver` from the prototype, purges automation globals) — verified `isBot: false` on all 18 deviceandbrowserinfo.com checks. All outbound requests flow through the WonderSuite proxy for capture and TLS impersonation.
 
-### MCP Server — 69 Tools
+### Browser MCP — Pentest-Grade Agent Surface
+
+22 browser tools driving WonderBrowser via a single persistent CDP WebSocket. Every input tool addresses elements by stable `ref=eN` IDs from `browser_snapshot`, which returns an accessibility-tree outline plus per-form input analysis with `<label>` resolution and `is_token` flagging on CSRF/XSRF/nonce hidden inputs, plus a `security{}` block (CSP parsed findings, frame-ancestors, mixed content, cookies set on-page). `browser_fill_form` accepts `ref` OR `selector` OR `name`, with optional auto-submit. `browser_storage_full` is the one-shot auth-state dump (cookies + LS + SS + IndexedDB + ServiceWorker + Cache API + ready-to-use `Cookie:` header). `browser_replay_to_proxy(request_id)` hands a browser-captured request straight to the proxy's Repeater for fuzzing. Plus `browser_dom_sinks` (XSS-sink enumeration), `browser_console` (with CSP violations forwarded), `browser_resource_hints` (`/robots.txt`, `.well-known/`, sourcemaps in one call), `browser_set_file_input` (CDP `DOM.setFileInputFiles`), `browser_network_traffic` (CDP request ring buffer with redirect-status backfill).
+
+### Crawler
+
+Multi-level fetcher with robots.txt + sitemap.xml + `/.well-known/` + JS endpoint extraction discovery, soft-404 detection, SPA-aware rendering hooks, cookie + path canonicalization. Regex-based fast path for static apps; for SPAs the browser MCP surface is the better tool.
+
+### MCP Server — 83 Tools
 
 Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsurf, VS Code, Antigravity, Gemini CLI, …) to autonomously conduct security research against WonderSuite's tool surface.
 
 | Category | Tools |
 |----------|-------|
-| HTTP | `send_request` · `send_to_repeater` · `h2_send_request` · `mtls_send_request` |
-| Proxy | `proxy_start` · `proxy_stop` · `toggle_intercept` · `get_traffic` · `match_replace` · `intercept_rules` |
-| Scanner | `active_scan` (SQLi, XSS, SSTI, LFI, CRLF, Open Redirect) · `passive_scan` |
+| HTTP | `send_request` · `send_to_repeater` · `send_to_intruder` (auto-categorises payloads per param name) · `h2_send_request` · `mtls_send_request` |
+| Proxy | `proxy_start` · `proxy_stop` · `proxy_status` · `proxy_toggle_intercept` · `proxy_get_traffic` · `proxy_search_traffic` · `proxy_clear_traffic` · `proxy_export_traffic` (JSON / **HAR** with full headers + queryString) · `proxy_get_statistics` · `proxy_add_match_replace` · `proxy_add_interception_rule` · `proxy_add_tls_passthrough` · `proxy_set_upstream` · `proxy_annotate_traffic` · `proxy_get_websocket_messages` · `get_intercepted` · `forward_intercepted` |
+| Scanner | `active_scan` (SQLi · XSS · SSTI · LFI · Open Redirect · CRLF) with optional `with_oast:true` for **blind cmdi, blind SSRF, Log4Shell** via the bundled OAST listener · `passive_scan` (headers, cookies, CORS, info disclosure) |
 | Intruder | `fuzz_request` — Sniper · Battering Ram · Pitchfork · Cluster Bomb |
-| Browser | `browser_navigate` · `browser_execute_js` · `browser_network_traffic` · `session_from_browser` |
-| Recon | `crawl_target` · `discover_content` · `discover_subdomains` · `js_link_finder` |
-| OSINT | `whois_lookup` · `dns_resolve` · `asn_lookup` · `crtsh_search` · `wayback_lookup` · `hackertarget_lookup` · `ip_geolocation` · `tech_detect` · `favicon_hash` · `reverse_ip_lookup` |
-| Codec | `encode` · `decode` · `hash` · `smart_decode` · `analyze_jwt` |
-| OAST | `oast_start_server` · `oast_start_dns_server` · `oast_start_smtp_server` · `oast_generate_payload` · `oast_poll_interactions` |
-| Exploit | `race_request` · `raw_tcp_send` · `websocket_connect` · `graphql_introspect` |
-| Session | `session_manage` · `session_from_browser` · `payload_manager` |
-| Reporting | `generate_report` · `bambda_filter` |
+| Browser (22) | `browser_open` · `browser_close` · `browser_navigate` · **`browser_snapshot`** (a11y tree + ref=eN + forms-with-labels + security block) · `browser_screenshot` · `browser_click` · `browser_type` · **`browser_fill_form`** (ref/selector/name + auto-submit) · `browser_press_key` · `browser_scroll` · `browser_select_option` · `browser_set_file_input` · `browser_get_outer_html` · `browser_evaluate` · **`browser_storage_full`** (cookies+LS+SS+IDB+SW+caches+cookie_header) · `browser_console` (incl. CSP violations) · `browser_dom_sinks` (innerHTML/eval/postMessage enum) · `browser_network_traffic` (CDP ring buffer) · **`browser_replay_to_proxy`** (hand browser request to Repeater) · `browser_resource_hints` (robots/well-known/sourcemaps) · `browser_wait_for` · `browser_tabs` |
+| Recon | `crawl_target` · `discover_content` · `discover_subdomains` (concurrent DNS) · `find_secrets` · `dns_resolve` (with CDN detection) · `js_link_finder` |
+| OSINT | `whois_lookup` · `asn_lookup` · `crtsh_search` · `wayback_lookup` · `hackertarget_lookup` · `ip_geolocation` · `tech_detect` · `favicon_hash` · `reverse_ip_lookup` · `graphql_introspect` |
+| Codec | `encode` · `decode` · `hash` · `smart_decode` · **`analyze_jwt`** (alg=none, kid SQLi/traversal, jku/x5u SSRF, HS/RS confusion) |
+| OAST | `oast_verify` (auto-bind HTTP listener, self-test, get_interactions) · `oast_start_dns_server` · `oast_start_smtp_server` · `oast_generate_payload` (auto-bind + path-correlated `callback_url` per payload) |
+| Exploit | `race_request` · `raw_tcp_send` · `websocket_connect` · `analyze_cdn_waf` (with CDN bypass strategies) |
+| Reporting | `generate_report` (markdown / JSON / summary) · `bambda_filter` · `payload_manager` · `get_traffic_log` |
 
 ### Autonomous Security Research
 
-The AI agent operates independently through the MCP interface. It can launch the stealth browser, navigate to targets, and capture all network traffic in real time. It extracts authentication tokens from live sessions, discovers API endpoints from captured traffic, crafts and sends modified requests with method switching and parameter manipulation, fuzzes endpoints using payloads from SecLists and PayloadsAllTheThings, detects vulnerabilities including IDOR, mass assignment, 2FA bypass, and CORS misconfiguration, and generates structured security reports.
+The AI agent operates independently through the MCP interface. It can launch WonderBrowser, walk the app with `browser_snapshot`'s stable refs, drive forms with `browser_fill_form` (by ref OR selector OR name), capture the authenticated session via `browser_storage_full` (cookies + LS + SS + IDB + SW + Cache in one call, ready-to-replay `Cookie:` header), and hand any browser-discovered request to the proxy's Repeater via `browser_replay_to_proxy`. From there: `active_scan with_oast:true` fires error+time-based SQLi, reflected XSS, SSTI, LFI, Open Redirect, **AND** blind-injection probes (curl/wget/JNDI-LDAP/Log4Shell-style) that callback to the bundled OAST listener — every callback becomes a critical-severity, certain-confidence finding. `analyze_jwt` flags alg=none, kid-as-SQLi-sink, jku/x5u SSRF, and HS/RS key-confusion classes. `analyze_cdn_waf` returns actionable bypass strategies cross-referenced to other tools (origin discovery via `dns_history`/`crtsh_search`/`favicon_hash`, header-manipulation evasion, payload obfuscation, protocol-level bypass).
 
 ## Screenshots
 
@@ -188,18 +195,19 @@ flowchart TB
 
             subgraph CORE[" "]
                 direction LR
-                Proxy["<b>MITM Proxy</b><br/><sub>tokio · native-tls<br/>Dynamic CA · WS · HTTP/2</sub>"]
-                Browser["<b>WonderBrowser</b><br/><sub>Chromium via CDP<br/>Stealth patches · Net capture</sub>"]
+                Proxy["<b>MITM Proxy</b><br/><sub>tokio · native-tls · dynamic CA<br/>+ Chrome 137 JA3/JA4 + HTTP/2<br/>upstream impersonation (BoringSSL)</sub>"]
+                Browser["<b>WonderBrowser</b><br/><sub>Bundled Chrome-for-Testing 148<br/>Stealth extension · CDP capture<br/>Per-version SHA-256-verified cache</sub>"]
             end
 
             subgraph TOOLS[" "]
                 direction LR
-                Scanner["<b>Scanner</b><br/><sub>SQLi · XSS · SSTI<br/>LFI · CRLF · Open Redirect</sub>"]
-                Intruder["<b>Intruder / Fuzzer</b><br/><sub>Sniper · Battering Ram<br/>Pitchfork · Cluster Bomb</sub>"]
-                OAST["<b>OAST Server</b><br/><sub>HTTP · DNS · SMTP<br/>Blind callback collector</sub>"]
+                Scanner["<b>Scanner</b><br/><sub>SQLi · XSS · SSTI · LFI<br/>CRLF · Open Redirect<br/>+ OAST blind cmdi/SSRF/Log4Shell</sub>"]
+                Intruder["<b>Intruder / Fuzzer</b><br/><sub>Sniper · Battering Ram<br/>Pitchfork · Cluster Bomb<br/>Auto payload-category inference</sub>"]
+                Crawler["<b>Crawler</b><br/><sub>robots · sitemap · .well-known<br/>JS endpoint extraction · soft-404</sub>"]
+                OAST["<b>OAST Listener</b><br/><sub>HTTP · DNS · SMTP<br/>Path-correlated callbacks</sub>"]
             end
 
-            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>69 security tools</b></sub>"]
+            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>83 security tools</b><br/>+ 22 pentest-grade browser tools</sub>"]
 
             Payloads[("Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
         end
@@ -240,7 +248,7 @@ flowchart TB
     class CORE,TOOLS hidden
 ```
 
-**How it flows.** The pentester drives the React UI; every action travels through Tauri IPC into the Rust engine. The MITM proxy and the CDP-controlled stealth browser handle live traffic against the target. The scanner and intruder run their own probes, drawing from a 157k-payload arsenal and posting blind-vuln callbacks to the OAST server. In parallel, any MCP-compatible AI client speaks JSON-RPC to the same 69-tool surface — so a human and an AI agent can investigate the same target with the exact same primitives.
+**How it flows.** The pentester drives the React UI; every action travels through Tauri IPC into the Rust engine. The MITM proxy MITM-decrypts the browser's TLS, then re-originates each upstream request through a BoringSSL stack tuned to Chrome 137's exact ClientHello + JA3/JA4 + HTTP/2 SETTINGS fingerprint — so Cloudflare/Akamai/DataDome/PerimeterX see real Chrome. WonderBrowser is the bundled Chrome-for-Testing 148 with a stealth extension shipped in the install (no system Chrome dependency). Scanner and intruder probe the target, posting blind-vuln callbacks to the integrated OAST listener via path-correlated `callback_url`s. In parallel, any MCP-compatible AI client speaks JSON-RPC to the same 83-tool surface — including 22 pentest-grade browser tools that share state with the proxy via a stable request-ID space — so a human and an AI agent can investigate the same target with the exact same primitives.
 
 ## Tech Stack
 
@@ -248,11 +256,14 @@ flowchart TB
 |-----------|------------|
 | Backend | Rust 1.78+ |
 | Framework | Tauri 2.x |
-| Frontend | React 19, TypeScript, Vite |
+| Frontend | React 19, TypeScript, Vite, Zustand |
 | Proxy | tokio, native-tls, rsa/x509-cert (dynamic CA) |
-| Browser | Chromium via CDP (tokio-tungstenite) |
-| MCP | Axum HTTP server (JSON-RPC 2.0) |
+| TLS impersonation | `wreq` + `boring-sys2` (BoringSSL), `webpki-root-certs` (Mozilla CA bundle) — win+mac only, Linux fallback to native-tls |
+| Browser | Bundled Chrome-for-Testing 148.0.7778.97 (SHA-256-verified lazy download) + WonderSuite extension (MV3) |
+| Browser MCP | Persistent CDP WebSocket (tokio-tungstenite) with multiplexed request correlation + a11y-tree snapshot engine |
+| MCP | Axum HTTP server (JSON-RPC 2.0), dedicated thread/runtime |
 | HTTP Client | reqwest with TLS 1.3 |
+| OAST | Embedded axum HTTP listener + tokio UDP DNS server + raw-TCP SMTP listener, shared `INTERACTIONS` log |
 
 ## Getting Started
 
@@ -312,21 +323,32 @@ wondersuite/
 │   │                             #   traffic, repeater, intruder, scanner,
 │   │                             #   sitemap, discovery, osint, sequencer,
 │   │                             #   comparer, logger, templates, organizer,
-│   │                             #   session, agent, tools, findings,
-│   │                             #   websocket, oast, settings)
+│   │                             #   agent, tools, findings, websocket,
+│   │                             #   oast, settings)
 │   └── stores/                   # State management (zustand)
 ├── src-tauri/
+│   ├── resources/
+│   │   ├── chromium_pin.json     # Pinned CfT version + SHA-256
+│   │   └── wondersuite-extension/ # Bundled MV3 stealth extension
 │   └── src/
 │       ├── mcp/                  # MCP server engine
-│       │   ├── handlers/         # Tool handlers (69 tools)
+│       │   ├── browser/          # Pentest-grade browser MCP (22 tools)
+│       │   │   ├── session.rs    #   CDP WS lifecycle + event dispatch
+│       │   │   ├── snapshot.rs   #   a11y tree + ref=eN + forms + security
+│       │   │   ├── network.rs    #   request capture ring buffer
+│       │   │   └── handlers.rs   #   tool handlers
+│       │   ├── handlers/         # Other tool handlers (proxy, scanner, …)
 │       │   ├── router.rs         # JSON-RPC dispatcher
-│       │   └── mod.rs            # Tool definitions
+│       │   └── mod.rs            # Tool definitions (83 tools)
 │       ├── proxy/                # MITM proxy engine
-│       │   ├── engine.rs         # Core proxy logic
+│       │   ├── engine.rs         # Core proxy logic + impersonate branch
 │       │   ├── ca.rs             # Certificate authority
 │       │   └── state.rs          # Traffic storage
-│       ├── agent_browser.rs      # Stealth Chromium control
-│       ├── browser.rs            # CDP browser + network capture
+│       ├── chromium/             # Bundled Chromium download/verify/extract/GC
+│       ├── crawler/              # Robots/sitemap/well-known/JS-endpoint crawler
+│       ├── oast.rs               # Shared HTTP/DNS/SMTP listeners + INTERACTIONS
+│       ├── tls_impersonate.rs    # wreq + BoringSSL Chrome-137 emulation (win+mac)
+│       ├── browser.rs            # Browser process launcher + CDP helpers
 │       └── lib.rs                # Tauri application entry
 ├── docs/screenshots/             # README assets
 └── .github/workflows/release.yml # Cross-platform CI release

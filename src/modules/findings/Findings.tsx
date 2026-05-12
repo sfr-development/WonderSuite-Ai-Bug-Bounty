@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BookMarked, Search, Inbox, Download } from 'lucide-react';
 import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
+import { useAppStore } from '../../stores';
 import './Findings.css';
 
 interface Finding {
@@ -30,6 +31,20 @@ export function Findings() {
   const [selected, setSelected] = useState<Finding | null>(null);
   const [filter, setFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string[]>([]);
+  const { openContextMenu } = useAppStore();
+  const handleCtx = (e: React.MouseEvent, f: Finding) => {
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, {
+      method: 'GET', url: f.url || '',
+      requestRaw: `GET ${f.path || '/'} HTTP/1.1\r\n\r\n`,
+      responseRaw: f.evidence || '',
+      source: 'findings',
+      onDelete: () => {
+        setFindings(prev => prev.filter(x => x.id !== f.id));
+        if (selected?.id === f.id) setSelected(null);
+      },
+    });
+  };
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -130,7 +145,7 @@ export function Findings() {
             </div>
           ) : (
             filtered.map((f) => (
-              <div key={f.id} className={`findings-item ${selected?.id === f.id ? 'active' : ''}`} onClick={() => setSelected(f)}>
+              <div key={f.id} className={`findings-item ${selected?.id === f.id ? 'active' : ''}`} onClick={() => setSelected(f)} onContextMenu={e => handleCtx(e, f)}>
                 <div className="findings-item-header">
                   <div className="findings-severity-dot" style={{ background: SEVERITY_COLORS[f.severity] }} />
                   <span className="findings-item-title">{f.title}</span>

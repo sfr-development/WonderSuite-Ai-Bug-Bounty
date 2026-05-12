@@ -1477,6 +1477,8 @@ export function Intercept() {
       url: item.url,
       requestRaw: item.raw,
       responseRaw: item.rawResponse,
+      source: 'intercept',
+      onDelete: () => setQueue(q => q.filter(r => r.id !== item.id)),
     });
   };
 

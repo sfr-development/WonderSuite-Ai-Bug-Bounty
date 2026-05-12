@@ -11,6 +11,37 @@
   display: flex; align-items: center; justify-content: space-between;
 }
 
+/* Modern icon-button group in the Sitemap header — override the legacy
+   flat `.comparer-mode-btn` look that was bleeding through. */
+.sitemap-tree-header .comparer-mode-btn {
+  width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+  position: relative;
+}
+.sitemap-tree-header .comparer-mode-btn:first-child,
+.sitemap-tree-header .comparer-mode-btn:last-child {
+  border-radius: var(--radius-s);
+}
+.sitemap-tree-header .comparer-mode-btn:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+  border-color: var(--border-0);
+}
+.sitemap-tree-header .comparer-mode-btn.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.sitemap-tree-header .comparer-mode-btn.active:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .sitemap-tree-filter {
   height: 28px; margin: 6px 8px; padding: 0 8px; background: var(--bg-0);
   border: 1px solid var(--border-0); border-radius: var(--radius-s);

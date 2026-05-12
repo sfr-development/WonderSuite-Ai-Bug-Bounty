@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Search, Globe, FolderSearch, Loader2, Copy, Radar } from 'lucide-react';
+import { useAppStore } from '../../stores';
 import './Discovery.css';
 
 interface DiscoveredItem {
@@ -33,6 +34,32 @@ export function Discovery() {
   const [paramMethod, setParamMethod] = useState('GET');
 
   const [selectedItem, setSelectedItem] = useState<DiscoveredItem | null>(null);
+  const { openContextMenu } = useAppStore();
+  const handleContentCtx = (e: React.MouseEvent, item: DiscoveredItem) => {
+    e.preventDefault();
+    const fullUrl = target.replace(/\/$/, '') + item.path;
+    openContextMenu(e.clientX, e.clientY, {
+      method: 'GET',
+      url: fullUrl,
+      requestRaw: `GET ${item.path} HTTP/1.1\r\nHost: ${(() => { try { return new URL(fullUrl).hostname; } catch { return ''; } })()}\r\n\r\n`,
+      responseRaw: `HTTP/1.1 ${item.status}\r\nContent-Type: ${item.content_type}\r\nContent-Length: ${item.size}\r\n\r\n`,
+      source: 'discovery',
+      onDelete: () => setContentResults(prev => prev.filter(x => x !== item)),
+    });
+  };
+  const handleSubdomainCtx = (e: React.MouseEvent, s: Subdomain) => {
+    e.preventDefault();
+    const proto = s.http_status ? 'https' : 'http';
+    const u = `${proto}://${s.subdomain}`;
+    openContextMenu(e.clientX, e.clientY, {
+      method: 'GET',
+      url: u,
+      requestRaw: `GET / HTTP/1.1\r\nHost: ${s.subdomain}\r\n\r\n`,
+      responseRaw: s.http_status ? `HTTP/1.1 ${s.http_status}\r\n\r\n` : '',
+      source: 'discovery',
+      onDelete: () => setSubdomains(prev => prev.filter(x => x !== s)),
+    });
+  };
 
   const startContentDiscovery = useCallback(async () => {
     if (!target || contentRunning) return;
@@ -235,7 +262,7 @@ export function Discovery() {
                 </thead>
                 <tbody>
                   {contentResults.map((item, i) => (
-                    <tr key={i} className={selectedItem === item ? 'selected' : ''} onClick={() => setSelectedItem(item)}>
+                    <tr key={i} className={selectedItem === item ? 'selected' : ''} onClick={() => setSelectedItem(item)} onContextMenu={e => handleContentCtx(e, item)}>
                       <td className="disc-path">{item.path}</td>
                       <td><span className={`disc-status ${statusClass(item.status)}`}>{item.status}</span></td>
                       <td className="disc-size">{item.size}B</td>
@@ -284,7 +311,7 @@ export function Discovery() {
                 </thead>
                 <tbody>
                   {subdomains.map((s, i) => (
-                    <tr key={i}>
+                    <tr key={i} onContextMenu={e => handleSubdomainCtx(e, s)}>
                       <td className="disc-subdomain">{s.subdomain}</td>
                       <td>{s.http_status && <span className={`disc-status ${statusClass(s.http_status)}`}>{s.http_status}</span>}</td>
                       <td><span className="disc-alive">{s.status}</span></td>

@@ -376,35 +376,60 @@ pub async fn handle_discover_subdomains(params: &serde_json::Value) -> HandlerRe
         ],
     };
 
-    let mut found_subdomains: Vec<serde_json::Value> = Vec::new();
     let domain_ips: Vec<String> = match tokio::net::lookup_host(format!("{}:80", domain)).await {
         Ok(addrs) => addrs.map(|a| a.ip().to_string()).collect(),
         Err(_) => vec![],
     };
 
-    for word in words.iter().take(200) {
-        let subdomain = format!("{}.{}", word, domain);
-        if let Ok(addrs) = tokio::net::lookup_host(format!("{}:80", subdomain)).await {
-            let ips: Vec<String> = addrs.map(|a| a.ip().to_string()).collect();
-            let mut entry =
-                serde_json::json!({"subdomain": subdomain, "ips": ips, "source": "dns_bruteforce"});
-            if check_http {
-                for scheme in &["https", "http"] {
-                    let url = format!("{}://{}", scheme, subdomain);
-                    if let Ok(resp) = client.get(&url).send().await {
-                        entry["http_status"] = serde_json::json!(resp.status().as_u16());
-                        entry["http_url"] = serde_json::json!(url);
-                        let server = resp.headers().get("server").and_then(|v| v.to_str().ok()).unwrap_or("");
-                        if !server.is_empty() {
-                            entry["server"] = serde_json::json!(server);
+    let concurrency = params["concurrency"].as_u64().unwrap_or(64) as usize;
+    let max_words = params["limit"].as_u64().unwrap_or(500) as usize;
+    let client_for_probe = client.clone();
+    let domain_owned = domain.to_string();
+
+    // Materialise an owned Vec<String> first so the stream closure doesn't
+    // capture an iterator borrowed from `words: Vec<&str>` — Tauri's HRTB
+    // checker chokes on the resulting `fn(&&str) -> String` closure signature.
+    let owned_words: Vec<String> = words.iter().take(max_words).map(|w| (*w).to_string()).collect();
+
+    let mut found_subdomains: Vec<serde_json::Value> = {
+        use futures_util::stream::StreamExt;
+        futures_util::stream::iter(owned_words)
+            .map(|word| {
+                let client = client_for_probe.clone();
+                let domain = domain_owned.clone();
+                async move {
+                    let subdomain = format!("{}.{}", word, domain);
+                    let ips: Vec<String> = match tokio::net::lookup_host(format!("{}:80", subdomain)).await {
+                        Ok(addrs) => addrs.map(|a| a.ip().to_string()).collect(),
+                        Err(_) => return None,
+                    };
+                    let mut entry =
+                        serde_json::json!({"subdomain": subdomain, "ips": ips, "source": "dns_bruteforce"});
+                    if check_http {
+                        for scheme in &["https", "http"] {
+                            let url = format!("{}://{}", scheme, entry["subdomain"].as_str().unwrap_or(""));
+                            if let Ok(resp) = client.get(&url).send().await {
+                                entry["http_status"] = serde_json::json!(resp.status().as_u16());
+                                entry["http_url"] = serde_json::json!(url);
+                                if let Some(server) =
+                                    resp.headers().get("server").and_then(|v| v.to_str().ok())
+                                {
+                                    if !server.is_empty() {
+                                        entry["server"] = serde_json::json!(server);
+                                    }
+                                }
+                                break;
+                            }
                         }
-                        break;
                     }
+                    Some(entry)
                 }
-            }
-            found_subdomains.push(entry);
-        }
-    }
+            })
+            .buffer_unordered(concurrency)
+            .filter_map(|opt| async move { opt })
+            .collect()
+            .await
+    };
 
     let mut crt_sh_results: Vec<String> = Vec::new();
     if use_crt_sh {

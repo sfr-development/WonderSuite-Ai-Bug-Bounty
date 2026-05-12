@@ -416,53 +416,58 @@ pub async fn handle_get_traffic_log(params: &serde_json::Value) -> HandlerResult
         .collect();
 
     let total = filtered.len();
-    let entries: Vec<serde_json::Value> = filtered.iter().rev().take(limit).map(|e| {
-        let mut cdn_hint = String::new();
-        let headers_lower = e.response_headers.to_lowercase();
-        if headers_lower.contains("cf-ray") || headers_lower.contains("server: cloudflare") {
-            cdn_hint = "Cloudflare".to_string();
-        } else if headers_lower.contains("bunnycdn") || headers_lower.contains("cdn-pullzone") {
-            cdn_hint = "BunnyCDN".to_string();
-        } else if headers_lower.contains("x-amz-cf-id") || headers_lower.contains("cloudfront") {
-            cdn_hint = "CloudFront".to_string();
-        }
+    let entries: Vec<serde_json::Value> = filtered
+        .iter()
+        .rev()
+        .take(limit)
+        .map(|e| {
+            let mut cdn_hint = String::new();
+            let headers_lower = e.response_headers.to_lowercase();
+            if headers_lower.contains("cf-ray") || headers_lower.contains("server: cloudflare") {
+                cdn_hint = "Cloudflare".to_string();
+            } else if headers_lower.contains("bunnycdn") || headers_lower.contains("cdn-pullzone") {
+                cdn_hint = "BunnyCDN".to_string();
+            } else if headers_lower.contains("x-amz-cf-id") || headers_lower.contains("cloudfront") {
+                cdn_hint = "CloudFront".to_string();
+            }
 
-        let mut findings: Vec<String> = Vec::new();
-        let body_lower = e.response_body.to_lowercase();
-        if body_lower.contains("token") || body_lower.contains("bearer") || body_lower.contains("jwt") {
-            findings.push("Contains auth tokens".to_string());
-        }
-        if body_lower.contains("password") || body_lower.contains("secret") {
-            findings.push("Contains sensitive fields".to_string());
-        }
-        if e.status == 500 || e.status == 502 || e.status == 503 {
-            findings.push(format!("Server error {}", e.status));
-        }
-        if headers_lower.contains("x-powered-by") {
-            findings.push("Technology disclosure via X-Powered-By".to_string());
-        }
+            let mut findings: Vec<String> = Vec::new();
+            let body_lower = e.response_body.to_lowercase();
+            if body_lower.contains("token") || body_lower.contains("bearer") || body_lower.contains("jwt") {
+                findings.push("Contains auth tokens".to_string());
+            }
+            if body_lower.contains("password") || body_lower.contains("secret") {
+                findings.push("Contains sensitive fields".to_string());
+            }
+            if e.status == 500 || e.status == 502 || e.status == 503 {
+                findings.push(format!("Server error {}", e.status));
+            }
+            if headers_lower.contains("x-powered-by") {
+                findings.push("Technology disclosure via X-Powered-By".to_string());
+            }
 
-        serde_json::json!({
-            "id": e.id,
-            "timestamp": e.timestamp,
-            "method": e.method,
-            "url": e.url,
-            "host": e.host,
-            "path": e.path,
-            "tls": e.tls,
-            "status": e.status,
-            "response_length": e.response_length,
-            "response_time_ms": e.response_time_ms,
-            "mime_type": e.mime_type,
-            "source": e.source,
-            "cdn_detected": cdn_hint,
-            "auto_findings": findings,
-            "request_headers": e.request_headers,
-            "request_body": if e.request_body.len() > 2000 { format!("{}...", &e.request_body[..2000]) } else { e.request_body.clone() },
-            "response_headers": e.response_headers,
-            "response_body": if e.response_body.len() > 5000 { format!("{}...", &e.response_body[..5000]) } else { e.response_body.clone() },
+            serde_json::json!({
+                "id": e.id,
+                "timestamp": e.timestamp,
+                "method": e.method,
+                "url": e.url,
+                "host": e.host,
+                "path": e.path,
+                "tls": e.tls,
+                "status": e.status,
+                "response_length": e.response_length,
+                "response_time_ms": e.response_time_ms,
+                "mime_type": e.mime_type,
+                "source": e.source,
+                "cdn_detected": cdn_hint,
+                "auto_findings": findings,
+                "request_headers": e.request_headers,
+                "request_body": crate::mcp::handlers::proxy::truncate_utf8(&e.request_body, 2000),
+                "response_headers": e.response_headers,
+                "response_body": crate::mcp::handlers::proxy::truncate_utf8(&e.response_body, 5000),
+            })
         })
-    }).collect();
+        .collect();
 
     let auth_count = entries
         .iter()

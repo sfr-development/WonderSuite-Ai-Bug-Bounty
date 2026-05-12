@@ -40,16 +40,95 @@ pub async fn handle_analyze_jwt(params: &serde_json::Value) -> HandlerResult {
     let token = params["token"].as_str().ok_or("Missing token")?;
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() < 2 {
-        return Err("Invalid JWT".into());
+        return Err("Invalid JWT (need at least header.payload)".into());
     }
 
-    let header = base64_decode(parts[0]).unwrap_or_else(|_| "invalid".into());
-    let payload = base64_decode(parts[1]).unwrap_or_else(|_| "invalid".into());
+    let header_raw = base64_decode(parts[0]).map_err(|e| format!("Header b64 decode: {}", e))?;
+    let payload_raw = base64_decode(parts[1]).map_err(|e| format!("Payload b64 decode: {}", e))?;
+    let header_json: serde_json::Value =
+        serde_json::from_str(&header_raw).unwrap_or(serde_json::Value::String(header_raw.clone()));
+    let payload_json: serde_json::Value =
+        serde_json::from_str(&payload_raw).unwrap_or(serde_json::Value::String(payload_raw.clone()));
+
+    let mut vulnerabilities = Vec::<serde_json::Value>::new();
+    let alg = header_json.get("alg").and_then(|v| v.as_str()).unwrap_or("");
+    let alg_lower = alg.to_ascii_lowercase();
+    if alg_lower == "none" {
+        vulnerabilities.push(serde_json::json!({
+            "id": "JWT_ALG_NONE",
+            "severity": "critical",
+            "evidence": format!("alg = {:?}", alg),
+            "hint": "Re-sign the token with alg=none and an empty signature — many libraries accept it. Test by sending header.payload. (one trailing dot, no sig).",
+        }));
+    }
+    if matches!(alg_lower.as_str(), "hs256" | "hs384" | "hs512") {
+        vulnerabilities.push(serde_json::json!({
+            "id": "JWT_HS_KEY_CONFUSION",
+            "severity": "high",
+            "evidence": format!("alg = {} (HMAC)", alg),
+            "hint": "If the server has the RSA public key available, you may be able to re-sign with HS256 using the public key as the secret (key-confusion). Try a known-public-key attack.",
+        }));
+    }
+    if let Some(kid) = header_json.get("kid").and_then(|v| v.as_str()) {
+        if kid.contains('\'') || kid.contains('"') || kid.contains("../") || kid.contains("..\\") {
+            vulnerabilities.push(serde_json::json!({
+                "id": "JWT_KID_SUSPICIOUS",
+                "severity": "high",
+                "evidence": format!("kid = {:?}", kid),
+                "hint": "kid value contains quote / path-traversal chars — server may be doing SQL lookup or file load on kid. Try kid=' UNION SELECT 'secret'-- or kid=/dev/null with empty signature.",
+            }));
+        } else {
+            vulnerabilities.push(serde_json::json!({
+                "id": "JWT_KID_INJECTABLE",
+                "severity": "info",
+                "evidence": format!("kid = {:?}", kid),
+                "hint": "kid is a likely SQLi / path-traversal sink. Try replacing with quote-injection or directory-traversal payloads.",
+            }));
+        }
+    }
+    if let Some(jku) = header_json.get("jku").and_then(|v| v.as_str()) {
+        vulnerabilities.push(serde_json::json!({
+            "id": "JWT_JKU_SSRF",
+            "severity": "high",
+            "evidence": format!("jku = {:?}", jku),
+            "hint": "jku points the server at an external JWK Set URL — try jku=https://attacker/jwks.json with a self-signed RSA pair.",
+        }));
+    }
+    if header_json.get("x5u").is_some() {
+        vulnerabilities.push(serde_json::json!({
+            "id": "JWT_X5U_SSRF",
+            "severity": "high",
+            "evidence": "x5u header present",
+            "hint": "x5u fetches an X.509 cert chain — same SSRF / self-signed-pair attack as jku.",
+        }));
+    }
+    let sig = parts.get(2).copied().unwrap_or("");
+    if sig.is_empty() && alg_lower != "none" {
+        vulnerabilities.push(serde_json::json!({
+            "id": "JWT_EMPTY_SIG",
+            "severity": "info",
+            "evidence": "no signature segment",
+            "hint": "Empty signature with non-none alg — may still verify on careless servers.",
+        }));
+    }
+    if let Some(exp) = payload_json.get("exp").and_then(|v| v.as_i64()) {
+        let now = chrono::Utc::now().timestamp();
+        if exp < now {
+            vulnerabilities.push(serde_json::json!({
+                "id": "JWT_EXPIRED",
+                "severity": "info",
+                "evidence": format!("exp = {} ({}s ago)", exp, now - exp),
+                "hint": "Token already expired — useful for testing whether the server enforces exp.",
+            }));
+        }
+    }
 
     Ok(serde_json::json!({
-        "header": serde_json::from_str::<serde_json::Value>(&header).unwrap_or(serde_json::Value::String(header)),
-        "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::String(payload)),
-        "signature": parts.get(2).unwrap_or(&""),
+        "header": header_json,
+        "payload": payload_json,
+        "signature": sig,
+        "alg": alg,
+        "vulnerabilities": vulnerabilities,
     }))
 }
 

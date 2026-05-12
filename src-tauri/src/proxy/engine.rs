@@ -741,8 +741,7 @@ impl ProxyEngine {
         // system OpenSSL link.
         #[cfg(not(target_os = "linux"))]
         {
-            let use_impersonate =
-                self.state.tls_impersonate.load(std::sync::atomic::Ordering::Relaxed);
+            let use_impersonate = self.state.tls_impersonate.load(std::sync::atomic::Ordering::Relaxed);
             if use_impersonate {
                 let upstream_for_wreq = {
                     let cfg = self.state.upstream_proxy.read().await;

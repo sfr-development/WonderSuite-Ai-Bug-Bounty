@@ -143,25 +143,24 @@ pub async fn handle_proxy_get_traffic(params: &serde_json::Value) -> HandlerResu
     let total = traffic.len();
 
     let entries: Vec<&TrafficEntry> = traffic.iter().rev().take(limit).collect();
-    let entries_json: Vec<serde_json::Value> = entries.iter().map(|e| {
-        serde_json::json!({
-            "id": e.id, "timestamp": e.timestamp, "method": e.method,
-            "url": e.url, "host": e.host, "path": e.path, "port": e.port,
-            "tls": e.tls, "status": e.status,
-            "response_length": e.response_length,
-            "response_time_ms": e.response_time_ms,
-            "mime_type": e.mime_type,
-            "request_headers": e.request_headers,
-            "request_body": e.request_body,
-            "response_headers": e.response_headers,
-            "response_body": if e.response_body.len() > 4096 {
-                format!("{}... [truncated, {} bytes total]", &e.response_body[..4096], e.response_body.len())
-            } else {
-                e.response_body.clone()
-            },
-            "source": e.source, "notes": e.notes, "color": e.color
+    let entries_json: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id, "timestamp": e.timestamp, "method": e.method,
+                "url": e.url, "host": e.host, "path": e.path, "port": e.port,
+                "tls": e.tls, "status": e.status,
+                "response_length": e.response_length,
+                "response_time_ms": e.response_time_ms,
+                "mime_type": e.mime_type,
+                "request_headers": e.request_headers,
+                "request_body": e.request_body,
+                "response_headers": e.response_headers,
+                "response_body": truncate_utf8(&e.response_body, 4096),
+                "source": e.source, "notes": e.notes, "color": e.color
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(serde_json::json!({
         "total": total,
@@ -332,11 +331,7 @@ pub async fn handle_proxy_get_websocket_messages(_params: &serde_json::Value) ->
             serde_json::json!({
                 "id": m.id, "connection_id": m.connection_id,
                 "direction": m.direction, "opcode": m.opcode,
-                "data": if m.data.len() > 2048 {
-                    format!("{}... [truncated]", &m.data[..2048])
-                } else {
-                    m.data.clone()
-                },
+                "data": truncate_utf8(&m.data, 2048),
                 "length": m.length, "timestamp": m.timestamp,
                 "host": m.host, "url": m.url
             })
@@ -398,34 +393,6 @@ pub async fn handle_proxy_add_interception_rule(params: &serde_json::Value) -> H
         "pattern": pattern,
         "action": action,
         "target": target_str
-    }))
-}
-
-pub async fn handle_proxy_get_capabilities(_params: &serde_json::Value) -> HandlerResult {
-    let ps = proxy()?;
-    let running = ps.is_running();
-
-    Ok(serde_json::json!({
-        "engine": "WonderSuite Proxy Engine v1.0",
-        "running": running,
-        "features": {
-            "http_interception": true,
-            "https_mitm": true,
-            "request_modification": true,
-            "response_interception": true,
-            "match_and_replace": true,
-            "interception_rules": true,
-            "tls_pass_through": true,
-            "upstream_proxy_http": true,
-            "upstream_proxy_socks5": true,
-            "websocket_detection": true,
-            "websocket_logging": true,
-            "multiple_listeners": true,
-            "ca_auto_generation": true,
-            "traffic_search": true,
-            "traffic_export": true,
-        },
-        "protocols": ["HTTP/1.0", "HTTP/1.1", "WebSocket"],
     }))
 }
 
@@ -516,6 +483,9 @@ pub async fn handle_proxy_export_traffic(params: &serde_json::Value) -> HandlerR
             let entries: Vec<serde_json::Value> = traffic
                 .iter()
                 .map(|t| {
+                    let req_headers = parse_raw_headers_har(&t.request_headers);
+                    let resp_headers = parse_raw_headers_har(&t.response_headers);
+                    let qs = parse_query_string_har(&t.url);
                     serde_json::json!({
                         "startedDateTime": t.timestamp,
                         "time": t.response_time_ms,
@@ -523,23 +493,35 @@ pub async fn handle_proxy_export_traffic(params: &serde_json::Value) -> HandlerR
                             "method": t.method,
                             "url": t.url,
                             "httpVersion": "HTTP/1.1",
-                            "headers": [],
-                            "queryString": [],
+                            "headers": req_headers,
+                            "queryString": qs,
+                            "cookies": [],
                             "headersSize": t.request_headers.len(),
-                            "bodySize": t.request_body.len()
+                            "bodySize": t.request_body.len(),
+                            "postData": if t.request_body.is_empty() {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::json!({
+                                    "mimeType": header_value(&t.request_headers, "content-type").unwrap_or_else(|| "application/octet-stream".into()),
+                                    "text": t.request_body,
+                                })
+                            }
                         },
                         "response": {
                             "status": t.status,
-                            "statusText": "",
+                            "statusText": http_status_text(t.status),
                             "httpVersion": "HTTP/1.1",
-                            "headers": [],
+                            "headers": resp_headers,
+                            "cookies": [],
                             "content": {
                                 "size": t.response_length,
                                 "mimeType": t.mime_type
                             },
+                            "redirectURL": header_value(&t.response_headers, "location").unwrap_or_default(),
                             "headersSize": t.response_headers.len(),
                             "bodySize": t.response_length
                         },
+                        "cache": {},
                         "timings": {
                             "send": 0,
                             "wait": t.response_time_ms,
@@ -795,11 +777,7 @@ pub async fn handle_send_to_repeater(params: &serde_json::Value) -> HandlerResul
                 "response_time_ms": elapsed,
                 "response_length": resp_body.len(),
                 "response_headers": resp_headers,
-                "response_body": if resp_body.len() > 8192 {
-                    format!("{}... [truncated, {} bytes total]", &resp_body[..8192], resp_body.len())
-                } else {
-                    resp_body
-                },
+                "response_body": truncate_utf8(&resp_body, 8192),
                 "traffic_id": entry_id,
                 "source": "repeater",
             }))
@@ -842,17 +820,20 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
 
     let mut suggested_url = entry.url.clone();
     let mut positions = Vec::new();
+    let override_category = params["category"].as_str();
 
-    for (i, (key, value)) in query_params.iter().enumerate() {
+    for (key, value) in query_params.iter() {
         let marker = format!("§{}§", key);
         suggested_url = suggested_url.replace(&format!("{}={}", key, value), &format!("{}={}", key, marker));
+        let category = override_category.unwrap_or_else(|| infer_payload_category(key));
         positions.push(serde_json::json!({
             "marker": marker,
             "original_value": value,
             "parameter": key,
-            "source": "inline",
-            "payloads": ["REPLACE_WITH_PAYLOADS"],
-            "suggestion": format!("Use source='file' with file_category='sqli' or 'xss' to load payloads for {}", key)
+            "location": "query",
+            "source": "file",
+            "file_category": category,
+            "limit": 200
         }));
     }
 
@@ -861,13 +842,15 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
             if let Some(obj) = body_json.as_object() {
                 for (key, value) in obj {
                     let marker = format!("§{}§", key);
+                    let category = override_category.unwrap_or_else(|| infer_payload_category(key));
                     positions.push(serde_json::json!({
                         "marker": marker,
                         "original_value": value,
                         "parameter": key,
                         "location": "body",
-                        "source": "inline",
-                        "payloads": ["REPLACE_WITH_PAYLOADS"]
+                        "source": "file",
+                        "file_category": category,
+                        "limit": 200
                     }));
                 }
             }
@@ -901,11 +884,51 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
             "headers": headers,
             "body": entry.request_body,
         },
-        "injection_points": query_params.len(),
-        "suggested_positions": positions,
+        "injection_points": positions.len(),
         "intruder_config": intruder_config,
-        "instructions": "Modify the intruder_config and call fuzz_request with it. Replace 'REPLACE_WITH_PAYLOADS' with actual payloads or use source='file' with file_category to load from PayloadManager.",
+        "next_step": "Pass intruder_config straight to fuzz_request — payloads are auto-selected per parameter name. Override with the top-level `category` argument if the heuristic guesses wrong.",
     }))
+}
+
+/// Map a parameter name to the PayloadManager category that's most likely
+/// to surface a vulnerability there. Used by send_to_intruder so the agent
+/// gets a runnable config without having to know payload categories.
+fn infer_payload_category(param: &str) -> &'static str {
+    let p = param.to_ascii_lowercase();
+    if p.ends_with("_id") || p == "id" || p == "uid" || p == "pid" || p == "uuid" {
+        "sqli"
+    } else if p.contains("redirect")
+        || p.contains("return")
+        || p == "next"
+        || p == "url"
+        || p == "dest"
+        || p == "callback"
+    {
+        "open_redirect"
+    } else if p.contains("path") || p.contains("file") || p == "include" || p == "template" {
+        "lfi"
+    } else if p.contains("cmd") || p.contains("exec") || p == "command" || p == "shell" {
+        "cmdi"
+    } else if p == "q"
+        || p.contains("search")
+        || p == "s"
+        || p.contains("query")
+        || p == "comment"
+        || p == "message"
+        || p == "text"
+    {
+        "xss"
+    } else if p.contains("xml") || p == "data" {
+        "xxe"
+    } else if p == "user" || p == "username" || p == "login" || p == "password" || p == "pass" {
+        "auth"
+    } else if p == "filter" || p == "where" {
+        "nosql"
+    } else if p.contains("ssrf") || p == "host" {
+        "ssrf"
+    } else {
+        "fuzzing"
+    }
 }
 
 /// Get intercepted requests/responses waiting for decision.
@@ -1142,26 +1165,46 @@ pub async fn handle_forward_intercepted(params: &serde_json::Value) -> HandlerRe
     ps.emit(ProxyEvent::InterceptResolved { id: id.to_string(), action: action.to_string() }).await;
 
     if action == "forward" {
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        let traffic = ps.traffic.lock().await;
-        if let Some(last) = traffic.last() {
-            return Ok(serde_json::json!({
-                "id": id,
-                "action": action,
-                "status": "resolved",
-                "response": {
-                    "status_code": last.status,
-                    "url": last.url,
-                    "method": last.method,
-                    "response_headers": last.response_headers,
-                    "response_body": last.response_body,
-                    "response_length": last.response_length,
-                    "response_time_ms": last.response_time_ms,
-                    "mime_type": last.mime_type,
-                    "traffic_id": last.id,
-                },
-            }));
+        // Poll the traffic log for an entry matching the forwarded request.
+        // Correlate by URL + method + "after this point in time"; never
+        // assume traffic.last() is ours (races with concurrent flows).
+        let started_at = chrono::Utc::now();
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(5000);
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+            let traffic = ps.traffic.lock().await;
+            let hit = traffic.iter().rev().find(|t| {
+                t.url == original_url
+                    && t.method.eq_ignore_ascii_case(&original_method)
+                    && chrono::DateTime::parse_from_rfc3339(&t.timestamp)
+                        .map(|ts| ts >= started_at)
+                        .unwrap_or(false)
+            });
+            if let Some(t) = hit {
+                return Ok(serde_json::json!({
+                    "id": id, "action": action, "status": "resolved",
+                    "response": {
+                        "traffic_id": t.id,
+                        "status_code": t.status,
+                        "url": t.url,
+                        "method": t.method,
+                        "response_headers": t.response_headers,
+                        "response_body": t.response_body,
+                        "response_length": t.response_length,
+                        "response_time_ms": t.response_time_ms,
+                        "mime_type": t.mime_type,
+                    },
+                }));
+            }
+            drop(traffic);
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
         }
+        return Ok(serde_json::json!({
+            "id": id, "action": action, "status": "resolved_no_response_yet",
+            "hint": format!("Forwarded — no matching response within 5s. Poll proxy_search_traffic with query={:?} for the {} response.", original_url, original_method),
+        }));
     }
 
     Ok(serde_json::json!({
@@ -1169,6 +1212,84 @@ pub async fn handle_forward_intercepted(params: &serde_json::Value) -> HandlerRe
         "action": action,
         "status": "resolved",
     }))
+}
+
+// ── HAR-export helpers ───────────────────────────────────────────────────────
+
+fn parse_raw_headers_har(raw: &str) -> Vec<serde_json::Value> {
+    raw.lines()
+        .filter_map(|line| {
+            let idx = line.find(':')?;
+            let name = line[..idx].trim();
+            let value = line[idx + 1..].trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(serde_json::json!({ "name": name, "value": value }))
+        })
+        .collect()
+}
+
+fn parse_query_string_har(url: &str) -> Vec<serde_json::Value> {
+    let Some(q) = url.split_once('?').map(|(_, q)| q) else { return Vec::new() };
+    q.split('&')
+        .filter(|s| !s.is_empty())
+        .map(|kv| {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            serde_json::json!({
+                "name": urlencoding::decode(k).map(|s| s.into_owned()).unwrap_or_else(|_| k.to_string()),
+                "value": urlencoding::decode(v).map(|s| s.into_owned()).unwrap_or_else(|_| v.to_string()),
+            })
+        })
+        .collect()
+}
+
+fn header_value(raw: &str, want: &str) -> Option<String> {
+    raw.lines().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        if k.trim().eq_ignore_ascii_case(want) {
+            Some(v.trim().to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn http_status_text(code: u16) -> &'static str {
+    match code {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
+    }
+}
+
+/// Truncate a UTF-8 string at byte index, snapping to the previous char
+/// boundary so non-ASCII bodies don't panic. Appends a `[truncated, N bytes total]`
+/// suffix when truncation occurs. Binary responses are still readable enough
+/// for the agent to spot magic bytes (GIF89a, PNG header, ELF, etc.).
+pub fn truncate_utf8(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut cut = max_bytes;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}... [truncated, {} bytes total]", &s[..cut], s.len())
 }
 
 fn parse_raw_headers(raw: &str) -> std::collections::HashMap<String, String> {

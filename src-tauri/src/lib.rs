@@ -1,4 +1,3 @@
-mod agent_browser;
 mod browser;
 mod browser_migration;
 mod chromium;
@@ -46,7 +45,6 @@ pub fn run() {
     let session_state = session::create_session_state();
     let intruder_state = intruder::create_intruder_state();
     let ws_state = websocket_commands::create_ws_state();
-    let agent_browser_state = agent_browser::create_agent_browser_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -59,7 +57,6 @@ pub fn run() {
         .manage(session_state)
         .manage(intruder_state)
         .manage(ws_state)
-        .manage(agent_browser_state)
         .invoke_handler(tauri::generate_handler![
             commands::send_http_request,
             commands::mcp_start,
@@ -156,6 +153,8 @@ pub fn run() {
             commands::read_file_content,
             commands::write_mcp_config,
             commands::mcp_execute_tool,
+            commands::mcp_browser_get_headless,
+            commands::mcp_browser_set_headless,
             commands::save_file_text,
             commands::save_file_bytes,
             payload_commands::payload_list_categories,
@@ -188,54 +187,12 @@ pub fn run() {
             oast_commands::oast_poll_interactions,
             oast_commands::oast_clear,
             oast_commands::oast_collaborator_everywhere,
-            agent_browser::agent_browser_launch,
-            agent_browser::agent_browser_close,
-            agent_browser::agent_browser_status,
-            agent_browser::agent_browser_navigate,
-            agent_browser::agent_browser_reload,
-            agent_browser::agent_browser_go_back,
-            agent_browser::agent_browser_go_forward,
-            agent_browser::agent_browser_get_url,
-            agent_browser::agent_browser_get_title,
-            agent_browser::agent_browser_get_content,
-            agent_browser::agent_browser_get_text,
-            agent_browser::agent_browser_query_selector,
-            agent_browser::agent_browser_query_selector_all,
-            agent_browser::agent_browser_get_links,
-            agent_browser::agent_browser_get_forms,
-            agent_browser::agent_browser_get_inputs,
-            agent_browser::agent_browser_click,
-            agent_browser::agent_browser_type,
-            agent_browser::agent_browser_press_key,
-            agent_browser::agent_browser_scroll,
-            agent_browser::agent_browser_select_option,
-            agent_browser::agent_browser_fill_form,
-            agent_browser::agent_browser_clear_field,
-            agent_browser::agent_browser_screenshot,
-            agent_browser::agent_browser_screenshot_element,
-            agent_browser::agent_browser_set_viewport,
-            agent_browser::agent_browser_evaluate,
-            agent_browser::agent_browser_evaluate_on_new_doc,
-            agent_browser::agent_browser_new_tab,
-            agent_browser::agent_browser_list_tabs,
-            agent_browser::agent_browser_close_tab,
-            agent_browser::agent_browser_switch_tab,
-            agent_browser::agent_browser_get_cookies,
-            agent_browser::agent_browser_set_cookie,
-            agent_browser::agent_browser_delete_cookie,
-            agent_browser::agent_browser_clear_all_cookies,
-            agent_browser::agent_browser_get_local_storage,
-            agent_browser::agent_browser_set_local_storage,
-            agent_browser::agent_browser_wait_for_element,
-            agent_browser::agent_browser_wait_for_navigation,
-            agent_browser::agent_browser_set_extra_headers,
-            agent_browser::agent_browser_block_urls,
-            agent_browser::agent_browser_set_user_agent,
-            agent_browser::agent_browser_set_geolocation,
-            agent_browser::agent_browser_set_timezone,
-            agent_browser::agent_browser_handle_dialog,
         ])
         .setup(|app| {
+            // Stash the AppHandle so the MCP server (running on its own thread
+            // with no Tauri state access) can launch the bundled browser etc.
+            mcp::browser::set_app_handle(app.handle().clone());
+
             let mcp: mcp::McpState = app.state::<mcp::McpState>().inner().clone();
             let mut server = mcp.blocking_lock();
             match server.start_sync(3100) {

@@ -1,5 +1,4 @@
 pub mod advanced;
-pub mod browser;
 pub mod cdn_waf;
 pub mod codec;
 pub mod http;
@@ -9,7 +8,6 @@ pub mod payloads;
 pub mod proxy;
 pub mod recon;
 pub mod scanner;
-pub mod session;
 pub mod websocket;
 
 use crate::mcp::types::HandlerResult;
@@ -38,7 +36,6 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "proxy_set_upstream" => proxy::handle_proxy_set_upstream(params).await,
         "proxy_get_websocket_messages" => proxy::handle_proxy_get_websocket_messages(params).await,
         "proxy_add_interception_rule" => proxy::handle_proxy_add_interception_rule(params).await,
-        "proxy_get_capabilities" => proxy::handle_proxy_get_capabilities(params).await,
         "proxy_get_statistics" => proxy::handle_proxy_get_statistics(params).await,
         "proxy_clear_traffic" => proxy::handle_proxy_clear_traffic(params).await,
         "proxy_export_traffic" => proxy::handle_proxy_export_traffic(params).await,
@@ -50,12 +47,30 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "proxy_remove_match_replace" => proxy::handle_proxy_remove_match_replace(params).await,
         "proxy_annotate_traffic" => proxy::handle_proxy_annotate_traffic(params).await,
 
-        "browser_navigate" => browser::handle_browser_navigate(params).await,
-        "browser_execute_js" => browser::handle_browser_execute_js(params).await,
-        "session_from_browser" => browser::handle_session_from_browser(params).await,
-        "browser_network_traffic" => browser::handle_browser_network_traffic(params).await,
-
-        "session_manage" => session::handle_session_manage(params).await,
+        // Browser MCP — pentest-grade surface (v0.4.0).
+        "browser_open" => crate::mcp::browser::handlers::open(params).await,
+        "browser_attach" => crate::mcp::browser::handlers::attach(params).await,
+        "browser_close" => crate::mcp::browser::handlers::close(params).await,
+        "browser_navigate" => crate::mcp::browser::handlers::navigate(params).await,
+        "browser_snapshot" => crate::mcp::browser::handlers::snapshot(params).await,
+        "browser_screenshot" => crate::mcp::browser::handlers::screenshot(params).await,
+        "browser_click" => crate::mcp::browser::handlers::click(params).await,
+        "browser_type" => crate::mcp::browser::handlers::type_text(params).await,
+        "browser_fill_form" => crate::mcp::browser::handlers::fill_form(params).await,
+        "browser_press_key" => crate::mcp::browser::handlers::press_key(params).await,
+        "browser_scroll" => crate::mcp::browser::handlers::scroll(params).await,
+        "browser_select_option" => crate::mcp::browser::handlers::select_option(params).await,
+        "browser_set_file_input" => crate::mcp::browser::handlers::set_file_input(params).await,
+        "browser_get_outer_html" => crate::mcp::browser::handlers::get_outer_html(params).await,
+        "browser_evaluate" => crate::mcp::browser::handlers::evaluate(params).await,
+        "browser_storage_full" => crate::mcp::browser::handlers::storage_full(params).await,
+        "browser_console" => crate::mcp::browser::handlers::console(params).await,
+        "browser_dom_sinks" => crate::mcp::browser::handlers::dom_sinks(params).await,
+        "browser_network_traffic" => crate::mcp::browser::handlers::network_traffic(params).await,
+        "browser_replay_to_proxy" => crate::mcp::browser::handlers::replay_to_proxy(params).await,
+        "browser_resource_hints" => crate::mcp::browser::handlers::resource_hints(params).await,
+        "browser_wait_for" => crate::mcp::browser::handlers::wait_for(params).await,
+        "browser_tabs" => crate::mcp::browser::handlers::tabs(params).await,
 
         "websocket_connect" => websocket::handle_websocket_connect(params).await,
 
@@ -66,8 +81,6 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "dns_resolve" => recon::handle_dns_resolve(params).await,
 
         "oast_generate_payload" => oast::handle_oast_generate_payload(params).await,
-        "oast_poll_interactions" => oast::handle_oast_poll_interactions(params).await,
-        "oast_start_server" => oast::handle_oast_start_server(params).await,
         "oast_start_dns_server" => oast::handle_oast_start_dns_server(params).await,
         "oast_start_smtp_server" => oast::handle_oast_start_smtp_server(params).await,
         "oast_verify" => oast::handle_oast_verify(params).await,

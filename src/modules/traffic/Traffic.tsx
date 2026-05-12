@@ -181,6 +181,8 @@ export function Traffic() {
       url: entry.url,
       requestRaw: `${entry.request_headers}\n\n${entry.request_body}`,
       responseRaw: `${entry.response_headers}\n\n${entry.response_body}`,
+      source: 'traffic',
+      onDelete: () => setEntries(prev => prev.filter(x => x.id !== entry.id)),
     });
   };
 

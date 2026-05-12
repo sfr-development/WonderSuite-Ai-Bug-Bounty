@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Bot, Search, Trash2, Filter } from 'lucide-react';
+import { Bot, Search, Trash2, Filter, Loader2, Check, X } from 'lucide-react';
 import './Agent.css';
 
 interface ActivityEntry {
@@ -181,7 +181,9 @@ function ActivityPanel() {
                       )}
                     </td>
                     <td className={`agent-dur ${durClass(entry.duration_ms)}`} style={{ textAlign: 'right' }}>
-                      {entry.status === 'running' ? '⏳' : fmtDur(entry.duration_ms)}
+                      {entry.status === 'running'
+                        ? <Loader2 size={12} className="agent-spin" />
+                        : fmtDur(entry.duration_ms)}
                     </td>
                   </tr>
                 ))}
@@ -204,7 +206,11 @@ function ActivityPanel() {
                   <span className={`agent-cat ${selectedEntry.category}`}>{selectedEntry.category}</span>
                   <span className="agent-tool-name">{selectedEntry.tool_name}</span>
                   <span className={`agent-status-indicator ${selectedEntry.status}`}>
-                    {selectedEntry.status === 'success' ? '✓' : selectedEntry.status === 'error' ? '✗' : '⏳'}
+                    {selectedEntry.status === 'success'
+                      ? <Check size={12} />
+                      : selectedEntry.status === 'error'
+                      ? <X size={12} />
+                      : <Loader2 size={12} className="agent-spin" />}
                   </span>
                   <span style={{ color: 'var(--text-3)', fontSize: 10 }}>{fmtDur(selectedEntry.duration_ms)}</span>
                 </div>

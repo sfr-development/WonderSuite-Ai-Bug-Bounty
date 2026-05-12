@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Zap, FileJson, ArrowRightLeft, Target, PlusCircle, ListOrdered, Layers, Globe, Search, MessageSquare, Code, Link2, Activity, Network, Clock, Bug, GitCompare, Trash2, Link, TerminalSquare, Download, BookText } from 'lucide-react';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores';
 import './ContextMenu.css';
 
 async function mcpTool(name: string, params: Record<string, any>): Promise<any> {
-  const { invoke } = await import('@tauri-apps/api/core');
   return invoke('mcp_execute_tool', { name, params });
 }
 
@@ -13,6 +15,10 @@ export function ContextMenu() {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<React.CSSProperties>({ top: -9999, left: -9999, opacity: 0 });
   const [subFlip, setSubFlip] = useState(false);
+  // Which submenu is open right now (click-to-toggle — hover-only didn't work
+  // inside the scrolling .context-menu-actions container).
+  const [openSub, setOpenSub] = useState<null | 'comparer' | 'browser' | 'engagement' | 'compare-maps'>(null);
+  const toggleSub = (name: typeof openSub) => setOpenSub(prev => prev === name ? null : name);
 
   useLayoutEffect(() => {
     if (!contextMenu.isOpen || !menuRef.current) return;
@@ -100,8 +106,9 @@ export function ContextMenu() {
   }, [contextMenu.isOpen, closeContextMenu]);
 
   if (!contextMenu.isOpen || !contextMenu.data) return null;
-  const { method, url, requestRaw, responseRaw } = contextMenu.data;
-  const subCls = subFlip ? 'context-submenu flip-left' : 'context-submenu';
+  const { method, url, requestRaw, responseRaw, source, onDelete } = contextMenu.data;
+  const subCls = (open: boolean) =>
+    `context-submenu ${subFlip ? 'flip-left' : ''} ${open ? 'is-open' : ''}`;
 
   const handleAction = (tool: string, target?: 'left' | 'right') => { sendTo(tool, method, url, requestRaw, responseRaw, target); closeContextMenu(); };
 
@@ -122,16 +129,28 @@ export function ContextMenu() {
   const requestInBrowser = async (mode: 'wonder' | 'system') => {
     closeContextMenu();
     if (mode === 'wonder') {
+      // Try navigate first (browser already open via MCP), fall back to open
+      // (cold start, will auto-launch WonderBrowser through the proxy).
       try {
-        await mcpTool('browser_navigate', { action: 'navigate', url });
-        addToast({ title: 'Browser', message: `WonderBrowser → ${new URL(url).hostname}`, type: 'success' });
+        await mcpTool('browser_navigate', { url });
+        addToast({ title: 'WonderBrowser', message: `→ ${new URL(url).hostname}`, type: 'success' });
       } catch {
-        addToast({ title: 'Browser', message: 'WonderBrowser not running. Opening in system browser.', type: 'warning' });
-        window.open(url, '_blank');
+        try {
+          await mcpTool('browser_open', { url });
+          addToast({ title: 'WonderBrowser', message: `Launched → ${new URL(url).hostname}`, type: 'success' });
+        } catch (e: any) {
+          const msg = String(e ?? '');
+          if (msg.includes('PROXY_DOWN')) {
+            addToast({ title: 'Proxy required', message: 'Start the proxy first (Proxy tab), then retry.', type: 'warning' });
+          } else {
+            addToast({ title: 'WonderBrowser failed', message: 'Opening in system browser instead.', type: 'warning' });
+            try { await openUrl(url); } catch { window.open(url, '_blank'); }
+          }
+        }
       }
     } else {
-      window.open(url, '_blank');
-      addToast({ title: 'Browser', message: 'Opened in system browser.', type: 'info' });
+      try { await openUrl(url); } catch { window.open(url, '_blank'); }
+      addToast({ title: 'System browser', message: `→ ${new URL(url).hostname}`, type: 'info' });
     }
   };
 
@@ -174,17 +193,17 @@ export function ContextMenu() {
     addToast({ title: 'Finding References', message: 'Crawling for links, forms, emails...', type: 'info' });
     try {
       const result = await mcpTool('crawl_target', { target: url, extract_comments: false, extract_forms: true, extract_emails: true, max_pages: 15, max_depth: 2 });
-      const pages = result?.pages?.length || 0;
+      const pages = result?.urls?.length || result?.pages_crawled || 0;
       const forms = result?.forms?.length || 0;
       const emails = result?.emails?.length || 0;
       const out = [
-        ...(result?.pages || []).slice(0, 40).map((p: any) => `[PAGE] ${p.url || p}`),
+        ...(result?.urls || []).slice(0, 40).map((u: any) => `[URL] ${u.url || u}`),
         ...(result?.forms || []).map((f: any) => `[FORM] ${f.action || f}`),
         ...(result?.emails || []).map((e: string) => `[EMAIL] ${e}`),
       ].join('\n');
       navigator.clipboard.writeText(out);
-      addToast({ title: 'References', message: `${pages} pages, ${forms} forms, ${emails} emails. Copied.`, type: 'success' });
-    } catch { addToast({ title: 'Error', message: 'Crawl failed.', type: 'error' }); }
+      addToast({ title: 'References', message: `${pages} URLs, ${forms} forms, ${emails} emails — copied.`, type: 'success' });
+    } catch (e: any) { addToast({ title: 'Crawl failed', message: String(e ?? 'unknown'), type: 'error' }); }
   };
 
   const analyzeTarget = async () => {
@@ -236,31 +255,46 @@ export function ContextMenu() {
 
   const autoSetupAttack = () => { closeContextMenu(); sendTo('intruder', method, url, requestRaw, responseRaw); };
 
-  const compareSiteMaps = async () => {
+  const crawlAsSiteMap = async () => {
     closeContextMenu();
-    addToast({ title: 'Crawling', message: `Full site map crawl...`, type: 'info' });
+    addToast({ title: 'Crawling', message: `Site map BFS on ${(() => { try { return new URL(url).hostname; } catch { return url; } })()}...`, type: 'info' });
     try {
       const result = await mcpTool('crawl_target', { target: url, max_pages: 50, max_depth: 3, extract_comments: true, extract_forms: true, extract_emails: true });
-      const pages = result?.pages?.length || 0;
+      const pages = result?.pages?.length || result?.urls?.length || 0;
       const forms = result?.forms?.length || 0;
       const emails = result?.emails?.length || 0;
-      let report = `=== Site Map: ${url} ===\nPages: ${pages} | Forms: ${forms} | Emails: ${emails}\n\n`;
-      if (result?.pages) report += result.pages.slice(0, 60).map((p: any) => `  ${p.url || p}`).join('\n');
-      if (result?.forms?.length) report += '\n\nForms:\n' + result.forms.map((f: any) => `  [${f.method || 'GET'}] ${f.action || f}`).join('\n');
-      if (result?.emails?.length) report += '\n\nEmails:\n' + result.emails.join('\n');
-      navigator.clipboard.writeText(report);
-      addToast({ title: 'Site Map', message: `${pages} pages, ${forms} forms, ${emails} emails. Copied.`, type: 'success' });
-    } catch { addToast({ title: 'Error', message: 'Crawl failed.', type: 'error' }); }
+      // Open Sitemap module so the user sees the live tree filling up.
+      setActiveModule('sitemap');
+      addToast({ title: 'Site Map ready', message: `${pages} pages · ${forms} forms · ${emails} emails`, type: 'success' });
+    } catch { addToast({ title: 'Crawl failed', message: 'See log.', type: 'error' }); }
   };
 
-  const saveItem = () => {
+  const sendToComparerAsSitemap = (side: 'left' | 'right') => {
     closeContextMenu();
-    const content = `=== ${method||'GET'} ${url} ===\n\n--- Request ---\n${requestRaw||'(none)'}\n\n--- Response ---\n${responseRaw||'(none)'}`;
-    const blob = new Blob([content], { type: 'text/plain' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `${(() => { try { return new URL(url).hostname; } catch { return 'item'; } })()}-${Date.now()}.txt`;
-    a.click(); URL.revokeObjectURL(a.href);
-    addToast({ title: 'Saved', message: 'Downloaded.', type: 'success' });
+    const summary = `=== Site Map ${side === 'left' ? 'A' : 'B'}: ${url} ===\n(Use 'Crawl & Open in Site Map' first, then export the tree from Site Map to this Comparer pane.)`;
+    sendTo('comparer', method, url, summary, undefined, side);
+    addToast({ title: 'Comparer', message: `URL queued as Side ${side.toUpperCase()}.`, type: 'info' });
+  };
+
+  const saveItem = async () => {
+    closeContextMenu();
+    const host = (() => { try { return new URL(url).hostname; } catch { return 'item'; } })();
+    const content = `=== ${method || 'GET'} ${url} ===\n\n--- Request ---\n${requestRaw || '(none)'}\n\n--- Response ---\n${responseRaw || '(none)'}`;
+    try {
+      const path = await saveDialog({
+        defaultPath: `${host}-${Date.now()}.txt`,
+        filters: [
+          { name: 'Plain text', extensions: ['txt'] },
+          { name: 'Markdown', extensions: ['md'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      });
+      if (!path) return; // user cancelled
+      await invoke('save_file_text', { path, content });
+      addToast({ title: 'Saved', message: path, type: 'success' });
+    } catch (e: any) {
+      addToast({ title: 'Save failed', message: String(e ?? 'unknown'), type: 'error' });
+    }
   };
 
   return (
@@ -278,9 +312,9 @@ export function ContextMenu() {
         <button onClick={() => handleAction('sequencer')}><ListOrdered size={13} /> Send to Sequencer</button>
         <button onClick={() => handleAction('organizer')}><Layers size={13} /> Send to Organizer</button>
 
-        <div className="context-submenu-trigger">
-          <button><FileJson size={13} /> Send to Comparer</button>
-          <div className={subCls}>
+        <div className={`context-submenu-trigger ${openSub==='comparer'?'open':''}`}>
+          <button onClick={() => toggleSub('comparer')}><FileJson size={13} /> Send to Comparer</button>
+          <div className={subCls(openSub==='comparer')}>
             <button onClick={() => handleAction('comparer', 'left')}>Send to Left (Item 1)</button>
             <button onClick={() => handleAction('comparer', 'right')}>Send to Right (Item 2)</button>
           </div>
@@ -288,17 +322,17 @@ export function ContextMenu() {
 
         <div className="context-menu-divider" />
 
-        <div className="context-submenu-trigger">
-          <button><Globe size={13} /> Request in browser</button>
-          <div className={subCls}>
+        <div className={`context-submenu-trigger ${openSub==='browser'?'open':''}`}>
+          <button onClick={() => toggleSub('browser')}><Globe size={13} /> Request in browser</button>
+          <div className={subCls(openSub==='browser')}>
             <button onClick={() => requestInBrowser('wonder')}>In WonderBrowser</button>
             <button onClick={() => requestInBrowser('system')}>In system browser</button>
           </div>
         </div>
 
-        <div className="context-submenu-trigger">
-          <button><Target size={13} /> Engagement tools</button>
-          <div className={subCls}>
+        <div className={`context-submenu-trigger ${openSub==='engagement'?'open':''}`}>
+          <button onClick={() => toggleSub('engagement')}><Target size={13} /> Engagement tools</button>
+          <div className={subCls(openSub==='engagement')}>
             <button onClick={engagementSearch}><Search size={12} /> Search</button>
             <button onClick={findComments}><MessageSquare size={12} /> Find comments</button>
             <button onClick={findScripts}><Code size={12} /> Find scripts</button>
@@ -310,22 +344,47 @@ export function ContextMenu() {
           </div>
         </div>
 
-        <button onClick={compareSiteMaps}><GitCompare size={13} /> Compare site maps</button>
+        <div className={`context-submenu-trigger ${openSub==='compare-maps'?'open':''}`}>
+          <button onClick={() => toggleSub('compare-maps')}><GitCompare size={13} /> Compare site maps</button>
+          <div className={subCls(openSub==='compare-maps')}>
+            <button onClick={crawlAsSiteMap}><Network size={12} /> Crawl & open in Site Map</button>
+            <button onClick={() => sendToComparerAsSitemap('left')}>Send to Comparer (A)</button>
+            <button onClick={() => sendToComparerAsSitemap('right')}>Send to Comparer (B)</button>
+          </div>
+        </div>
 
         <div className="context-menu-divider" />
 
         <button onClick={copyUrl}><Link size={13} /> Copy URL</button>
         <button onClick={copyCurl}><TerminalSquare size={13} /> Copy as cURL</button>
-        <button onClick={saveItem}><Download size={13} /> Save item</button>
-        <button onClick={() => { closeContextMenu(); window.open('https://portswigger.net/burp/documentation/desktop/tools/target/site-map', '_blank'); }}>
+        <button onClick={saveItem}><Download size={13} /> Save item…</button>
+        <button onClick={async () => {
+          closeContextMenu();
+          try { await openUrl('https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty#mcp-server--83-tools'); }
+          catch { window.open('https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty#mcp-server--83-tools', '_blank'); }
+        }}>
           <BookText size={13} /> Documentation
         </button>
 
         <div className="context-menu-divider" />
-        <button onClick={() => { deleteSitemapNode(url); closeContextMenu(); addToast({ title: 'Deleted', message: 'Item removed from sitemap.', type: 'success' }); }} style={{ color: 'var(--red)' }}>
+        <button
+          onClick={() => {
+            // Caller-supplied delete (Traffic/Intercept/Scan etc.) takes priority.
+            // Fallback: legacy sitemap-only delete via store flag.
+            if (onDelete) { onDelete(); }
+            else { deleteSitemapNode(url); }
+            closeContextMenu();
+            addToast({
+              title: 'Deleted',
+              message: source ? `Removed from ${source}.` : 'Item removed.',
+              type: 'success',
+            });
+          }}
+          style={{ color: 'var(--red)' }}
+        >
           <Trash2 size={13} /> Delete item
         </button>
-        <button onClick={() => { addToBlacklist([url]); deleteSitemapNode(url); closeContextMenu(); addToast({ title: 'Blacklisted', message: 'Item blacklisted — will not reappear.', type: 'warning' }); }} style={{ color: 'var(--orange, #e8873c)' }}>
+        <button onClick={() => { addToBlacklist([url]); if (onDelete) onDelete(); else deleteSitemapNode(url); closeContextMenu(); addToast({ title: 'Blacklisted', message: 'Item blacklisted — will not reappear.', type: 'warning' }); }} style={{ color: 'var(--orange, #e8873c)' }}>
           <PlusCircle size={13} /> Blacklist item
         </button>
       </div>
