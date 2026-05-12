@@ -259,6 +259,35 @@ pub async fn save_file_text(path: String, content: String) -> Result<(), String>
     std::fs::write(&path, content).map_err(|e| format!("Failed to save file: {}", e))
 }
 
+/// Return the bundled wondersuite.md Claude skill as a string. Bundled via
+/// include_str! so it ships inside the binary and works offline. The Settings
+/// → AI Skill panel uses this to populate a save-as dialog for the user.
+#[tauri::command]
+pub fn skill_content() -> &'static str {
+    include_str!("../../.claude/skills/wondersuite.md")
+}
+
+/// Write the bundled skill into a user-chosen directory. Creates
+/// `<dir>/.claude/skills/wondersuite.md` (path-traversal-safe).
+#[tauri::command]
+pub async fn install_skill(directory: String) -> Result<String, String> {
+    if directory.contains("..") {
+        return Err("Path traversal not allowed".into());
+    }
+    let dir = std::path::PathBuf::from(&directory);
+    if !dir.exists() {
+        return Err(format!("Directory does not exist: {}", directory));
+    }
+    if !dir.is_dir() {
+        return Err(format!("Not a directory: {}", directory));
+    }
+    let skills_dir = dir.join(".claude").join("skills");
+    std::fs::create_dir_all(&skills_dir).map_err(|e| format!("Failed to create .claude/skills: {}", e))?;
+    let target = skills_dir.join("wondersuite.md");
+    std::fs::write(&target, skill_content()).map_err(|e| format!("Failed to write skill: {}", e))?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 /// Write binary content (base64 encoded) to a file path — restricted to safe paths
 #[tauri::command]
 pub async fn save_file_bytes(path: String, data_base64: String) -> Result<(), String> {

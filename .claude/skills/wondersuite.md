@@ -48,12 +48,13 @@ For SPAs: `crawl_target` is regex-based and blind to client-side routing — fal
 
 | Situation | Tool |
 |---|---|
-| Fresh isolated testbed for fuzzing / scripted clicks | `browser_open` (bundled WonderBrowser, proxied) |
-| User has Chrome open WITH `--remote-debugging-port` | `browser_attach({})` (auto-scans 9222/9333/9223) |
-| User has Chrome open WITHOUT the flag | `browser_attach({auto_launch: true})` — spawns isolated Chrome, NOT the user's. Explain this to the user. |
-| User wants their real cookies/logins and has CLOSED Chrome | `browser_attach({auto_launch: true, use_real_profile: true})` |
+| First call of the session — nothing is running | `browser_open` (spawns bundled WonderBrowser, proxied, stealth-extension loaded) |
+| A previous `browser_open` is still alive and you want to reuse it | `browser_attach({})` (scans 9333/9222/9223 for the WonderBrowser CDP socket) |
+| Nothing is running and you'd rather call attach for ergonomic reasons | `browser_attach({auto_launch: true})` (functionally identical to `browser_open`) |
 
-**Never** silently call `browser_open` after `browser_attach` fails — they're different browsers and the user will be confused. Ask which mode they want.
+`browser_attach` is **WonderBrowser-only** by design. It will refuse to drive a system Chrome / Edge / Brave even if one happens to be listening on a CDP port — the user's daily-driver browsers carry their real cookies, extensions and logged-in sessions, and we don't touch those from MCP. If you see `code=NOT_WONDERBROWSER`, call `browser_open` instead.
+
+If the user says "attach to my browser" expecting their personal Chrome session: gently explain that WonderSuite intentionally drives an isolated bundled browser to keep their real session safe, then offer to `browser_open` a fresh WonderBrowser they can log into separately (logins there persist in the isolated profile across sessions).
 
 **Working with the page:**
 
@@ -282,8 +283,8 @@ forward_intercepted({id, modified_raw?})         # forward (optionally mutated) 
 | `STALE_REF` | element ref no longer in DOM | call `browser_snapshot` again |
 | `WAIT_TIMEOUT` | `browser_wait_for` gave up | inspect with `browser_snapshot` to see why selector/text never appeared |
 | `CDP_LOST` | CDP socket died and reconnect failed | `browser_close` + retry from scratch |
-| `ATTACH_FAILED` | no CDP port responded | enumerate options to the user (auto_launch / restart-with-flag / browser_open) |
-| `PROFILE_LOCKED` | `use_real_profile:true` but Chrome is still running | user has to close Chrome first |
+| `ATTACH_FAILED` | no WonderBrowser CDP responder on the scanned ports | call again with `auto_launch:true` or just use `browser_open` |
+| `NOT_WONDERBROWSER` | found a CDP server but it's a system Chrome / Edge / Brave | call `browser_open` instead — `browser_attach` refuses to drive user-owned browsers |
 | `NO_APP_HANDLE` | MCP browser module not initialized | restart the WonderSuite app |
 
 When the user reports a tool error, paste the full `code=… hint=…` instead of paraphrasing — that's what teaches them the recovery path.
@@ -298,7 +299,7 @@ When the user reports a tool error, paste the full `code=… hint=…` instead o
 - **Don't run `active_scan` on production sites you don't own.** Confirm scope with the user before any noisy tool (active scan, fuzz, race, intruder).
 - **Don't call `send_request` to "test" if the proxy works.** `proxy_status` exists.
 - **Don't drop intercepted requests silently** — if interception is on and you forget about pending requests, the user's browser hangs. `get_intercepted` regularly, `forward_intercepted` decisively.
-- **Don't claim to attach to "my running Chrome" without the flag.** Chrome must have `--remote-debugging-port` at startup. Explain the limitation, offer `auto_launch` or `use_real_profile`.
+- **Don't try to drive the user's daily-driver Chrome.** `browser_attach` is intentionally WonderBrowser-only — touching the user's real Chrome profile (cookies, extensions, accounts) is not supported. If the user expects that, explain the safety boundary and offer to spin up a bundled WonderBrowser they can log into separately.
 
 ---
 
@@ -310,7 +311,7 @@ When the user reports a tool error, paste the full `code=… hint=…` instead o
 - **Snapshots feel slow**: pass `include_security: false` to skip the security checks pass.
 - **Forms with honeypots**: `browser_snapshot` flags each form's hidden / off-screen / suspicious-name fields with `is_honeypot: true` + `honeypot_reason`. Don't fill those. They're tarpits.
 - **Captchas / 2FA**: MCP browser defaults to visible mode (Settings → Browser → MCP headless). Tell the user "I see a captcha; can you solve it?" and they can interact directly with the same browser window.
-- **Bundled-browser-only features**: TLS impersonation (Chrome JA3/JA4) and stealth-extension features only apply when `browser_open` is used. `browser_attach` connects to whatever the user opened — no impersonation, no extension.
+- **Bundled-browser-only features**: TLS impersonation (Chrome JA3/JA4) and the stealth extension are loaded for every WonderBrowser session — both `browser_open` and `browser_attach({auto_launch:true})` get them. `browser_attach({})` reuses an existing WonderBrowser session, so those features are also active.
 
 ---
 

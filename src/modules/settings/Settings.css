@@ -382,3 +382,150 @@
 .spin {
   animation: spin 1s linear infinite;
 }
+
+/* ── AI Skill panel ─────────────────────────────────────── */
+.skill-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.skill-success {
+  margin-top: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius-s);
+  font-size: 11px;
+  color: var(--text-1);
+}
+.skill-success code {
+  background: var(--bg-0);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  word-break: break-all;
+}
+
+.skill-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-s);
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.skill-usage {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-0);
+}
+.skill-usage h3 {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.skill-usage p {
+  font-size: 11px;
+  color: var(--text-2);
+  margin: 0 0 12px;
+}
+.skill-usage code {
+  background: var(--bg-0);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-1);
+}
+
+.skill-usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-s);
+  margin-bottom: 8px;
+}
+.skill-usage-row:hover {
+  border-color: var(--text-3);
+}
+.skill-usage-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.skill-usage-left strong {
+  font-size: 11px;
+  color: var(--text-0);
+  font-weight: 600;
+}
+.skill-usage-left span {
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.skill-usage-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.skill-usage-right code {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 380px;
+}
+
+.skill-copy-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: 3px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.skill-copy-btn:hover {
+  color: var(--text-0);
+  border-color: var(--text-3);
+}
+
+.skill-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.skill-link-row a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.skill-link-row a:hover {
+  text-decoration: underline;
+}

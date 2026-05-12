@@ -145,6 +145,8 @@ pub async fn open(p: &serde_json::Value) -> HandlerResult {
 }
 
 pub async fn attach(p: &serde_json::Value) -> HandlerResult {
+    let app = super::app_handle()
+        .ok_or_else(|| structured_err("NO_APP_HANDLE", "MCP browser is not initialised — restart the app"))?;
     let state = super::state();
     if state.read().await.is_some() {
         return Err(structured_err(
@@ -156,27 +158,14 @@ pub async fn attach(p: &serde_json::Value) -> HandlerResult {
     let proxy_port = p["proxy_port"].as_u64().unwrap_or(8080) as u16;
     let url = p["url"].as_str().map(String::from);
     let auto_launch = p["auto_launch"].as_bool().unwrap_or(false);
-    let prefer = p["prefer"].as_str().map(String::from);
-    let use_proxy = p["use_proxy"].as_bool().unwrap_or(false);
-    let use_real_profile = p["use_real_profile"].as_bool().unwrap_or(false);
 
-    let sess = BrowserSession::attach(AttachArgs {
-        cdp_port,
-        proxy_port,
-        url: url.clone(),
-        auto_launch,
-        prefer,
-        use_proxy,
-        use_real_profile,
-    })
-    .await?;
-    let note = if !sess.launched_by_us {
-        "Attached to an existing CDP-enabled browser (it was already running with --remote-debugging-port)."
-            .to_string()
-    } else if use_real_profile {
-        "Auto-launched a fresh Chrome window USING THE USER'S REAL profile (cookies, extensions, logged-in accounts). browser_close will close this window only.".to_string()
+    let sess =
+        BrowserSession::attach(&app, AttachArgs { cdp_port, proxy_port, url: url.clone(), auto_launch })
+            .await?;
+    let note = if sess.launched_by_us {
+        "Auto-launched a fresh WonderBrowser (isolated profile, proxy-wired, stealth extension loaded). Same as browser_open.".to_string()
     } else {
-        "Auto-launched a fresh Chrome window with an ISOLATED profile (no cookies/extensions from the user's daily-driver Chrome). Persistent at ~/.wondersuite/attach-profile so logins you make here survive across future attaches.".to_string()
+        "Attached to a running WonderBrowser CDP session.".to_string()
     };
     let info = serde_json::json!({
         "success": true,
@@ -185,8 +174,6 @@ pub async fn attach(p: &serde_json::Value) -> HandlerResult {
         "cdp_port": sess.cdp_port,
         "initial_url": url,
         "auto_launched": sess.launched_by_us,
-        "real_profile": use_real_profile,
-        "proxy_routed": use_proxy,
         "note": note,
         "tip": "Call browser_snapshot to discover refs for click/type/fill_form.",
     });

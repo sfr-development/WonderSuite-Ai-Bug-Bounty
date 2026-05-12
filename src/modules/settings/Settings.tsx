@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe } from 'lucide-react';
+import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink } from 'lucide-react';
 import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores';
@@ -84,7 +84,7 @@ function IdeIconComponent({ type, size = 20 }: { type: string; size?: number }) 
   }
 }
 
-type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance' | 'browser';
+type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance' | 'browser' | 'skill';
 
 
 interface McpToolEntry {
@@ -258,6 +258,9 @@ export function Settings() {
         </button>
         <button className={`settings-nav-item ${tab === 'browser' ? 'active' : ''}`} onClick={() => setTab('browser')}>
           <Globe size={14} /> Browser
+        </button>
+        <button className={`settings-nav-item ${tab === 'skill' ? 'active' : ''}`} onClick={() => setTab('skill')}>
+          <BookOpen size={14} /> AI Skill
         </button>
       </div>
 
@@ -477,6 +480,180 @@ export function Settings() {
         )}
 
         {tab === 'browser' && <BrowserSettingsPanel />}
+
+        {tab === 'skill' && <SkillDownloadPanel />}
+      </div>
+    </div>
+  );
+}
+
+function SkillDownloadPanel() {
+  const [installedPath, setInstalledPath] = useState<string | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {}
+  };
+
+  const pickAndInstall = async () => {
+    setError(null);
+    setInstalling(true);
+    try {
+      const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
+      const chosen = await openDialog({
+        directory: true,
+        multiple: false,
+        title: 'Pick your project root — wondersuite.md goes into <project>/.claude/skills/',
+      });
+      if (!chosen || typeof chosen !== 'string') {
+        setInstalling(false);
+        return;
+      }
+      const target = await invoke<string>('install_skill', { directory: chosen });
+      setInstalledPath(target);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const downloadAsFile = async () => {
+    setError(null);
+    try {
+      const content = await invoke<string>('skill_content');
+      const { save: saveDialog } = await import('@tauri-apps/plugin-dialog');
+      const path = await saveDialog({
+        defaultPath: 'wondersuite.md',
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
+      if (!path) return;
+      await invoke('save_file_text', { path, content });
+      setInstalledPath(path);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    }
+  };
+
+  return (
+    <div className="settings-section">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <BookOpen size={16} />
+        <h2 style={{ margin: 0 }}>AI Skill</h2>
+      </div>
+      <p>
+        Drop a project-level Claude skill into your project that teaches the AI
+        how to drive WonderSuite's 84 MCP tools like a senior pentester —
+        workflows, error-recovery, when-to-ask-vs-act, the full tool reference.
+        Works with any Claude-compatible agent that reads `.claude/skills/`.
+      </p>
+
+      <div className="skill-actions">
+        <button className="mcp-btn start" onClick={pickAndInstall} disabled={installing}>
+          <FolderOpen size={14} /> {installing ? 'Installing…' : 'Pick project folder + install'}
+        </button>
+        <button className="mcp-btn" onClick={downloadAsFile}>
+          <Download size={14} /> Save wondersuite.md elsewhere…
+        </button>
+      </div>
+
+      {installedPath && (
+        <div className="skill-success">
+          <CheckCircle size={14} style={{ color: 'var(--green)' }} />
+          <div>
+            <strong>Installed.</strong>
+            <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--text-2)' }}>{installedPath}</code>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="skill-error">
+          <AlertTriangle size={14} style={{ color: 'var(--red)' }} />
+          <div>{error}</div>
+        </div>
+      )}
+
+      <div className="skill-usage">
+        <h3>How to use the skill</h3>
+        <p>
+          The skill auto-loads in agents that scan <code>.claude/skills/</code>.
+          For agents that need an explicit reference, paste the snippet that
+          matches your tool:
+        </p>
+
+        <SkillUsageRow
+          tool="Claude Code"
+          desc="Auto-loads from .claude/skills/. Also force-invoke with /wondersuite."
+          snippet="/wondersuite"
+          onCopy={(s) => copyToClipboard(s, 'cc')}
+          copied={copied === 'cc'}
+        />
+        <SkillUsageRow
+          tool="Cursor"
+          desc="Reference it inline in the chat prompt or rely on .claude/skills/ pickup."
+          snippet="@wondersuite.md please pentest this target"
+          onCopy={(s) => copyToClipboard(s, 'cursor')}
+          copied={copied === 'cursor'}
+        />
+        <SkillUsageRow
+          tool="Windsurf / Antigravity"
+          desc="Use the @-mention to attach the skill to a prompt."
+          snippet="@wondersuite.md attach to a fresh browser and recon this site"
+          onCopy={(s) => copyToClipboard(s, 'wind')}
+          copied={copied === 'wind'}
+        />
+        <SkillUsageRow
+          tool="Generic / fallback"
+          desc="Drop the file into the agent's context window manually."
+          snippet="Read .claude/skills/wondersuite.md and act as a senior pentester following its workflows."
+          onCopy={(s) => copyToClipboard(s, 'generic')}
+          copied={copied === 'generic'}
+        />
+
+        <div className="skill-link-row">
+          <ExternalLink size={12} />
+          <a
+            href="#"
+            onClick={async (e) => {
+              e.preventDefault();
+              try {
+                const { openUrl } = await import('@tauri-apps/plugin-opener');
+                await openUrl('https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/blob/main/.claude/skills/wondersuite.md');
+              } catch {}
+            }}
+          >
+            Read the skill on GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillUsageRow({
+  tool, desc, snippet, onCopy, copied,
+}: {
+  tool: string; desc: string; snippet: string;
+  onCopy: (s: string) => void; copied: boolean;
+}) {
+  return (
+    <div className="skill-usage-row">
+      <div className="skill-usage-left">
+        <strong>{tool}</strong>
+        <span>{desc}</span>
+      </div>
+      <div className="skill-usage-right">
+        <code>{snippet}</code>
+        <button className="skill-copy-btn" onClick={() => onCopy(snippet)} title="Copy">
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
       </div>
     </div>
   );

@@ -113,100 +113,63 @@ impl BrowserSession {
         Self::build(browser_label, pid, args.cdp_port, args.proxy_port, args.headless, true, args.url).await
     }
 
-    /// Attach to a Chrome-DevTools-Protocol endpoint.
+    /// Attach to a running **WonderBrowser** CDP session — never the user's
+    /// system Chrome. Touching a user's daily-driver Chrome profile is risky
+    /// (data leakage, profile lock, "wrong window" UX confusion), so the
+    /// supported flow is intentionally narrow:
     ///
-    /// Resolution order:
-    ///   1. Scan `cdp_port` (or 9222/9333/9223). If any responds → attach.
-    ///   2. If `auto_launch` is set:
-    ///      - `use_real_profile`=true → spawn the user's installed Chrome with
-    ///        their real `User Data` dir (cookies, extensions, logged-in
-    ///        accounts). REQUIRES the user to have closed Chrome first — Chrome
-    ///        holds an exclusive lock on its profile dir.
-    ///      - Otherwise → spawn into a persistent `~/.wondersuite/attach-profile`
-    ///        dir. Fully isolated from the user's daily-driver Chrome; logins
-    ///        you make there persist across future attaches.
-    ///   3. Otherwise return ATTACH_FAILED with actionable guidance.
-    pub async fn attach(args: AttachArgs) -> Result<Self, String> {
+    ///   1. Scan `cdp_port` (or 9333 then 9222/9223). If any responds AND it
+    ///      identifies as our WonderBrowser, attach. Other browsers are
+    ///      rejected with a clear message — call `browser_open` instead.
+    ///   2. If nothing is reachable AND `auto_launch=true`, spawn a fresh
+    ///      WonderBrowser exactly like `browser_open` would, and attach.
+    ///   3. Otherwise return ATTACH_FAILED.
+    pub async fn attach(app: &tauri::AppHandle, args: AttachArgs) -> Result<Self, String> {
         let ports_to_try: Vec<u16> = match args.cdp_port {
             Some(p) => vec![p],
-            None => vec![9222, 9333, 9223],
+            // 9333 first — that's the WonderBrowser default. 9222/9223 are
+            // included for the case where someone explicitly launched the
+            // bundled CfT on the Chrome-standard port.
+            None => vec![9333, 9222, 9223],
         };
         for p in &ports_to_try {
-            if let Some(label) = probe_cdp_port(*p).await {
-                return Self::build(label, 0, *p, args.proxy_port, false, false, args.url).await;
-            }
-        }
-
-        // No CDP responders. Was a daily-driver Chrome left running without
-        // the flag? Surface that so the AI can give the user a clear choice
-        // instead of silently spawning a second isolated window.
-        let chrome_running = is_browser_process_running(args.prefer.as_deref());
-
-        if !args.auto_launch {
-            let mut hint = format!(
-                "no CDP server on port(s) {:?}. Chrome must be started WITH --remote-debugging-port — there is no way to attach to a Chrome that was opened without the flag. ",
-                ports_to_try
-            );
-            if chrome_running {
-                hint.push_str("Detected a Chrome process running WITHOUT --remote-debugging-port. ");
-            }
-            hint.push_str("Options: ");
-            hint.push_str("(a) call browser_attach again with auto_launch=true (spawns an isolated Chrome with a separate profile — your everyday Chrome stays untouched), ");
-            hint.push_str("(b) call browser_attach with auto_launch=true AND use_real_profile=true if the user has closed Chrome (uses their real cookies/logins), ");
-            hint.push_str(&format!("(c) ask the user to close Chrome and relaunch it as: chrome.exe --remote-debugging-port={}, then retry, ", ports_to_try.first().copied().unwrap_or(9222)));
-            hint.push_str(
-                "(d) call browser_open to use the bundled WonderBrowser (no user profile, fully separate).",
-            );
-            return Err(format!("code=ATTACH_FAILED hint=\"{}\"", hint));
-        }
-
-        // Auto-launch path
-        let target_port = ports_to_try[0];
-        let bin_path = find_system_chrome(args.prefer.as_deref())?;
-        let label_full =
-            bin_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "chrome".into());
-
-        // Pick the user-data-dir. Real profile is gated on Chrome being closed.
-        let profile_dir = if args.use_real_profile {
-            let real_dir = find_real_chrome_profile(&bin_path).ok_or_else(|| {
-                "code=NO_REAL_PROFILE hint=\"could not locate the user's Chrome User Data dir — re-run with use_real_profile=false to spawn an isolated attach-profile instead.\"".to_string()
-            })?;
-            if chrome_running {
+            if let Some(probe) = probe_cdp_port(*p).await {
+                if probe.is_wonderbrowser {
+                    return Self::build(probe.label, 0, *p, args.proxy_port, false, false, args.url).await;
+                }
                 return Err(format!(
-                    "code=PROFILE_LOCKED hint=\"use_real_profile=true requires Chrome to be fully closed (Chrome holds an exclusive lock on its User Data dir at {}). Ask the user to close every Chrome window first, then retry — or drop use_real_profile to spawn an isolated profile.\"",
-                    real_dir.display()
+                    "code=NOT_WONDERBROWSER hint=\"Found a CDP server on :{} but it is `{}`, not the bundled WonderBrowser. browser_attach refuses to drive third-party browsers because that touches the user's real cookies / extensions / accounts. Call browser_open instead — it spawns an isolated WonderBrowser with the WonderSuite proxy + stealth extension wired up.\"",
+                    p, probe.label
                 ));
             }
-            real_dir
-        } else {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".into());
-            let p = std::path::PathBuf::from(format!("{}/.wondersuite/attach-profile", home));
-            std::fs::create_dir_all(&p).map_err(|e| format!("attach profile dir: {}", e))?;
-            p
-        };
+        }
 
-        let opts = crate::browser::LaunchOptions {
+        if !args.auto_launch {
+            return Err(format!(
+                "code=ATTACH_FAILED hint=\"no WonderBrowser CDP responder on port(s) {:?}. Either: (a) re-run with auto_launch=true so we spawn a fresh WonderBrowser ourselves, or (b) call browser_open directly. browser_attach only ever drives the bundled WonderBrowser — system Chrome / Edge / Brave are intentionally not supported here to keep user profile data untouched.\"",
+                ports_to_try
+            ));
+        }
+
+        // Auto-launch path: spawn a fresh WonderBrowser exactly like
+        // browser_open. Same proxy wiring, same extension, same isolated
+        // profile dir. The only thing that makes this distinct from
+        // browser_open is the port-scan fast-path above.
+        let proxy_running =
+            crate::proxy_commands::get_global_proxy_state().map(|ps| ps.is_running()).unwrap_or(false);
+        if !proxy_running {
+            return Err(
+                "code=PROXY_DOWN hint=\"WonderSuite proxy is not running — call proxy_start (or start it via the UI) and retry. browser_attach auto_launch needs the proxy because the spawned WonderBrowser routes through it.\""
+                    .to_string(),
+            );
+        }
+        let launch_args = LaunchArgs {
+            url: args.url,
             proxy_port: args.proxy_port,
-            // Default to no-proxy so the attached browser carries the user's
-            // real network identity. Toggle on via use_proxy:true in the
-            // params if the agent wants traffic captured.
-            use_proxy: args.use_proxy,
-            cdp_port: target_port,
-            extension_path: None,
-            profile_dir: Some(profile_dir),
-            no_sandbox: false,
+            cdp_port: ports_to_try.first().copied().unwrap_or(9333),
             headless: false,
         };
-        let pid = crate::browser::launch_browser(&bin_path.to_string_lossy(), &opts)
-            .map_err(|e| format!("auto_launch failed: {}", e))?;
-
-        // The auto-launched browser is "ours" for cleanup purposes — close it
-        // when the user calls browser_close. (Even with use_real_profile this
-        // closes only the WonderSuite-spawned Chrome window, not the user's
-        // pre-existing one, because we required Chrome to be closed.)
-        Self::build(label_full, pid, target_port, args.proxy_port, false, true, args.url).await
+        Self::launch(app, launch_args).await
     }
 
     async fn build(
@@ -408,115 +371,48 @@ impl BrowserSession {
 }
 
 pub struct AttachArgs {
-    /// Specific port to attach to. None scans the common ports.
+    /// Specific port to attach to. None scans the WonderBrowser ports
+    /// (9333 first, then 9222/9223 in case the user pinned a different port).
     pub cdp_port: Option<u16>,
     pub proxy_port: u16,
     pub url: Option<String>,
-    /// If no CDP server is reachable, launch one ourselves.
+    /// If no WonderBrowser is reachable, spawn one ourselves (same code path
+    /// as `browser_open`). Off by default — keeps `browser_attach` strict.
     pub auto_launch: bool,
-    /// Preferred system browser when auto_launch is true: "chrome" / "edge" /
-    /// "brave" / "chromium". None = first detected.
-    pub prefer: Option<String>,
-    /// Route the auto-launched browser through the WonderSuite proxy. Off by
-    /// default — the user typically wants their real network identity.
-    pub use_proxy: bool,
-    /// Use the user's actual Chrome `User Data` dir (cookies, extensions,
-    /// logged-in accounts). Chrome MUST be closed first — it holds an
-    /// exclusive lock on its profile.
-    pub use_real_profile: bool,
 }
 
-/// Locate the user's real Chrome/Edge/Brave `User Data` directory for the
-/// given browser binary. Returns the path only if it exists on disk.
-fn find_real_chrome_profile(bin_path: &std::path::Path) -> Option<std::path::PathBuf> {
-    let local = std::env::var("LOCALAPPDATA").ok()?;
-    let stem = bin_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-    let candidates: &[&str] = if stem.contains("msedge") || stem.contains("edge") {
-        &[r"Microsoft\Edge\User Data"]
-    } else if stem.contains("brave") {
-        &[r"BraveSoftware\Brave-Browser\User Data"]
-    } else if stem.contains("chromium") {
-        &[r"Chromium\User Data"]
-    } else if stem.contains("vivaldi") {
-        &[r"Vivaldi\User Data"]
-    } else {
-        // Default: Chrome
-        &[r"Google\Chrome\User Data"]
-    };
-    for sub in candidates {
-        let p = std::path::PathBuf::from(&local).join(sub);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
+#[derive(Debug)]
+struct CdpProbe {
+    label: String,
+    /// True if the `Browser` field on /json/version matches the bundled
+    /// Chrome-for-Testing build (HeadlessChrome shows up too). We refuse to
+    /// drive anything else so a user's daily-driver Chrome on 9222 isn't
+    /// silently puppeted.
+    is_wonderbrowser: bool,
 }
 
-/// Best-effort check whether the user's daily-driver browser is currently
-/// running. Used to give friendlier errors and to gate `use_real_profile`.
-fn is_browser_process_running(prefer: Option<&str>) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let target = match prefer.unwrap_or("chrome").to_lowercase().as_str() {
-            "edge" => "msedge.exe",
-            "brave" => "brave.exe",
-            "chromium" => "chrome.exe", // chromium ships chrome.exe too
-            "vivaldi" => "vivaldi.exe",
-            _ => "chrome.exe",
-        };
-        let out = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("IMAGENAME eq {}", target), "/NH", "/FO", "CSV"])
-            .output();
-        if let Ok(o) = out {
-            let s = String::from_utf8_lossy(&o.stdout).to_lowercase();
-            return s.contains(&target.to_lowercase());
-        }
-        false
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = prefer;
-        false
-    }
-}
-
-async fn probe_cdp_port(cdp_port: u16) -> Option<String> {
+async fn probe_cdp_port(cdp_port: u16) -> Option<CdpProbe> {
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().ok()?;
     let resp = client.get(format!("http://127.0.0.1:{}/json/version", cdp_port)).send().await.ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
-    Some(
-        json.get("Browser")
-            .and_then(|b| b.as_str())
-            .map(|s| format!("{} (:{})", s, cdp_port))
-            .unwrap_or_else(|| format!("attached:{}", cdp_port)),
-    )
-}
-
-fn find_system_chrome(prefer: Option<&str>) -> Result<std::path::PathBuf, String> {
-    let browsers = crate::browser::detect_browsers();
-    if browsers.is_empty() {
-        return Err(
-            "code=NO_BROWSER hint=\"no system Chrome/Edge/Brave detected. Install one or call browser_open for the bundled WonderBrowser.\""
-                .into(),
-        );
-    }
-    let want = prefer.unwrap_or("").to_lowercase();
-    if !want.is_empty() {
-        for b in &browsers {
-            if b.name.to_lowercase().contains(&want) {
-                return Ok(std::path::PathBuf::from(&b.path));
-            }
-        }
-    }
-    // Pick Chrome first if available, then whatever else we found.
-    for needle in ["google chrome", "chromium", "microsoft edge", "brave", "vivaldi"] {
-        for b in &browsers {
-            if b.name.to_lowercase().contains(needle) {
-                return Ok(std::path::PathBuf::from(&b.path));
-            }
-        }
-    }
-    Ok(std::path::PathBuf::from(&browsers[0].path))
+    let browser = json.get("Browser").and_then(|b| b.as_str()).unwrap_or("").to_string();
+    let user_agent = json.get("User-Agent").and_then(|u| u.as_str()).unwrap_or("");
+    // CfT identifies as "HeadlessChrome/<v>" when headless and "Chrome/<v>"
+    // when visible. We additionally fingerprint the User-Agent for the
+    // "HeadlessChrome" marker because some real Chrome builds will also
+    // report just "Chrome/<v>" on /json/version. To stay strict, we also
+    // accept matches by port-knocking — the bundled launch uses 9333 by
+    // default and we're the only thing on that port in a sane install.
+    let is_wonderbrowser =
+        browser.contains("HeadlessChrome") || user_agent.contains("HeadlessChrome") || cdp_port == 9333;
+    Some(CdpProbe {
+        label: if browser.is_empty() {
+            format!("attached:{}", cdp_port)
+        } else {
+            format!("{} (:{})", browser, cdp_port)
+        },
+        is_wonderbrowser,
+    })
 }
 
 fn spawn_event_loop(

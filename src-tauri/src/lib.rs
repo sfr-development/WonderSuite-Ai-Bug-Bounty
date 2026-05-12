@@ -157,6 +157,8 @@ pub fn run() {
             commands::mcp_browser_set_headless,
             commands::save_file_text,
             commands::save_file_bytes,
+            commands::skill_content,
+            commands::install_skill,
             payload_commands::payload_list_categories,
             payload_commands::payload_download,
             payload_commands::payload_load,
