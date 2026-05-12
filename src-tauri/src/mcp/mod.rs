@@ -407,7 +407,7 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "browser_evaluate".into(),
-            description: "[escape-hatch] Run arbitrary JavaScript in the page's main world via CDP Runtime.evaluate. Use for DOM manipulation, XSS probes, custom data extraction the other tools don't cover.".into(),
+            description: "[escape-hatch, LAST RESORT] Run arbitrary JavaScript in the page's main world. DO NOT use this for clicking, typing, filling forms, or scrolling — those have dedicated tools (browser_click / browser_type / browser_fill_form / browser_scroll) that produce real `isTrusted:true` input events and defeat the class of fraud-detection SDKs (FriendlyCaptcha / DataDome / Cloudflare Bot Mgmt / Imperva) that silently drop programmatic form submissions. Calling `el.click()` or setting `el.value = ...` from this tool produces `isTrusted:false` events — sites that watch for that will silently swallow the request (e.g. registration form returns 200 OK with empty body but never sends the confirmation email). If browser_click / browser_type fails with `code=STALE_REF`, call browser_snapshot to refresh and retry. Only use browser_evaluate for genuine read-only DOM inspection / XSS probe injection / custom data extraction the typed tools cannot express.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -493,6 +493,11 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                     "target_id": { "type": "string" }
                 }
             }),
+        },
+        ToolDef {
+            name: "browser_stealth_check".into(),
+            description: "[diagnostic] Self-test for the human-emulation stack. Loads a tiny in-memory test page, drives a click + type via the CDP-native input path, then reports back what the page saw: how many events arrived as isTrusted=true vs not, whether navigator.webdriver is exposed, whether the AI cursor overlay leaked into page DOM, plus an overall stealth_score and verdict. Run after switching `stealth_profile` to confirm what bot detectors will see.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
         },
         ToolDef {
             name: "websocket_connect".into(),

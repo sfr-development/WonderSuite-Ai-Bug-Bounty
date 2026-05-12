@@ -385,11 +385,80 @@
 
 /* ── AI Skill panel ─────────────────────────────────────── */
 .skill-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
 }
+@media (max-width: 760px) {
+  .skill-actions { grid-template-columns: 1fr; }
+}
+
+.skill-btn {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 11px 14px;
+  border-radius: var(--radius-m);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  border: 1px solid var(--border-0);
+  background: var(--bg-1);
+  color: var(--text-0);
+  position: relative;
+}
+.skill-btn > svg {
+  grid-row: 1 / 3;
+  align-self: center;
+}
+.skill-btn > span {
+  font-size: 12px;
+  font-weight: 700;
+}
+.skill-btn > small {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-3);
+  line-height: 1.3;
+}
+.skill-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.skill-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+.skill-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.skill-btn-primary {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 25%, var(--bg-1)) 0%,
+    color-mix(in srgb, var(--accent) 12%, var(--bg-1)) 100%);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.skill-btn-primary > svg { color: var(--accent); }
+.skill-btn-primary > span { color: var(--text-0); }
+.skill-btn-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 35%, var(--bg-1)) 0%,
+    color-mix(in srgb, var(--accent) 20%, var(--bg-1)) 100%);
+}
+
+.skill-btn-secondary > svg { color: var(--text-2); }
+.skill-btn-secondary:hover:not(:disabled) > svg { color: var(--accent); }
 
 .skill-success {
   margin-top: 12px;

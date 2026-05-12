@@ -71,6 +71,7 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "browser_resource_hints" => crate::mcp::browser::handlers::resource_hints(params).await,
         "browser_wait_for" => crate::mcp::browser::handlers::wait_for(params).await,
         "browser_tabs" => crate::mcp::browser::handlers::tabs(params).await,
+        "browser_stealth_check" => crate::mcp::browser::stealth_check::run(params).await,
 
         "websocket_connect" => websocket::handle_websocket_connect(params).await,
 

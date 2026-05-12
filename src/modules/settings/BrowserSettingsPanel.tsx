@@ -48,6 +48,10 @@ export function BrowserSettingsPanel() {
   const [mcpHeadless, setMcpHeadless] = useState<boolean>(
     () => localStorage.getItem('ws_mcp_browser_headless') === '1',
   );
+  // Human-emulation profile: fast / human (default) / paranoid.
+  const [stealthProfile, setStealthProfile] = useState<'fast' | 'human' | 'paranoid'>(
+    () => (localStorage.getItem('ws_stealth_profile') as any) || 'human',
+  );
 
   const [migration, setMigration] = useState<MigrationReport | null>(null);
   const [busyCa, setBusyCa] = useState(false);
@@ -96,7 +100,36 @@ export function BrowserSettingsPanel() {
       }
       setMcpHeadless(want);
     } catch {}
+
+    // Sync stealth profile preference.
+    try {
+      const want = (localStorage.getItem('ws_stealth_profile') as 'fast' | 'human' | 'paranoid') || 'human';
+      const current = await invoke<string>('mcp_browser_get_stealth_profile');
+      if (current !== want) {
+        await invoke('mcp_browser_set_stealth_profile', { profile: want });
+      }
+      setStealthProfile(want);
+    } catch {}
   }, [addToast]);
+
+  const setProfile = async (next: 'fast' | 'human' | 'paranoid') => {
+    setStealthProfile(next);
+    localStorage.setItem('ws_stealth_profile', next);
+    try {
+      await invoke('mcp_browser_set_stealth_profile', { profile: next });
+      addToast({
+        title: 'Stealth profile',
+        message: next === 'fast'
+          ? 'Fast — programmatic clicks/typing (only for your own lab targets)'
+          : next === 'paranoid'
+            ? 'Paranoid — slowest, occasional overshoot, max detection-evasion'
+            : 'Human — balanced; works against ~95% of real sites incl. FriendlyCaptcha',
+        type: 'success',
+      });
+    } catch (e: any) {
+      addToast({ title: 'Stealth profile', message: `Failed: ${e}`, type: 'error' });
+    }
+  };
 
   const removeLegacyCa = async () => {
     if (busyCa) return;
@@ -340,6 +373,30 @@ export function BrowserSettingsPanel() {
           className={`settings-toggle ${mcpHeadless ? 'on' : ''}`}
           onClick={() => toggleMcpHeadless(!mcpHeadless)}
         />
+      </div>
+
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div className="settings-label">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Shield size={12} /> Stealth profile
+          </div>
+          <span>
+            How human-like the AI's clicks and keystrokes feel. Higher levels add humanised mouse trajectories (Bezier + jitter), per-character typing cadence, dwell time before each action — at the cost of speed. <strong>Human</strong> is the default and passes <code>browser_stealth_check</code> against fraud SDKs like FriendlyCaptcha / Cloudflare Bot Mgmt / Imperva. Use <strong>Paranoid</strong> on highly-instrumented targets (Akamai Bot Manager). <strong>Fast</strong> is for your own lab targets only — programmatic clicks are easy to detect.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', minWidth: 140 }}>
+          {(['fast', 'human', 'paranoid'] as const).map((p) => (
+            <button
+              key={p}
+              className={`bsp-btn ${stealthProfile === p ? 'bsp-btn-primary' : ''}`}
+              onClick={() => setProfile(p)}
+              style={{ justifyContent: 'flex-start', textTransform: 'capitalize' }}
+            >
+              {stealthProfile === p ? <CheckCircle size={11} /> : <Shield size={11} />} {p}
+              {p === 'human' && <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--text-3)' }}>default</span>}
+            </button>
+          ))}
+        </div>
       </div>
 
       {migration?.legacy_ca_present && (

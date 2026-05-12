@@ -3,9 +3,11 @@
 // keyed by CDP requestId so replay-to-proxy is a one-shot.
 
 pub mod handlers;
+pub mod input;
 pub mod network;
 pub mod session;
 pub mod snapshot;
+pub mod stealth_check;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -26,6 +28,28 @@ pub fn default_headless() -> bool {
 
 pub fn set_default_headless(v: bool) {
     DEFAULT_HEADLESS.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Default human-emulation profile applied to every browser_click / type /
+/// scroll / press_key when the caller doesn't override per-call. Stored as
+/// u8 (0=Fast, 1=Human, 2=Paranoid) for AtomicU8 simplicity.
+static STEALTH_PROFILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+pub fn stealth_profile() -> input::StealthProfile {
+    match STEALTH_PROFILE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => input::StealthProfile::Fast,
+        2 => input::StealthProfile::Paranoid,
+        _ => input::StealthProfile::Human,
+    }
+}
+
+pub fn set_stealth_profile(p: input::StealthProfile) {
+    let v: u8 = match p {
+        input::StealthProfile::Fast => 0,
+        input::StealthProfile::Human => 1,
+        input::StealthProfile::Paranoid => 2,
+    };
+    STEALTH_PROFILE.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn state() -> BrowserSessionState {

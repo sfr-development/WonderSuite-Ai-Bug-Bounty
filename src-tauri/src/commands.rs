@@ -252,6 +252,19 @@ pub fn mcp_browser_set_headless(headless: bool) {
     crate::mcp::browser::set_default_headless(headless);
 }
 
+/// Get the active human-emulation stealth profile name ("fast" / "human" / "paranoid").
+#[tauri::command]
+pub fn mcp_browser_get_stealth_profile() -> String {
+    crate::mcp::browser::stealth_profile().as_str().to_string()
+}
+
+/// Set the human-emulation stealth profile. Unknown values fall back to "human".
+#[tauri::command]
+pub fn mcp_browser_set_stealth_profile(profile: String) {
+    let p = crate::mcp::browser::input::StealthProfile::from_str(&profile);
+    crate::mcp::browser::set_stealth_profile(p);
+}
+
 /// Write text content to a file path — restricted to safe paths
 #[tauri::command]
 pub async fn save_file_text(path: String, content: String) -> Result<(), String> {

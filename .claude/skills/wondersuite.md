@@ -1,11 +1,32 @@
 ---
 name: wondersuite
-description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (84 tools — proxy + browser + scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser".
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (85 tools — proxy + browser + scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser".
 ---
 
 # WonderSuite Pentest Operating Manual
 
-You drive WonderSuite, a Burp-Suite-class pentest platform exposing 84 MCP tools at `http://127.0.0.1:3100/mcp` (JSON-RPC over HTTP). This skill teaches you how to use it like a senior offensive engineer instead of like a tool-calling chatbot.
+You drive WonderSuite, a Burp-Suite-class pentest platform exposing 85 MCP tools at `http://127.0.0.1:3100/mcp` (JSON-RPC over HTTP). This skill teaches you how to use it like a senior offensive engineer instead of like a tool-calling chatbot.
+
+## Human-Native Input (v0.3.3+)
+
+Every `browser_click` / `browser_type` / `browser_press_key` / `browser_scroll` now goes through Chrome's real input pipeline via CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` / `Input.insertText`. The resulting DOM events have `event.isTrusted === true` — indistinguishable from a physical mouse/keyboard. This single fix unlocks ~95% of fraud-protected forms (FriendlyCaptcha, Cloudflare Bot Mgmt, Imperva) that would silently swallow the request before.
+
+On top of that:
+- **Mouse moves on a humanlike trajectory** (Bezier curve + Gaussian jitter + ease-out velocity) before each click — visible to the user via the AI cursor overlay
+- **Typing has per-char cadence** drawn from a Gaussian distribution with extra time for first-in-field / space / punctuation
+- **Pre-action dwell** simulates "user reads the page before clicking"
+- **Cursor overlay lives in a closed Shadow DOM** — invisible to page-JS (can't be queried, mutated, or detected) but still visible to the user
+- **`Emulation.setFocusEmulationEnabled`** is on by default so `document.hasFocus()` reports true even when the OS focus is elsewhere
+
+The behaviour is controlled by the **stealth_profile** session setting (Settings → Browser → Stealth profile, or `stealth_profile: "fast"|"human"|"paranoid"` per call):
+
+| Profile | When to use | Speed | Detection |
+|---|---|---|---|
+| `fast` | Your own lab targets, no fraud SDK in scope | Instant | Easy to detect — programmatic |
+| `human` (default) | Almost everything | ~300-600ms per click | Indistinguishable on ~95% of real sites |
+| `paranoid` | Banking, sophisticated bot mgmt (Akamai BMP) | ~600-1200ms per click | Maximum stealth + overshoot |
+
+After switching the profile, run **`browser_stealth_check`** — it loads an in-memory test page, drives a click + type, and reports back how many events arrived as `isTrusted:true`, whether `navigator.webdriver` is exposed, whether the cursor overlay leaked into page DOM, plus an overall `stealth_score` and verdict (`indistinguishable` / `good` / `partially-detectable` / `detectable`).
 
 ## Three Rules You Don't Get to Break
 
@@ -41,6 +62,49 @@ find_secrets({content_or_url})# scan crawl output for AWS keys / JWTs / API toke
 ```
 
 For SPAs: `crawl_target` is regex-based and blind to client-side routing — fall back to `browser_open` + `browser_snapshot` + `browser_resource_hints`.
+
+### Auto-Vulnerability-Hunt During Every Browser Flow
+
+**Default behaviour: every browser interaction is also a vulnerability hunt.** When the user has you walk through a login, registration, password-reset, checkout, account-edit, or any auth-bearing flow — don't just *do* the flow. Mine it. Each request the page fires through the WonderSuite proxy is potential evidence; treat the browser as an oracle and the proxy as your magnifying glass.
+
+**During every login / register / auth flow, automatically:**
+
+1. **Before submitting** — `browser_snapshot({include_security: true})` and read the `forms[]` block. Flag every input with `is_honeypot: true` and never fill it. Note `is_token: true` hidden inputs (CSRF/XSRF) — those are interesting injection candidates.
+2. **Right after submit** — `proxy_get_traffic({url_contains: "/auth", limit: 20})` AND `browser_network_traffic({auth_only: true, limit: 30})`. The combination catches both server-fetched XHR/fetch and any pre-flight CORS probes.
+3. **For each auth-bearing request:**
+   - **JWT in body / response?** Pipe the token through `analyze_jwt({token})` — catches alg=none, weak HS256, kid SQLi/path-traversal, jku/x5u SSRF, expired, missing sig.
+   - **Cookie set?** Check `Secure` / `HttpOnly` / `SameSite` / `Path` / `Domain` flags in `proxy_get_traffic` output. Flag missing flags as Low/Info findings.
+   - **Bearer / API key visible in JS?** Run `browser_storage_full` and `browser_dom_sinks` — auth tokens parked in localStorage are a high-severity finding when they're long-lived JWTs.
+   - **Predictable identifier?** If the response includes a `user_id` / `account_id` / `token_id` that looks sequential (`1234`, `1235`, ...), call `send_to_intruder({traffic_id, param: "user_id"})` — auto-infers `numbers` payload category and sets up IDOR testing in 2 clicks for the user to run.
+4. **For the actual form submit endpoint** (e.g. `POST /api/identity/register`):
+   - `send_to_intruder({traffic_id, param: <each user-controlled field>})` to spin up SQLi / XSS / cmdi probes — only **suggest** running them; never fire `active_scan` against an unconfirmed-scope target without the user's explicit OK.
+   - `passive_scan({target: <response url>})` — security headers, mixed content, missing security.txt.
+   - If the response includes URLs to other endpoints (`/api/identity/me`, `/api/identity/verify`, etc.), call `browser_replay_to_proxy({request_id})` to land them in proxy traffic so the user can fuzz from there.
+5. **Watch for silent failures** — a registration that returns `200 OK` with an empty body but no email arrives at the address means **fraud detection silently dropped your submission**. That's a finding too (sometimes the WAF logic is buggy and can be coerced to ALWAYS drop or NEVER drop). Note it; raise the `stealth_profile` to `paranoid` and retry.
+
+**During every navigation (any non-auth flow):**
+- `browser_network_traffic({limit: 50})` after each `browser_navigate` — surface auth-like requests (`auth_only:true`), GraphQL queries (`url_contains:"/graphql"`), file uploads (`method:"POST"` + multipart content type).
+- For any URL with query params look for: `redirect`, `next`, `return_to`, `callback`, `url`, `target` → open redirect candidates → `send_to_intruder` with `open_redirect` payload set.
+- For any URL containing `/admin`, `/internal`, `/api/v*` → `discover_content({target, wordlist: "api"})` as a background pass.
+
+**After the user has logged in successfully:**
+- `browser_storage_full` — dump cookies + LS + SS + IDB + SW + Cache; the `cookie_header` field is ready for replay.
+- `analyze_jwt` on every JWT found in those stores.
+- `browser_resource_hints` — pull `/.well-known/openid-configuration`, `/.well-known/security.txt`, sourcemaps, etc. on the logged-in origin.
+- For any **logged-out** endpoint the page mentions (links, JS strings): `send_request` with the stolen `cookie_header` and verify access control — endpoints that respond differently to authed vs anon traffic are interesting.
+
+**Output style for findings discovered during a browser flow:**
+
+```
+[severity] Title (where)
+  what:        one-line technical description
+  evidence:    raw request/response or JWT decode
+  traffic_id:  <the proxy traffic_id so user can pop it into Repeater>
+  fix:         one-line remediation
+  next:        suggested follow-up (e.g. "active_scan with_oast on this param")
+```
+
+Surface every finding as the flow runs — don't batch them up until the end. Users want to see the hunt happen live.
 
 ### Manual Browser-Driven Testing (the user is watching)
 
@@ -152,7 +216,7 @@ generate_report({format: "markdown" | "json", scan_id?})
 
 ---
 
-## Tool Reference (84 tools)
+## Tool Reference (85 tools)
 
 ### HTTP / Send Request (the workhorses)
 
@@ -188,12 +252,12 @@ get_intercepted                                  # list pending
 forward_intercepted({id, modified_raw?})         # forward (optionally mutated) or drop
 ```
 
-### Browser (23 tools)
+### Browser (24 tools)
 
 **Lifecycle:**
 - `browser_open` — spawn bundled WonderBrowser, proxied, with our extension loaded.
-- `browser_attach` — connect to a running CDP-enabled browser (see decision tree above).
-- `browser_close` — drop session. For attached browsers, doesn't kill the user's process.
+- `browser_attach` — reuse an already-running WonderBrowser (port-scans 9333/9222/9223). `auto_launch:true` spawns a fresh one (= `browser_open`). WonderBrowser-only; rejects system Chrome with `code=NOT_WONDERBROWSER`.
+- `browser_close` — drop session. For attached browsers doesn't kill the user's process.
 - `browser_navigate({url, wait_until: "load"|"domcontentloaded"|"networkidle"})`.
 - `browser_tabs({action: "list"|"new"|"close"})`.
 
@@ -207,21 +271,26 @@ forward_intercepted({id, modified_raw?})         # forward (optionally mutated) 
 - `browser_network_traffic({url_contains, method, status, auth_only, limit})` — every request the page has made.
 - `browser_resource_hints` — robots.txt + sitemap + .well-known + script srcs + sourceMappingURLs.
 
-**Input:**
-- `browser_click({ref, includeSnapshot})`.
-- `browser_type({ref, text, clear})`.
-- `browser_fill_form({values: [{ref|selector|name, value}], form_ref?, submit_ref?, submit: true})`.
-- `browser_press_key({key})`.
-- `browser_scroll({direction, amount, ref?})` — animated rAF scroll so the user sees motion.
+**Input — all CDP-native, `isTrusted:true` events (v0.3.3+):**
+- `browser_click({ref, includeSnapshot, stealth_profile?})` — humanlike Bezier trajectory → real mousedown/mouseup → click.
+- `browser_type({ref, text, clear, stealth_profile?})` — click-into-field + per-char `Input.insertText` with Gaussian cadence.
+- `browser_fill_form({values: [{ref|selector|name, value}], form_ref?, submit_ref?, submit: true, stealth_profile?})` — ref-targeted fields go through the humanlike path; selector/name fall back to JS setter.
+- `browser_press_key({key, modifiers?})` — real `Input.dispatchKeyEvent(keyDown→keyUp)`. Modifier mask: 1=Alt 2=Ctrl 4=Meta 8=Shift.
+- `browser_scroll({direction, amount, ref?, stealth_profile?})` — CDP `mouseWheel` event at cursor position. Real wheel events.
 - `browser_select_option({ref, value})`.
 - `browser_set_file_input({ref, files: [absolute_paths]})`.
+
+The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`); without it, uses the session default from Settings.
 
 **Escape hatches:**
 - `browser_evaluate({code, await_promise})` — run arbitrary JS in the page's main world. Use sparingly.
 - `browser_wait_for({action, selector|text|url, timeout_ms})` — synchronisation.
 - `browser_replay_to_proxy({request_id})` — push a CDP-captured request into the proxy's Repeater.
 
-**AI cursor is auto-installed** on every page — every click / type / scroll animates a visible cursor + "AI" badge with halo. Users can see what you're doing. Persistent via MutationObserver — survives SPA rerenders.
+**Diagnostic:**
+- `browser_stealth_check` — loads an in-memory test page, drives a click + type, reports `isTrusted` counts per event type, `navigator.webdriver` state, whether the AI cursor leaked into page DOM, and an overall `stealth_score` + verdict. Run after switching `stealth_profile`.
+
+**AI cursor lives in a closed Shadow DOM** — visible to the user, completely invisible to page-JS (can't be queried, mutated, or detected). Updates by listening to native mousemove/click/keydown events fired by the CDP input pipeline. Self-heals via MutationObserver + 1.5s polling.
 
 ### Scanner (active + passive)
 
@@ -349,6 +418,6 @@ Severity scale: `critical | high | medium | low | info`. Use `info` for things l
 
 ## One-Liner You Can Steal
 
-> "I'm wired into a local WonderSuite MCP server (84 tools — proxy / browser / scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+> "I'm wired into a local WonderSuite MCP server (85 tools — proxy / browser / scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
 
 That's the right opening line for any new engagement.

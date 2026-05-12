@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+use super::input::Point;
 use super::network::{classify_auth_like, NetCapture, NetEntry};
 use super::snapshot::RefMap;
 
@@ -65,6 +66,11 @@ pub struct BrowserSession {
     /// Reconnect mutex — guards against multiple concurrent reconnect attempts
     /// when several browser_* calls fail simultaneously.
     reconnecting: Arc<Mutex<()>>,
+    /// Virtual cursor position in viewport CSS pixels. Updated after every
+    /// `Input.dispatchMouseEvent(mouseMoved)` so consecutive `move_mouse`
+    /// calls start their humanised path from where the cursor actually is,
+    /// not from a hardcoded origin.
+    cursor: Arc<Mutex<Point>>,
 
     pub net: Arc<NetCapture>,
     pub console: Arc<Mutex<Vec<ConsoleMsg>>>,
@@ -207,6 +213,7 @@ impl BrowserSession {
             pending,
             alive,
             reconnecting: Arc::new(Mutex::new(())),
+            cursor: Arc::new(Mutex::new(Point::ORIGIN)),
             net,
             console,
             refmap,
@@ -219,9 +226,22 @@ impl BrowserSession {
         Ok(sess)
     }
 
+    /// Current virtual cursor position. Defaults to a viewport corner near
+    /// the top-left until the first `move_mouse` runs.
+    pub async fn cursor_pos(&self) -> Point {
+        *self.cursor.lock().await
+    }
+
+    /// Update the virtual cursor position. Called by `input::move_mouse`
+    /// after each completed move.
+    pub async fn set_cursor_pos(&self, p: Point) {
+        *self.cursor.lock().await = p;
+    }
+
     /// Send the suite of CDP enable + injection commands that bring a fresh
     /// connection up to full-feature parity (network capture, console, AI
-    /// cursor overlay). Called from `build` and from `reconnect`.
+    /// cursor overlay, focus emulation). Called from `build` and from
+    /// `reconnect`.
     async fn enable_domains(&self) -> Result<(), String> {
         for (m, p) in [
             ("Page.enable", serde_json::json!({})),
@@ -231,6 +251,11 @@ impl BrowserSession {
             ("Log.enable", serde_json::json!({})),
             ("Accessibility.enable", serde_json::json!({})),
             ("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })),
+            // Focus emulation: makes document.hasFocus() and visibilityState
+            // report "focused"/"visible" even when the OS focus is on another
+            // window. Fraud SDKs that check page focus see a real-looking
+            // session regardless of where the user is clicking.
+            ("Emulation.setFocusEmulationEnabled", serde_json::json!({ "enabled": true })),
             ("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({"source": csp_violation_hook()})),
             ("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({"source": ai_cursor_overlay()})),
         ] {
@@ -633,42 +658,69 @@ fn csp_violation_hook() -> &'static str {
     "#
 }
 
-// Visual AI cursor overlay — injected on every document so the user can SEE
-// what the agent is doing. Persistent: a MutationObserver + setInterval watch
-// for the cursor being torn off the page (SPA reroutes, document.write, hostile
-// CSS resets) and re-attach it. Lives inside the page so screenshots include
-// it automatically. High z-index, pointer-events:none so it never blocks real
-// input. Helpers on `window.__ws_cursor_*` are called by browser_click /
-// browser_type / browser_scroll from Rust so every action animates first.
+// Visual AI cursor overlay v3 — Closed Shadow DOM + event-driven.
+//
+// Changes from v2:
+//   - The cursor lives inside a closed shadow root attached to a sentinel
+//     div on `documentElement`. Page-JS cannot query, mutate, or detect the
+//     cursor element (closed shadow roots refuse cross-root traversal even
+//     to the host's owner).
+//   - Movement is event-driven: the overlay listens for native `mousemove`
+//     events (capture phase). Every CDP `Input.dispatchMouseEvent(mouseMoved)`
+//     fires a real isTrusted mousemove on the page, and the overlay catches
+//     it and re-positions itself. Result: the user sees the cursor track the
+//     CDP-driven path 1:1, while the page sees a normal user moving their
+//     mouse.
+//   - Click ripple + keyboard hint are also event-driven (click + keydown
+//     listeners) instead of being explicitly called from Rust.
+//
+// Persistence: a MutationObserver + 1.5s polling re-attach the host node if
+// the page tears it off (SPA reroutes, document.write, hostile CSS resets).
+// High z-index, pointer-events:none on host AND on every child.
 pub(crate) fn ai_cursor_overlay() -> &'static str {
     r##"
 (function() {
+  // AI cursor overlay v3.1 — DOM-attached, event-driven.
+  //
+  // Earlier 0.3.3-alpha used a closed Shadow DOM but the cursor visibility
+  // regressed (some pages / CSP configs made the shadow root host invisible
+  // or the script timing was off). We're back on the simple model: a single
+  // <div id="__ws_ai_cursor"> on documentElement, with a sibling <style>.
+  // Visibility is robust; bot-detection concern is moot for v0.3.3 because
+  // the real win is the isTrusted input pipeline, not cursor invisibility.
+  //
+  // Behaviour:
+  //   - Listens to real (isTrusted:true) mousemove/click/keydown in capture
+  //     phase and reflects them as cursor / ripple / typehint.
+  //   - When AI is busy (window.__ws_set_busy(true)), an "AI is working"
+  //     banner appears at the top so the user knows to keep hands off.
+  //   - MutationObserver + 1.5s polling re-inject if the page tears it off.
   const CSS_ID = '__ws_ai_cursor_css';
   const CUR_ID = '__ws_ai_cursor';
+  const BANNER_ID = '__ws_ai_banner';
 
   const css_text = `
     #__ws_ai_cursor {
-      position: fixed; top: 32px; left: 32px;
+      position: fixed; top: 0; left: 0;
       pointer-events: none; z-index: 2147483647;
-      transition: top 360ms cubic-bezier(.22,.61,.36,1),
-                  left 360ms cubic-bezier(.22,.61,.36,1);
       filter: drop-shadow(0 4px 14px rgba(0,0,0,0.55));
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      will-change: top, left;
+      transform: translate(80px, 80px);
+      will-change: transform;
     }
-    #__ws_ai_cursor .__ws_ai_halo {
+    #__ws_ai_cursor .__ws_halo {
       position: absolute; left: -10px; top: -10px;
       width: 48px; height: 48px; border-radius: 50%;
       background: radial-gradient(circle, rgba(232,161,69,0.55) 0%, rgba(232,161,69,0.18) 45%, rgba(232,161,69,0) 70%);
-      animation: __ws_ai_pulse 2.4s ease-in-out infinite;
+      animation: __ws_pulse 2.4s ease-in-out infinite;
       pointer-events: none;
     }
-    @keyframes __ws_ai_pulse {
+    @keyframes __ws_pulse {
       0%, 100% { transform: scale(0.85); opacity: 0.75; }
       50%      { transform: scale(1.08); opacity: 1; }
     }
     #__ws_ai_cursor svg { display: block; position: relative; z-index: 2; }
-    #__ws_ai_cursor .__ws_ai_cap {
+    #__ws_ai_cursor .__ws_cap {
       position: absolute; left: 30px; top: 30px;
       background: linear-gradient(180deg, #ffb967 0%, #e8a145 100%);
       color: #1a1614;
@@ -679,23 +731,23 @@ pub(crate) fn ai_cursor_overlay() -> &'static str {
       pointer-events: none;
       display: inline-flex; align-items: center; gap: 4px;
     }
-    #__ws_ai_cursor .__ws_ai_cap::before {
+    #__ws_ai_cursor .__ws_cap::before {
       content: ''; display: inline-block; width: 5px; height: 5px;
       border-radius: 50%; background: #22c55e;
       box-shadow: 0 0 6px #22c55e;
     }
-    .__ws_ai_ripple {
+    .__ws_ripple {
       position: fixed; pointer-events: none; z-index: 2147483646;
       width: 44px; height: 44px; border-radius: 50%;
       border: 3px solid #e8a145;
       box-shadow: 0 0 18px rgba(232,161,69,0.6);
-      animation: __ws_ai_ripple 620ms ease-out forwards;
+      animation: __ws_ripple 620ms ease-out forwards;
     }
-    @keyframes __ws_ai_ripple {
+    @keyframes __ws_ripple {
       0% { opacity: 1; transform: translate(-50%, -50%) scale(0.4); }
       100% { opacity: 0; transform: translate(-50%, -50%) scale(3); }
     }
-    .__ws_ai_typehint {
+    .__ws_typehint {
       position: fixed; pointer-events: none; z-index: 2147483646;
       background: linear-gradient(180deg, rgba(255,185,103,0.97) 0%, rgba(232,161,69,0.97) 100%);
       color: #1a1614;
@@ -704,38 +756,46 @@ pub(crate) fn ai_cursor_overlay() -> &'static str {
       font-size: 11px; font-weight: 700;
       box-shadow: 0 3px 10px rgba(0,0,0,0.5);
       border: 1px solid rgba(0,0,0,0.2);
-      animation: __ws_ai_typehint_in 200ms ease-out, __ws_ai_typehint_out 220ms 1100ms ease-in forwards;
+      animation: __ws_typehint_in 200ms ease-out, __ws_typehint_out 220ms 900ms ease-in forwards;
     }
-    @keyframes __ws_ai_typehint_in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes __ws_ai_typehint_out { to { opacity: 0; transform: translateY(-8px); } }
-    .__ws_ai_scrollbar {
-      position: fixed; pointer-events: none; z-index: 2147483646;
-      top: 50%; right: 14px; transform: translateY(-50%);
-      width: 6px; height: 80px;
-      background: rgba(0,0,0,0.4); border-radius: 3px;
-      box-shadow: 0 0 8px rgba(0,0,0,0.5);
-    }
-    .__ws_ai_scrollbar > div {
-      position: absolute; left: 0; right: 0;
-      background: linear-gradient(180deg, #ffb967, #e8a145);
-      border-radius: 3px; box-shadow: 0 0 6px rgba(232,161,69,0.8);
-      transition: top 120ms linear, height 120ms linear;
-    }
-    .__ws_ai_scrollbanner {
-      position: fixed; pointer-events: none; z-index: 2147483646;
-      top: 16px; left: 50%; transform: translateX(-50%);
-      background: linear-gradient(180deg, rgba(255,185,103,0.97) 0%, rgba(232,161,69,0.97) 100%);
+    @keyframes __ws_typehint_in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes __ws_typehint_out { to { opacity: 0; transform: translateY(-8px); } }
+    #__ws_ai_banner {
+      position: fixed; right: 16px; top: 16px;
+      z-index: 2147483645;
+      background: linear-gradient(180deg, rgba(232,161,69,0.97) 0%, rgba(217,137,42,0.97) 100%);
       color: #1a1614;
-      padding: 6px 14px; border-radius: 6px;
-      font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
-      font-size: 12px; font-weight: 700;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.55);
-      border: 1px solid rgba(0,0,0,0.25);
-      display: inline-flex; align-items: center; gap: 8px;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1.5px solid #1a1614;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+      display: none;
+      /* CRITICAL: pointer-events:none so the AI's CDP-dispatched clicks
+         go through to the underlying form elements. The banner is purely
+         a visual signal; we cannot technically distinguish AI vs user
+         input in the page (both isTrusted:true), so we don't try to
+         block — only inform. */
+      pointer-events: none;
+      user-select: none;
+      max-width: 320px;
+    }
+    #__ws_ai_banner.__ws_busy { display: inline-flex; align-items: center; }
+    #__ws_ai_banner::before {
+      content: ''; display: inline-block;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #1a1614; margin-right: 7px;
+      animation: __ws_blink 1.1s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes __ws_blink {
+      0%, 100% { opacity: 0.4; }
+      50%      { opacity: 1; }
     }
   `;
 
-  function ensureCursor() {
+  function ensure() {
     if (!document.documentElement) return;
     if (!document.getElementById(CSS_ID)) {
       const css = document.createElement('style');
@@ -743,151 +803,145 @@ pub(crate) fn ai_cursor_overlay() -> &'static str {
       css.textContent = css_text;
       document.documentElement.appendChild(css);
     }
-    if (document.getElementById(CUR_ID)) return;
-    const cur = document.createElement('div');
-    cur.id = CUR_ID;
-    cur.innerHTML =
-      '<div class="__ws_ai_halo"></div>' +
-      '<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">' +
-        '<defs>' +
-          '<linearGradient id="__ws_ai_grad" x1="0%" y1="0%" x2="100%" y2="100%">' +
-            '<stop offset="0%" stop-color="#ffd28a"/>' +
-            '<stop offset="100%" stop-color="#d9892a"/>' +
-          '</linearGradient>' +
-        '</defs>' +
-        '<path d="M3 3 L3 22 L9 17 L13 26 L17 24.5 L13 15.5 L22 15.5 Z" ' +
-          'fill="url(#__ws_ai_grad)" stroke="#1a1614" stroke-width="1.6" stroke-linejoin="round"/>' +
-      '</svg>' +
-      '<span class="__ws_ai_cap">AI</span>';
-    document.documentElement.appendChild(cur);
+    if (!document.getElementById(CUR_ID)) {
+      const cur = document.createElement('div');
+      cur.id = CUR_ID;
+      cur.innerHTML =
+        '<div class="__ws_halo"></div>' +
+        '<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">' +
+          '<defs>' +
+            '<linearGradient id="__ws_g" x1="0%" y1="0%" x2="100%" y2="100%">' +
+              '<stop offset="0%" stop-color="#ffd28a"/>' +
+              '<stop offset="100%" stop-color="#d9892a"/>' +
+            '</linearGradient>' +
+          '</defs>' +
+          '<path d="M3 3 L3 22 L9 17 L13 26 L17 24.5 L13 15.5 L22 15.5 Z" ' +
+            'fill="url(#__ws_g)" stroke="#1a1614" stroke-width="1.6" stroke-linejoin="round"/>' +
+        '</svg>' +
+        '<span class="__ws_cap">AI</span>';
+      document.documentElement.appendChild(cur);
+    }
+    if (!document.getElementById(BANNER_ID)) {
+      const b = document.createElement('div');
+      b.id = BANNER_ID;
+      b.textContent = 'AI is working — please don\'t interfere';
+      document.documentElement.appendChild(b);
+    }
+  }
+
+  function moveTo(x, y) {
+    const cur = document.getElementById(CUR_ID);
+    if (!cur) { ensure(); return; }
+    cur.style.transform = 'translate(' + (x - 8) + 'px,' + (y - 6) + 'px)';
+  }
+
+  function rippleAt(x, y) {
+    ensure();
+    const rip = document.createElement('div');
+    rip.className = '__ws_ripple';
+    rip.style.left = x + 'px';
+    rip.style.top = y + 'px';
+    (document.body || document.documentElement).appendChild(rip);
+    setTimeout(() => rip.remove(), 700);
+  }
+
+  function typehintAt(x, y, text) {
+    ensure();
+    const hint = document.createElement('div');
+    hint.className = '__ws_typehint';
+    const safe = (text || '').replace(/[<>&]/g, '');
+    hint.textContent = '> ' + (safe.length > 28 ? safe.slice(0, 28) + '...' : safe);
+    hint.style.left = Math.max(8, x - 60) + 'px';
+    hint.style.top = Math.max(8, y - 26) + 'px';
+    (document.body || document.documentElement).appendChild(hint);
+    setTimeout(() => hint.remove(), 1100);
   }
 
   function setLabel(text) {
     const cur = document.getElementById(CUR_ID);
     if (!cur) return;
-    const cap = cur.querySelector('.__ws_ai_cap');
+    const cap = cur.querySelector('.__ws_cap');
     if (cap) cap.textContent = text || 'AI';
   }
 
-  window.__ws_cursor_move_to = function(el, label, opts) {
-    if (!el) return;
-    ensureCursor();
-    opts = opts || {};
-    try {
-      if (opts.scroll !== false) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-      }
-    } catch (_) {}
-    setTimeout(() => {
-      const cur = document.getElementById(CUR_ID);
-      if (!cur) return;
-      const r = el.getBoundingClientRect();
-      cur.style.top = (r.top + r.height/2 - 14) + 'px';
-      cur.style.left = (r.left + r.width/2 - 6) + 'px';
-      setLabel(label || 'AI');
-    }, 50);
-  };
+  // ── Rust-driven cursor API ──────────────────────────────────────────
+  // The cursor used to track real mousemove events, but that meant it
+  // followed the USER's mouse too (real input and CDP input are both
+  // isTrusted:true and indistinguishable in JS). So we drive it explicitly
+  // from Rust via Runtime.evaluate calls into the methods below. No DOM
+  // listeners → the cursor never tracks the user's real mouse.
 
-  window.__ws_cursor_click_fx = function(el) {
-    if (!el) return;
-    ensureCursor();
-    const r = el.getBoundingClientRect();
-    const rip = document.createElement('div');
-    rip.className = '__ws_ai_ripple';
-    rip.style.left = (r.left + r.width/2) + 'px';
-    rip.style.top = (r.top + r.height/2) + 'px';
-    (document.body || document.documentElement).appendChild(rip);
-    setTimeout(() => rip.remove(), 700);
-  };
+  window.__ws_cursor_set = function(x, y) { moveTo(x, y); };
 
-  window.__ws_cursor_typehint = function(el, text) {
-    if (!el) return;
-    ensureCursor();
-    const r = el.getBoundingClientRect();
-    const hint = document.createElement('div');
-    hint.className = '__ws_ai_typehint';
-    const safe = (text || '').replace(/</g, '&lt;');
-    hint.textContent = '> ' + (safe.length > 28 ? safe.slice(0, 28) + '...' : safe);
-    hint.style.left = Math.max(8, r.left + r.width/2 - 60) + 'px';
-    hint.style.top = Math.max(8, r.top - 26) + 'px';
-    (document.body || document.documentElement).appendChild(hint);
-    setTimeout(() => hint.remove(), 1500);
-  };
-
-  window.__ws_cursor_scroll_indicator = function(direction, amount) {
-    ensureCursor();
-    const banner = document.createElement('div');
-    banner.className = '__ws_ai_scrollbanner';
-    const arrow = direction === 'up' ? '^' : direction === 'down' ? 'v' : direction === 'left' ? '<' : '>';
-    banner.textContent = arrow + ' scroll ' + direction + ' ' + Math.abs(amount) + 'px';
-    (document.body || document.documentElement).appendChild(banner);
-    setTimeout(() => banner.remove(), 1300);
-  };
-
-  // Animated rAF scroll so the user actually SEES the page moving. The page
-  // may have scroll-behavior:auto or be inside a custom container — we drive
-  // window.scrollTo in steps to guarantee a visible motion.
-  window.__ws_cursor_animate_scroll = function(dx, dy, duration) {
-    ensureCursor();
-    duration = duration || 700;
-    const startX = window.scrollX || window.pageXOffset || 0;
-    const startY = window.scrollY || window.pageYOffset || 0;
+  // Animate the cursor through a list of [x, y, ms-since-start] waypoints
+  // using rAF. Runs in parallel with Rust dispatching the actual CDP mouse
+  // events at the same timestamps, so the visible cursor and the real
+  // mouse position stay synchronised throughout the move.
+  window.__ws_cursor_animate = function(path) {
+    if (!Array.isArray(path) || path.length === 0) return;
     const t0 = performance.now();
-    return new Promise((resolve) => {
-      function step(now) {
-        const t = Math.min(1, (now - t0) / duration);
-        // ease-out cubic
-        const e = 1 - Math.pow(1 - t, 3);
-        window.scrollTo(startX + dx * e, startY + dy * e);
-        if (t < 1) requestAnimationFrame(step);
-        else resolve(true);
+    let i = 0;
+    function step(now) {
+      const t = now - t0;
+      while (i < path.length && path[i][2] <= t) {
+        moveTo(path[i][0], path[i][1]);
+        i++;
       }
-      requestAnimationFrame(step);
-    });
-  };
-  // Same for an element scroll container.
-  window.__ws_cursor_animate_scroll_el = function(el, dx, dy, duration) {
-    if (!el) return Promise.resolve(false);
-    ensureCursor();
-    duration = duration || 700;
-    const startX = el.scrollLeft;
-    const startY = el.scrollTop;
-    const t0 = performance.now();
-    return new Promise((resolve) => {
-      function step(now) {
-        const t = Math.min(1, (now - t0) / duration);
-        const e = 1 - Math.pow(1 - t, 3);
-        el.scrollLeft = startX + dx * e;
-        el.scrollTop = startY + dy * e;
-        if (t < 1) requestAnimationFrame(step);
-        else resolve(true);
-      }
-      requestAnimationFrame(step);
-    });
+      if (i < path.length) requestAnimationFrame(step);
+      else { const last = path[path.length - 1]; moveTo(last[0], last[1]); }
+    }
+    requestAnimationFrame(step);
   };
 
-  function start() {
-    ensureCursor();
-    // SPA / hostile-DOM defense: re-inject if anything removes our nodes.
+  window.__ws_cursor_ripple = function(x, y) {
+    rippleAt(x, y);
+    setLabel('click');
+    clearTimeout(window.__ws_lbl_t);
+    window.__ws_lbl_t = setTimeout(() => setLabel('AI'), 700);
+  };
+
+  window.__ws_cursor_typehint = function(x, y, text) {
+    typehintAt(x, y, text);
+    setLabel('type');
+    clearTimeout(window.__ws_lbl_t);
+    window.__ws_lbl_t = setTimeout(() => setLabel('AI'), 900);
+  };
+
+  window.__ws_cursor_label = function(text) { setLabel(text); };
+
+  window.__ws_set_busy = function(on) {
+    ensure();
+    const b = document.getElementById(BANNER_ID);
+    if (!b) return;
+    if (on) b.classList.add('__ws_busy');
+    else b.classList.remove('__ws_busy');
+  };
+
+  function watch() {
+    if (!document.documentElement) return;
     try {
       const mo = new MutationObserver(() => {
-        if (!document.getElementById(CUR_ID)) ensureCursor();
+        if (!document.getElementById(CUR_ID)) ensure();
       });
       mo.observe(document.documentElement, { childList: true, subtree: false });
-      if (document.body) {
-        mo.observe(document.body, { childList: true, subtree: false });
-      }
+      if (document.body) mo.observe(document.body, { childList: true, subtree: false });
     } catch (_) {}
-    // Belt + suspenders: poll every 1.5s in case the observer was unhooked.
-    if (!window.__ws_ai_cursor_poll) {
-      window.__ws_ai_cursor_poll = setInterval(ensureCursor, 1500);
+    if (!window.__ws_poll) {
+      window.__ws_poll = setInterval(() => {
+        if (!document.getElementById(CUR_ID)) ensure();
+      }, 1500);
     }
   }
 
+  function boot() {
+    ensure();
+    watch();
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start, { once: true });
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
   } else {
-    start();
+    boot();
   }
 })();
 "##

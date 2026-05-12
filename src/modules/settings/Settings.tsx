@@ -555,11 +555,23 @@ function SkillDownloadPanel() {
       </p>
 
       <div className="skill-actions">
-        <button className="mcp-btn start" onClick={pickAndInstall} disabled={installing}>
-          <FolderOpen size={14} /> {installing ? 'Installing…' : 'Pick project folder + install'}
+        <button
+          className="skill-btn skill-btn-primary"
+          onClick={pickAndInstall}
+          disabled={installing}
+        >
+          <FolderOpen size={14} />
+          <span>{installing ? 'Installing…' : 'Pick project folder + install'}</span>
+          <small>writes to &lt;folder&gt;/.claude/skills/wondersuite.md</small>
         </button>
-        <button className="mcp-btn" onClick={downloadAsFile}>
-          <Download size={14} /> Save wondersuite.md elsewhere…
+        <button
+          className="skill-btn skill-btn-secondary"
+          onClick={downloadAsFile}
+          disabled={installing}
+        >
+          <Download size={14} />
+          <span>Save wondersuite.md elsewhere…</span>
+          <small>pick any location (Save-As dialog)</small>
         </button>
       </div>
 

@@ -277,23 +277,76 @@ pub async fn evaluate(p: &serde_json::Value) -> HandlerResult {
 // INPUT
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Resolve a ref to a backendNodeId for the input layer (CDP DOM coords).
+async fn resolve_ref_to_backend(sess: &BrowserSession, r: &str) -> Result<i64, String> {
+    sess.refmap.lock().await.resolve(r).ok_or_else(|| {
+        structured_err(
+            "STALE_REF",
+            &format!("ref {} not in current snapshot — call browser_snapshot to refresh", r),
+        )
+    })
+}
+
+fn pick_profile(p: &serde_json::Value) -> super::input::StealthProfile {
+    if let Some(s) = p["stealth_profile"].as_str() {
+        super::input::StealthProfile::from_str(s)
+    } else {
+        super::stealth_profile()
+    }
+}
+
+/// Show the on-page "AI is working" banner. This is purely visual — we can't
+/// technically distinguish AI-dispatched events from real user events inside
+/// the page (both arrive as `isTrusted:true`), so we don't try to block real
+/// input. The banner just lets the user know AI is acting so they can keep
+/// their hands off. We tried `Input.setIgnoreInputEvents` in 0.3.3-alpha but
+/// in recent Chromium versions it also drops CDP-injected events, which
+/// silently broke `browser_click` / `browser_type` for the AI itself.
+async fn busy_on(s: &BrowserSession) {
+    let _ = s
+        .send(
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "window.__ws_set_busy && window.__ws_set_busy(true)",
+                "returnByValue": true,
+            }),
+        )
+        .await;
+}
+
+/// Hide the banner.
+async fn busy_off(s: &BrowserSession) {
+    let _ = s
+        .send(
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "window.__ws_set_busy && window.__ws_set_busy(false)",
+                "returnByValue": true,
+            }),
+        )
+        .await;
+}
+
 pub async fn click(p: &serde_json::Value) -> HandlerResult {
     let r = p["ref"].as_str().ok_or("Missing ref")?.to_string();
     let s = super::session().await?;
-    // Animate the AI cursor to the target, ripple, then real click. Visible to
-    // the user, included in screenshots, lets you spot honeypot fields if the
-    // agent walks into one.
-    let js = r#"
-    async function() {
-        if (window.__ws_cursor_move_to) window.__ws_cursor_move_to(this, 'click');
-        await new Promise(r => setTimeout(r, 340));
-        if (window.__ws_cursor_click_fx) window.__ws_cursor_click_fx(this);
-        this.click();
-        return true;
-    }"#;
-    call_on_ref(&s, &r, js, vec![]).await?;
+    let backend = resolve_ref_to_backend(&s, &r).await?;
+    let profile = pick_profile(p);
+    busy_on(&s).await;
+    let result = async {
+        let coords = super::input::click_element(&s, backend, profile).await?;
+        Ok::<_, String>(coords)
+    }
+    .await;
+    busy_off(&s).await;
+    let coords = result?;
     let snap = maybe_snapshot(&s, p).await;
-    Ok(serde_json::json!({ "clicked": r, "snapshot": snap }))
+    Ok(serde_json::json!({
+        "clicked": r,
+        "coords": { "x": coords.x, "y": coords.y },
+        "profile": profile.as_str(),
+        "snapshot": snap,
+    }))
 }
 
 pub async fn type_text(p: &serde_json::Value) -> HandlerResult {
@@ -301,25 +354,22 @@ pub async fn type_text(p: &serde_json::Value) -> HandlerResult {
     let text = p["text"].as_str().ok_or("Missing text")?.to_string();
     let clear = p["clear"].as_bool().unwrap_or(true);
     let s = super::session().await?;
-    let js = r#"
-    async function(text, clear) {
-        if (window.__ws_cursor_move_to) window.__ws_cursor_move_to(this, 'type');
-        await new Promise(r => setTimeout(r, 340));
-        if (window.__ws_cursor_typehint) window.__ws_cursor_typehint(this, text);
-        this.focus();
-        if (clear) { this.value = ''; this.dispatchEvent(new Event('input', {bubbles:true})); }
-        const tag = this.tagName.toLowerCase();
-        const proto = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc && desc.set) desc.set.call(this, (this.value || '') + text);
-        else this.value = (this.value || '') + text;
-        this.dispatchEvent(new Event('input', {bubbles:true}));
-        this.dispatchEvent(new Event('change', {bubbles:true}));
-        return this.value;
-    }"#;
-    let v = call_on_ref(&s, &r, js, vec![serde_json::json!(text), serde_json::json!(clear)]).await?;
+    let backend = resolve_ref_to_backend(&s, &r).await?;
+    let profile = pick_profile(p);
+    busy_on(&s).await;
+    let result = super::input::type_into_element(&s, backend, &text, clear, profile).await;
+    busy_off(&s).await;
+    result?;
+    let value_after =
+        call_on_ref(&s, &r, "function() { return this.value; }", vec![]).await.unwrap_or_default();
     let snap = maybe_snapshot(&s, p).await;
-    Ok(serde_json::json!({ "ref": r, "value_after": v, "snapshot": snap }))
+    Ok(serde_json::json!({
+        "ref": r,
+        "value_after": value_after,
+        "profile": profile.as_str(),
+        "chars": text.chars().count(),
+        "snapshot": snap,
+    }))
 }
 
 pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
@@ -330,6 +380,17 @@ pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
     let form_ref = p["form_ref"].as_str().map(String::from);
     let form_selector = p["form_selector"].as_str().map(String::from);
     let s = super::session().await?;
+    let profile = pick_profile(p);
+
+    // Block real user input + show banner for the whole multi-field fill;
+    // released at the end so the user can interact again. Failure paths
+    // below still release via the busy_off at the end of this fn.
+    busy_on(&s).await;
+
+    // JS fallback used only for non-text inputs (checkbox/radio/select) and
+    // for selector/name-based lookups where we don't have a ref. The CDP-input
+    // path is preferred (real isTrusted events) and is taken automatically for
+    // ref-targeted text inputs below.
     let fill_native_setter = r#"
     function(text) {
         this.focus();
@@ -366,10 +427,48 @@ pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
             continue;
         };
 
-        let outcome = if !r.is_empty() {
-            call_on_ref(&s, r, fill_native_setter, vec![serde_json::json!(val)]).await
+        if !r.is_empty() {
+            // Ref-based — go through the CDP-native input path: click into the
+            // field (real focus event) + insertText (real keyDown/char/keyUp).
+            // This is the path the registration / login flow takes.
+            let probe = call_on_ref(
+                &s,
+                r,
+                "function() { return { tag: this.tagName.toLowerCase(), type: (this.type||'').toLowerCase() }; }",
+                vec![],
+            )
+            .await
+            .unwrap_or_default();
+            let tag = probe.get("tag").and_then(|x| x.as_str()).unwrap_or("");
+            let typ = probe.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            let is_text_like = !matches!(typ, "checkbox" | "radio") && tag != "select";
+
+            if is_text_like {
+                match resolve_ref_to_backend(&s, r).await {
+                    Ok(backend) => {
+                        match super::input::type_into_element(&s, backend, val, true, profile).await {
+                            Ok(_) => applied.push(target_key),
+                            Err(e) => errors.push(serde_json::json!({ "input": v, "reason": e })),
+                        }
+                    }
+                    Err(e) => errors.push(serde_json::json!({ "input": v, "reason": e })),
+                }
+            } else {
+                // Non-text — click via CDP to focus, then set via the JS
+                // fallback. Selects, checkboxes, radios: still mostly fine
+                // because the user-visible click was real.
+                if let Ok(backend) = resolve_ref_to_backend(&s, r).await {
+                    let _ = super::input::click_element(&s, backend, profile).await;
+                }
+                match call_on_ref(&s, r, fill_native_setter, vec![serde_json::json!(val)]).await {
+                    Ok(_) => applied.push(target_key),
+                    Err(e) => errors.push(serde_json::json!({ "input": v, "reason": e })),
+                }
+            }
         } else {
-            // selector or name → eval a self-contained fill expression
+            // selector or name → JS fallback (no backend node available without
+            // an extra DOM.querySelector roundtrip). Lower fidelity but
+            // workable for non-fraud-sensitive forms.
             let lookup = if !sel.is_empty() {
                 format!("document.querySelector({:?})", sel)
             } else {
@@ -378,21 +477,6 @@ pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
                     serde_json::Value::String(name.to_string())
                 )
             };
-            let js = format!(
-                r#"(() => {{
-                    const el = {};
-                    if (!el) return {{ ok:false, reason:'not found' }};
-                    ({})(val_placeholder_{});
-                    return {{ ok:true, tag: el.tagName.toLowerCase(), type: el.type || null }};
-                }})()"#,
-                lookup,
-                fill_native_setter.trim(),
-                0
-            );
-            // Inline the value directly to avoid placeholder gymnastics.
-            let js = js
-                .replace("(val_placeholder_0)", &format!("({})", serde_json::Value::String(val.to_string())));
-            // Embed the function: replace `(<fn body>)` with a self-applied call on the element.
             let js = format!(
                 r#"(() => {{
                     const el = {lookup};
@@ -405,57 +489,66 @@ pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
                 body = fill_native_setter.trim(),
                 value = serde_json::Value::String(val.to_string()),
             );
-            s.eval(&js).await.map(|v| v)
-        };
-        match outcome {
-            Ok(v) => {
-                let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(true);
-                if ok {
-                    applied.push(target_key);
-                } else {
-                    errors.push(
-                        serde_json::json!({ "input": v, "reason": v.get("reason").cloned().unwrap_or_default() }),
-                    );
+            match s.eval(&js).await {
+                Ok(v) => {
+                    let ok = v.get("ok").and_then(|b| b.as_bool()).unwrap_or(true);
+                    if ok {
+                        applied.push(target_key);
+                    } else {
+                        errors.push(serde_json::json!({
+                            "input": v,
+                            "reason": v.get("reason").cloned().unwrap_or_default(),
+                        }));
+                    }
                 }
-            }
-            Err(e) => {
-                errors.push(serde_json::json!({ "input": v, "reason": e }));
+                Err(e) => errors.push(serde_json::json!({ "input": v, "reason": e })),
             }
         }
     }
 
     if submit {
-        let _ = if let Some(sr) = submit_ref {
-            call_on_ref(&s, &sr, "function() { this.click(); return true; }", vec![]).await
+        // Prefer CDP-click on a submit_ref so the click event itself is real.
+        if let Some(sr) = submit_ref {
+            if let Ok(backend) = resolve_ref_to_backend(&s, &sr).await {
+                let _ = super::input::click_element(&s, backend, profile).await;
+            } else {
+                let _ = call_on_ref(&s, &sr, "function() { this.click(); return true; }", vec![]).await;
+            }
         } else if let Some(sel) = submit_selector {
-            s.eval(&format!(
-                "(() => {{ const b = document.querySelector({0}); if (b) {{ b.click(); return true; }} return false; }})()",
-                serde_json::Value::String(sel),
-            ))
-            .await
+            let _ = s
+                .eval(&format!(
+                    "(() => {{ const b = document.querySelector({0}); if (b) {{ b.click(); return true; }} return false; }})()",
+                    serde_json::Value::String(sel),
+                ))
+                .await;
         } else if let Some(fr) = form_ref {
-            call_on_ref(
+            let _ = call_on_ref(
                 &s,
                 &fr,
                 "function() { if (this.requestSubmit) this.requestSubmit(); else this.submit(); return true; }",
                 vec![],
             )
-            .await
+            .await;
         } else if let Some(fsel) = form_selector {
-            s.eval(&format!(
-                "(() => {{ const f = document.querySelector({0}); if (f) {{ if (f.requestSubmit) f.requestSubmit(); else f.submit(); return true; }} return false; }})()",
-                serde_json::Value::String(fsel),
-            ))
-            .await
+            let _ = s
+                .eval(&format!(
+                    "(() => {{ const f = document.querySelector({0}); if (f) {{ if (f.requestSubmit) f.requestSubmit(); else f.submit(); return true; }} return false; }})()",
+                    serde_json::Value::String(fsel),
+                ))
+                .await;
         } else {
-            // No explicit submit target: try requestSubmit on the closest form of the last filled input
-            s.eval(r#"(() => {
-                const fs = document.querySelectorAll('form');
-                if (fs.length === 1) { const f = fs[0]; if (f.requestSubmit) f.requestSubmit(); else f.submit(); return 'single_form_submitted'; }
-                return 'no_unique_form';
-            })()"#).await
-        };
+            let _ = s
+                .eval(
+                    r#"(() => {
+                        const fs = document.querySelectorAll('form');
+                        if (fs.length === 1) { const f = fs[0]; if (f.requestSubmit) f.requestSubmit(); else f.submit(); return 'single_form_submitted'; }
+                        return 'no_unique_form';
+                    })()"#,
+                )
+                .await;
+        }
     }
+    busy_off(&s).await;
     let snap = maybe_snapshot(&s, p).await;
     Ok(serde_json::json!({
         "applied": applied,
@@ -467,75 +560,45 @@ pub async fn fill_form(p: &serde_json::Value) -> HandlerResult {
 
 pub async fn press_key(p: &serde_json::Value) -> HandlerResult {
     let key = p["key"].as_str().ok_or("Missing key")?.to_string();
+    // Modifier mask: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift. Same as CDP.
+    let modifiers = p["modifiers"].as_i64().unwrap_or(0) as i32;
     let s = super::session().await?;
-    for kind in ["keyDown", "keyUp"] {
-        s.send(
-            "Input.dispatchKeyEvent",
-            serde_json::json!({
-                "type": kind,
-                "key": key,
-                "code": key,
-                "windowsVirtualKeyCode": vk_for(&key),
-            }),
-        )
-        .await?;
-    }
+    busy_on(&s).await;
+    let result = super::input::press_key(&s, &key, modifiers).await;
+    busy_off(&s).await;
+    result?;
     let snap = maybe_snapshot(&s, p).await;
-    Ok(serde_json::json!({ "pressed": key, "snapshot": snap }))
-}
-
-fn vk_for(k: &str) -> u32 {
-    match k {
-        "Enter" => 13,
-        "Tab" => 9,
-        "Escape" => 27,
-        "Backspace" => 8,
-        "ArrowDown" => 40,
-        "ArrowUp" => 38,
-        "ArrowLeft" => 37,
-        "ArrowRight" => 39,
-        _ => 0,
-    }
+    Ok(serde_json::json!({ "pressed": key, "modifiers": modifiers, "snapshot": snap }))
 }
 
 pub async fn scroll(p: &serde_json::Value) -> HandlerResult {
     let direction = p["direction"].as_str().unwrap_or("down").to_string();
-    let amount = p["amount"].as_i64().unwrap_or(500);
+    let amount = p["amount"].as_i64().unwrap_or(500) as f64;
     let r = p["ref"].as_str().map(String::from);
-    let (dx, dy) = match direction.as_str() {
-        "up" => (0, -amount),
-        "down" => (0, amount),
-        "left" => (-amount, 0),
-        "right" => (amount, 0),
-        _ => (0, amount),
+    let (dx, dy): (f64, f64) = match direction.as_str() {
+        "up" => (0.0, -amount),
+        "down" => (0.0, amount),
+        "left" => (-amount, 0.0),
+        "right" => (amount, 0.0),
+        _ => (0.0, amount),
     };
     let s = super::session().await?;
-    // Pop the banner first so the user sees the intent immediately.
-    let _ = s
-        .eval(&format!(
-            "window.__ws_cursor_scroll_indicator && window.__ws_cursor_scroll_indicator({:?}, {})",
-            direction, amount
-        ))
-        .await;
-    if let Some(rname) = r {
-        // Container scroll via custom rAF animation — guarantees visible motion
-        // even when the container has scroll-behavior:auto.
-        call_on_ref(
-            &s,
-            &rname,
-            "async function(dx, dy) { if (window.__ws_cursor_animate_scroll_el) { await window.__ws_cursor_animate_scroll_el(this, dx, dy, 700); } else { this.scrollBy({left: dx, top: dy, behavior: 'smooth'}); } return true; }",
-            vec![serde_json::json!(dx), serde_json::json!(dy)],
-        )
-        .await?;
-    } else {
-        // Window scroll — step through the delta over ~700ms via rAF so the
-        // motion is visible regardless of CSS scroll-behavior.
-        let js = format!(
-            "(async () => {{ if (window.__ws_cursor_animate_scroll) {{ await window.__ws_cursor_animate_scroll({}, {}, 700); }} else {{ window.scrollBy({{ left: {}, top: {}, behavior: 'smooth' }}); }} return true; }})()",
-            dx, dy, dx, dy
-        );
-        s.eval(&js).await?;
+    busy_on(&s).await;
+    let result: Result<(), String> = async {
+        if let Some(rname) = r {
+            let backend = resolve_ref_to_backend(&s, &rname).await?;
+            let center = super::input::element_center(&s, backend).await?;
+            let profile = pick_profile(p);
+            super::input::move_mouse(&s, center, profile).await?;
+            super::input::wheel_scroll(&s, dx, dy).await?;
+        } else {
+            super::input::wheel_scroll(&s, dx, dy).await?;
+        }
+        Ok(())
     }
+    .await;
+    busy_off(&s).await;
+    result?;
     Ok(serde_json::json!({ "scrolled": { "dx": dx, "dy": dy } }))
 }
 
