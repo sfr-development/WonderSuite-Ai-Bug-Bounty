@@ -57,7 +57,9 @@ pub struct ProxyEngine {
     http_client: reqwest::Client,
     /// Chrome-fingerprint-spoofing client. Used when `state.tls_impersonate`
     /// is true so the upstream JA3/JA4 + HTTP/2 frame signature looks like
-    /// real Chrome instead of native-tls / SChannel.
+    /// real Chrome instead of native-tls / SChannel. Linux falls back to
+    /// reqwest because boring-sys2 collides with system OpenSSL at link time.
+    #[cfg(not(target_os = "linux"))]
     impersonate_client: crate::tls_impersonate::ImpersonateClient,
     cancel: CancellationToken,
 }
@@ -71,6 +73,7 @@ impl ProxyEngine {
             .build()
             .expect("Failed to build HTTP client");
 
+        #[cfg(not(target_os = "linux"))]
         let impersonate_client = crate::tls_impersonate::ImpersonateClient::new(
             crate::tls_impersonate::ImpersonateProfile::Chrome137,
         )
@@ -79,16 +82,17 @@ impl ProxyEngine {
                 "[Proxy] TLS impersonation client init failed: {} — falling back to native TLS only",
                 e
             );
-            // Best-effort: spawn a stub that always errors on use. Building
-            // this dummy is safe because impersonate_client is only consumed
-            // through `state.tls_impersonate` gating.
             crate::tls_impersonate::ImpersonateClient::new(
                 crate::tls_impersonate::ImpersonateProfile::Chrome137,
             )
             .expect("impersonate client second build")
         });
 
-        Self { ca, state, http_client, impersonate_client, cancel }
+        #[cfg(not(target_os = "linux"))]
+        let s = Self { ca, state, http_client, impersonate_client, cancel };
+        #[cfg(target_os = "linux")]
+        let s = Self { ca, state, http_client, cancel };
+        s
     }
 
     /// Build an HTTP client that routes through an upstream proxy.
@@ -733,29 +737,32 @@ impl ProxyEngine {
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
         // Branch on the impersonation toggle. wreq matches Chrome's JA3/JA4
         // + HTTP/2 fingerprint; reqwest leaks the platform native-tls one.
-        let use_impersonate = self.state.tls_impersonate.load(std::sync::atomic::Ordering::Relaxed);
-
-        if use_impersonate {
-            // Sync the impersonate client's upstream proxy with the current
-            // ProxyState config before each request. Cheap if unchanged.
-            let upstream_for_wreq = {
-                let cfg = self.state.upstream_proxy.read().await;
-                if cfg.enabled && !cfg.host.is_empty() {
-                    Some(crate::tls_impersonate::ImpersonateUpstreamProxy {
-                        scheme: cfg.proxy_type.clone(),
-                        host: cfg.host.clone(),
-                        port: cfg.port,
-                        username: cfg.username.clone(),
-                        password: cfg.password.clone(),
-                    })
+        // Linux falls back to reqwest because boring-sys2 collides with the
+        // system OpenSSL link.
+        #[cfg(not(target_os = "linux"))]
+        {
+            let use_impersonate =
+                self.state.tls_impersonate.load(std::sync::atomic::Ordering::Relaxed);
+            if use_impersonate {
+                let upstream_for_wreq = {
+                    let cfg = self.state.upstream_proxy.read().await;
+                    if cfg.enabled && !cfg.host.is_empty() {
+                        Some(crate::tls_impersonate::ImpersonateUpstreamProxy {
+                            scheme: cfg.proxy_type.clone(),
+                            host: cfg.host.clone(),
+                            port: cfg.port,
+                            username: cfg.username.clone(),
+                            password: cfg.password.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                };
+                if let Err(e) = self.impersonate_client.set_upstream(upstream_for_wreq).await {
+                    eprintln!("[Proxy] wreq upstream proxy update failed: {} — falling through", e);
                 } else {
-                    None
+                    return self.forward_via_impersonate(method, url, headers, body).await;
                 }
-            };
-            if let Err(e) = self.impersonate_client.set_upstream(upstream_for_wreq).await {
-                eprintln!("[Proxy] wreq upstream proxy update failed: {} — falling through", e);
-            } else {
-                return self.forward_via_impersonate(method, url, headers, body).await;
             }
         }
 
@@ -791,14 +798,9 @@ impl ProxyEngine {
     }
 
     /// Same as `forward_request` but uses wreq with the Chrome JA3/JA4
-    /// emulation profile. Bot detection that fingerprints TLS + HTTP/2 frame
-    /// ordering (Cloudflare, Akamai, DataDome, PerimeterX) treats this
-    /// connection as genuine Chrome.
-    ///
-    /// On failure we walk the full error source chain so the surfaced 502
-    /// includes the actual cause (DNS error, TLS handshake failure, h2
-    /// negotiation problem) — not just the generic "client error (Connect)"
-    /// that hyper bubbles up at the top level.
+    /// emulation profile. Not compiled on Linux (boring-sys2 collides with
+    /// system OpenSSL there).
+    #[cfg(not(target_os = "linux"))]
     async fn forward_via_impersonate(
         &self,
         method: &str,
@@ -1127,9 +1129,7 @@ fn is_benign_error(msg: &str) -> bool {
         || lower.contains("channel closed")
 }
 
-/// Walk a wreq::Error's std::error::Error source chain, joining the messages
-/// so the surfaced 502 includes the real root cause (DNS error, TLS
-/// handshake fail, etc.) instead of just "client error (Connect)".
+#[cfg(not(target_os = "linux"))]
 fn wreq_err_chain(stage: &str, e: &wreq::Error) -> String {
     use std::error::Error;
     let mut out = format!("wreq {}: {}", stage, e);

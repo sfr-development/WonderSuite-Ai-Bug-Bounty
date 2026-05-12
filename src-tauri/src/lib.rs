@@ -23,6 +23,7 @@ mod scanner_commands;
 mod session;
 mod session_commands;
 mod system;
+#[cfg(not(target_os = "linux"))]
 mod tls_impersonate;
 mod updater;
 mod websocket_commands;
