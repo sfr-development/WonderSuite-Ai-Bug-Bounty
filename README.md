@@ -16,7 +16,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 [**Features**](#core-capabilities) ·
 [**Screenshots**](#screenshots) ·
 [**Getting Started**](#getting-started) ·
-[**MCP Tools**](#mcp-server--83-tools) ·
+[**MCP Tools**](#mcp-server--84-tools) ·
 [**Contributing**](#contributing)
 
 </div>
