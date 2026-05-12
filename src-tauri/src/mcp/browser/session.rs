@@ -19,9 +19,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use super::network::{classify_auth_like, NetCapture, NetEntry};
 use super::snapshot::RefMap;
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 type WsSink = futures_util::stream::SplitSink<WsStream, WsMessage>;
 type WsRead = futures_util::stream::SplitStream<WsStream>;
 
@@ -112,8 +110,7 @@ impl BrowserSession {
         let pid = crate::browser::launch_browser(&browser_path.to_string_lossy(), &opts)
             .map_err(|e| format!("Launch failed: {}", e))?;
 
-        Self::build(browser_label, pid, args.cdp_port, args.proxy_port, args.headless, true, args.url)
-            .await
+        Self::build(browser_label, pid, args.cdp_port, args.proxy_port, args.headless, true, args.url).await
     }
 
     /// Attach to a Chrome-DevTools-Protocol endpoint that's already running.
@@ -149,13 +146,12 @@ impl BrowserSession {
         // running instance), connect.
         let target_port = ports_to_try[0];
         let bin_path = find_system_chrome(args.prefer.as_deref())?;
-        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".into());
+        let home =
+            std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".into());
         let profile_dir = std::path::PathBuf::from(format!("{}/.wondersuite/attach-profile", home));
         std::fs::create_dir_all(&profile_dir).map_err(|e| format!("attach profile dir: {}", e))?;
-        let label_full = bin_path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "chrome".into());
+        let label_full =
+            bin_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "chrome".into());
 
         let opts = crate::browser::LaunchOptions {
             proxy_port: args.proxy_port,
@@ -391,15 +387,8 @@ pub struct AttachArgs {
 }
 
 async fn probe_cdp_port(cdp_port: u16) -> Option<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .ok()?;
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/json/version", cdp_port))
-        .send()
-        .await
-        .ok()?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().ok()?;
+    let resp = client.get(format!("http://127.0.0.1:{}/json/version", cdp_port)).send().await.ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
     Some(
         json.get("Browser")

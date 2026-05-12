@@ -58,6 +58,10 @@ updates:
           - "typescript"
           - "@types/*"
           - "@vitejs/*"
+          # vite must move in lockstep with @vitejs/plugin-react — the plugin
+          # pins a vite peer range, so updating one without the other breaks
+          # npm ci with ERESOLVE.
+          - "vite"
 
   - package-ecosystem: "github-actions"
     directory: "/"
