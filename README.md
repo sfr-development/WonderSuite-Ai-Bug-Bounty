@@ -27,7 +27,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 
 **WonderSuite** is a desktop-native offensive security engine that combines Burp Suite-class tooling with autonomous AI agent capabilities. It provides a fully integrated environment for web application security testing, network reconnaissance, and exploit development — all orchestrated through an MCP-compatible AI interface.
 
-The platform ships with **83 purpose-built security tools** accessible via JSON-RPC, a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
+The platform ships with **84 purpose-built security tools** accessible via JSON-RPC, a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
 
 <div align="center">
 <img src="docs/screenshots/dashboard.png" alt="WonderSuite Dashboard" width="900" />
@@ -207,7 +207,7 @@ flowchart TB
                 OAST["<b>OAST Listener</b><br/><sub>HTTP · DNS · SMTP<br/>Path-correlated callbacks</sub>"]
             end
 
-            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>83 security tools</b><br/>+ 22 pentest-grade browser tools</sub>"]
+            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>84 security tools</b><br/>+ 22 pentest-grade browser tools</sub>"]
 
             Payloads[("Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
         end
@@ -248,7 +248,7 @@ flowchart TB
     class CORE,TOOLS hidden
 ```
 
-**How it flows.** The pentester drives the React UI; every action travels through Tauri IPC into the Rust engine. The MITM proxy MITM-decrypts the browser's TLS, then re-originates each upstream request through a BoringSSL stack tuned to Chrome 137's exact ClientHello + JA3/JA4 + HTTP/2 SETTINGS fingerprint — so Cloudflare/Akamai/DataDome/PerimeterX see real Chrome. WonderBrowser is the bundled Chrome-for-Testing 148 with a stealth extension shipped in the install (no system Chrome dependency). Scanner and intruder probe the target, posting blind-vuln callbacks to the integrated OAST listener via path-correlated `callback_url`s. In parallel, any MCP-compatible AI client speaks JSON-RPC to the same 83-tool surface — including 22 pentest-grade browser tools that share state with the proxy via a stable request-ID space — so a human and an AI agent can investigate the same target with the exact same primitives.
+**How it flows.** The pentester drives the React UI; every action travels through Tauri IPC into the Rust engine. The MITM proxy MITM-decrypts the browser's TLS, then re-originates each upstream request through a BoringSSL stack tuned to Chrome 137's exact ClientHello + JA3/JA4 + HTTP/2 SETTINGS fingerprint — so Cloudflare/Akamai/DataDome/PerimeterX see real Chrome. WonderBrowser is the bundled Chrome-for-Testing 148 with a stealth extension shipped in the install (no system Chrome dependency). Scanner and intruder probe the target, posting blind-vuln callbacks to the integrated OAST listener via path-correlated `callback_url`s. In parallel, any MCP-compatible AI client speaks JSON-RPC to the same 84-tool surface — including 22 pentest-grade browser tools that share state with the proxy via a stable request-ID space — so a human and an AI agent can investigate the same target with the exact same primitives.
 
 ## Tech Stack
 
@@ -373,7 +373,7 @@ wondersuite/
 │       │   │   └── handlers.rs   #   tool handlers
 │       │   ├── handlers/         # Other tool handlers (proxy, scanner, …)
 │       │   ├── router.rs         # JSON-RPC dispatcher
-│       │   └── mod.rs            # Tool definitions (83 tools)
+│       │   └── mod.rs            # Tool definitions (84 tools)
 │       ├── proxy/                # MITM proxy engine
 │       │   ├── engine.rs         # Core proxy logic + impersonate branch
 │       │   ├── ca.rs             # Certificate authority
