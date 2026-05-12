@@ -158,6 +158,7 @@ pub async fn attach(p: &serde_json::Value) -> HandlerResult {
     let auto_launch = p["auto_launch"].as_bool().unwrap_or(false);
     let prefer = p["prefer"].as_str().map(String::from);
     let use_proxy = p["use_proxy"].as_bool().unwrap_or(false);
+    let use_real_profile = p["use_real_profile"].as_bool().unwrap_or(false);
 
     let sess = BrowserSession::attach(AttachArgs {
         cdp_port,
@@ -166,8 +167,17 @@ pub async fn attach(p: &serde_json::Value) -> HandlerResult {
         auto_launch,
         prefer,
         use_proxy,
+        use_real_profile,
     })
     .await?;
+    let note = if !sess.launched_by_us {
+        "Attached to an existing CDP-enabled browser (it was already running with --remote-debugging-port)."
+            .to_string()
+    } else if use_real_profile {
+        "Auto-launched a fresh Chrome window USING THE USER'S REAL profile (cookies, extensions, logged-in accounts). browser_close will close this window only.".to_string()
+    } else {
+        "Auto-launched a fresh Chrome window with an ISOLATED profile (no cookies/extensions from the user's daily-driver Chrome). Persistent at ~/.wondersuite/attach-profile so logins you make here survive across future attaches.".to_string()
+    };
     let info = serde_json::json!({
         "success": true,
         "attached": true,
@@ -175,14 +185,9 @@ pub async fn attach(p: &serde_json::Value) -> HandlerResult {
         "cdp_port": sess.cdp_port,
         "initial_url": url,
         "auto_launched": sess.launched_by_us,
+        "real_profile": use_real_profile,
         "proxy_routed": use_proxy,
-        "note": if sess.launched_by_us {
-            "Auto-launched a fresh system Chrome with --remote-debugging-port. Persistent profile at ~/.wondersuite/attach-profile — logins survive between attaches."
-        } else if use_proxy {
-            "Attached to existing browser. Traffic routes through the WonderSuite proxy."
-        } else {
-            "Attached to existing browser. Traffic is NOT going through the proxy unless the browser was started with --proxy-server=127.0.0.1:8080."
-        },
+        "note": note,
         "tip": "Call browser_snapshot to discover refs for click/type/fill_form.",
     });
     *state.write().await = Some(Arc::new(sess));

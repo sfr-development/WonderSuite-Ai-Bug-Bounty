@@ -243,16 +243,17 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "browser_attach".into(),
-            description: "[lifecycle] Attach to a Chrome/Edge/Brave running with --remote-debugging-port. With no cdp_port, scans the common ports (9222 → 9333 → 9223). If nothing is reachable, set auto_launch:true to have WonderSuite spawn a fresh system Chrome with --remote-debugging-port and a persistent attach-profile (logins survive between attaches). Use this whenever browser_open fails or the user wants to drive their own browser instead of the bundled one.".into(),
+            description: "[lifecycle] Attach to a Chrome/Edge/Brave that is running WITH --remote-debugging-port. IMPORTANT: Chrome opened normally (without that flag) CANNOT be attached to — it has to be restarted with the flag. With no cdp_port, scans 9222 (Chrome default) → 9333 (bundled WonderBrowser) → 9223.\n\nWhen no CDP responder is found, set auto_launch:true to spawn one. Two sub-modes:\n  • Default (use_real_profile:false): spawns Chrome with an ISOLATED ~/.wondersuite/attach-profile dir. Persistent across attaches but starts empty (no logins/cookies/extensions). Safe to run while the user's daily Chrome is open.\n  • use_real_profile:true: uses the user's REAL Chrome User Data dir — keeps their cookies, extensions, logged-in accounts. REQUIRES the user to have fully closed Chrome first (Chrome locks its profile). If Chrome is still running, returns code=PROFILE_LOCKED.\n\nWhen the user says \"attach to my browser\" and their Chrome is open without the flag, the right move is normally: explain the limitation, offer (1) auto_launch with isolated profile [easiest, no action needed from user] or (2) close-Chrome-then-auto_launch with use_real_profile [keeps their session]. Don't fall back to browser_open silently — that uses the bundled WonderBrowser which is something entirely different.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "cdp_port": { "type": "integer", "description": "Specific port to attach to. Omit to scan 9222/9333/9223." },
                     "proxy_port": { "type": "integer", "default": 8080 },
                     "url": { "type": "string", "description": "Optional URL to navigate to after attaching." },
-                    "auto_launch": { "type": "boolean", "default": false, "description": "If no CDP server is reachable, spawn a system Chrome ourselves with --remote-debugging-port. Uses a dedicated user-data-dir so it won't fight the user's running Chrome." },
-                    "prefer": { "type": "string", "enum": ["chrome", "edge", "brave", "chromium"], "description": "Preferred system browser for auto_launch (default: first detected, Chrome first)." },
-                    "use_proxy": { "type": "boolean", "default": false, "description": "Route the auto-launched browser through the WonderSuite proxy. Off by default so the attached browser carries the user's real network identity; switch on if you want traffic captured." }
+                    "auto_launch": { "type": "boolean", "default": false, "description": "If no CDP server is reachable, spawn a system Chrome ourselves with --remote-debugging-port." },
+                    "use_real_profile": { "type": "boolean", "default": false, "description": "With auto_launch, use the user's REAL Chrome User Data dir (cookies/extensions/accounts persist). Requires Chrome to be fully closed first." },
+                    "prefer": { "type": "string", "enum": ["chrome", "edge", "brave", "chromium"], "description": "Preferred system browser for auto_launch (default: Chrome first, then whatever is installed)." },
+                    "use_proxy": { "type": "boolean", "default": false, "description": "Route the auto-launched browser through the WonderSuite proxy. Off by default so the browser carries the user's real network identity; switch on for traffic capture." }
                 }
             }),
         },

@@ -113,15 +113,19 @@ impl BrowserSession {
         Self::build(browser_label, pid, args.cdp_port, args.proxy_port, args.headless, true, args.url).await
     }
 
-    /// Attach to a Chrome-DevTools-Protocol endpoint that's already running.
-    /// Used by `browser_attach` so the agent can drive a browser the user
-    /// started themselves (e.g. their everyday Chrome with --remote-debugging-port).
+    /// Attach to a Chrome-DevTools-Protocol endpoint.
     ///
-    /// If `cdp_port` is None we scan the common ports (9222 = Chrome standard,
-    /// 9333 = WonderSuite bundled). If nothing is listening anywhere AND
-    /// `auto_launch` is true, we spawn a system Chrome (or whichever browser
-    /// `prefer` selects) into a persistent attach-profile dir and connect to
-    /// that instead.
+    /// Resolution order:
+    ///   1. Scan `cdp_port` (or 9222/9333/9223). If any responds → attach.
+    ///   2. If `auto_launch` is set:
+    ///      - `use_real_profile`=true → spawn the user's installed Chrome with
+    ///        their real `User Data` dir (cookies, extensions, logged-in
+    ///        accounts). REQUIRES the user to have closed Chrome first — Chrome
+    ///        holds an exclusive lock on its profile dir.
+    ///      - Otherwise → spawn into a persistent `~/.wondersuite/attach-profile`
+    ///        dir. Fully isolated from the user's daily-driver Chrome; logins
+    ///        you make there persist across future attaches.
+    ///   3. Otherwise return ATTACH_FAILED with actionable guidance.
     pub async fn attach(args: AttachArgs) -> Result<Self, String> {
         let ports_to_try: Vec<u16> = match args.cdp_port {
             Some(p) => vec![p],
@@ -133,25 +137,55 @@ impl BrowserSession {
             }
         }
 
+        // No CDP responders. Was a daily-driver Chrome left running without
+        // the flag? Surface that so the AI can give the user a clear choice
+        // instead of silently spawning a second isolated window.
+        let chrome_running = is_browser_process_running(args.prefer.as_deref());
+
         if !args.auto_launch {
-            return Err(format!(
-                "code=ATTACH_FAILED hint=\"no CDP server on port(s) {:?}. Either: (a) re-run with auto_launch=true to spawn a fresh Chrome with --remote-debugging-port, (b) restart Chrome yourself with --remote-debugging-port={}, or (c) call browser_open to use the bundled WonderBrowser.\"",
-                ports_to_try,
-                ports_to_try.first().copied().unwrap_or(9222)
-            ));
+            let mut hint = format!(
+                "no CDP server on port(s) {:?}. Chrome must be started WITH --remote-debugging-port — there is no way to attach to a Chrome that was opened without the flag. ",
+                ports_to_try
+            );
+            if chrome_running {
+                hint.push_str("Detected a Chrome process running WITHOUT --remote-debugging-port. ");
+            }
+            hint.push_str("Options: ");
+            hint.push_str("(a) call browser_attach again with auto_launch=true (spawns an isolated Chrome with a separate profile — your everyday Chrome stays untouched), ");
+            hint.push_str("(b) call browser_attach with auto_launch=true AND use_real_profile=true if the user has closed Chrome (uses their real cookies/logins), ");
+            hint.push_str(&format!("(c) ask the user to close Chrome and relaunch it as: chrome.exe --remote-debugging-port={}, then retry, ", ports_to_try.first().copied().unwrap_or(9222)));
+            hint.push_str(
+                "(d) call browser_open to use the bundled WonderBrowser (no user profile, fully separate).",
+            );
+            return Err(format!("code=ATTACH_FAILED hint=\"{}\"", hint));
         }
 
-        // Auto-launch path: pick a system browser, spawn it into a dedicated
-        // user-data-dir (Chrome refuses to share its profile with another
-        // running instance), connect.
+        // Auto-launch path
         let target_port = ports_to_try[0];
         let bin_path = find_system_chrome(args.prefer.as_deref())?;
-        let home =
-            std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".into());
-        let profile_dir = std::path::PathBuf::from(format!("{}/.wondersuite/attach-profile", home));
-        std::fs::create_dir_all(&profile_dir).map_err(|e| format!("attach profile dir: {}", e))?;
         let label_full =
             bin_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "chrome".into());
+
+        // Pick the user-data-dir. Real profile is gated on Chrome being closed.
+        let profile_dir = if args.use_real_profile {
+            let real_dir = find_real_chrome_profile(&bin_path).ok_or_else(|| {
+                "code=NO_REAL_PROFILE hint=\"could not locate the user's Chrome User Data dir — re-run with use_real_profile=false to spawn an isolated attach-profile instead.\"".to_string()
+            })?;
+            if chrome_running {
+                return Err(format!(
+                    "code=PROFILE_LOCKED hint=\"use_real_profile=true requires Chrome to be fully closed (Chrome holds an exclusive lock on its User Data dir at {}). Ask the user to close every Chrome window first, then retry — or drop use_real_profile to spawn an isolated profile.\"",
+                    real_dir.display()
+                ));
+            }
+            real_dir
+        } else {
+            let home = std::env::var("USERPROFILE")
+                .or_else(|_| std::env::var("HOME"))
+                .unwrap_or_else(|_| ".".into());
+            let p = std::path::PathBuf::from(format!("{}/.wondersuite/attach-profile", home));
+            std::fs::create_dir_all(&p).map_err(|e| format!("attach profile dir: {}", e))?;
+            p
+        };
 
         let opts = crate::browser::LaunchOptions {
             proxy_port: args.proxy_port,
@@ -169,7 +203,9 @@ impl BrowserSession {
             .map_err(|e| format!("auto_launch failed: {}", e))?;
 
         // The auto-launched browser is "ours" for cleanup purposes — close it
-        // when the user calls browser_close.
+        // when the user calls browser_close. (Even with use_real_profile this
+        // closes only the WonderSuite-spawned Chrome window, not the user's
+        // pre-existing one, because we required Chrome to be closed.)
         Self::build(label_full, pid, target_port, args.proxy_port, false, true, args.url).await
     }
 
@@ -384,6 +420,64 @@ pub struct AttachArgs {
     /// Route the auto-launched browser through the WonderSuite proxy. Off by
     /// default — the user typically wants their real network identity.
     pub use_proxy: bool,
+    /// Use the user's actual Chrome `User Data` dir (cookies, extensions,
+    /// logged-in accounts). Chrome MUST be closed first — it holds an
+    /// exclusive lock on its profile.
+    pub use_real_profile: bool,
+}
+
+/// Locate the user's real Chrome/Edge/Brave `User Data` directory for the
+/// given browser binary. Returns the path only if it exists on disk.
+fn find_real_chrome_profile(bin_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    let stem = bin_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let candidates: &[&str] = if stem.contains("msedge") || stem.contains("edge") {
+        &[r"Microsoft\Edge\User Data"]
+    } else if stem.contains("brave") {
+        &[r"BraveSoftware\Brave-Browser\User Data"]
+    } else if stem.contains("chromium") {
+        &[r"Chromium\User Data"]
+    } else if stem.contains("vivaldi") {
+        &[r"Vivaldi\User Data"]
+    } else {
+        // Default: Chrome
+        &[r"Google\Chrome\User Data"]
+    };
+    for sub in candidates {
+        let p = std::path::PathBuf::from(&local).join(sub);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Best-effort check whether the user's daily-driver browser is currently
+/// running. Used to give friendlier errors and to gate `use_real_profile`.
+fn is_browser_process_running(prefer: Option<&str>) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let target = match prefer.unwrap_or("chrome").to_lowercase().as_str() {
+            "edge" => "msedge.exe",
+            "brave" => "brave.exe",
+            "chromium" => "chrome.exe", // chromium ships chrome.exe too
+            "vivaldi" => "vivaldi.exe",
+            _ => "chrome.exe",
+        };
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("IMAGENAME eq {}", target), "/NH", "/FO", "CSV"])
+            .output();
+        if let Ok(o) = out {
+            let s = String::from_utf8_lossy(&o.stdout).to_lowercase();
+            return s.contains(&target.to_lowercase());
+        }
+        false
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = prefer;
+        false
+    }
 }
 
 async fn probe_cdp_port(cdp_port: u16) -> Option<String> {
