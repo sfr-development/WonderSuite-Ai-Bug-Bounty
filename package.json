@@ -21,8 +21,8 @@
     "dagre": "^0.8.5",
     "lucide-react": "^1.8.0",
     "mermaid": "^11.15.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "zustand": "^5.0.12"
