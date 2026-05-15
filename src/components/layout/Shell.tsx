@@ -33,6 +33,7 @@ const moduleMap: Record<string, React.LazyExoticComponent<React.ComponentType>> 
   oast:       lazy(() => import('../../modules/oast/Oast').then(m => ({ default: m.Oast }))),
   discovery:  lazy(() => import('../../modules/discovery/Discovery').then(m => ({ default: m.Discovery }))),
   osint:      lazy(() => import('../../modules/osint/Osint').then(m => ({ default: m.Osint }))),
+  docs:       lazy(() => import('../../modules/docs/Docs').then(m => ({ default: m.Docs }))),
   settings:   lazy(() => import('../../modules/settings/Settings').then(m => ({ default: m.Settings }))),
 };
 

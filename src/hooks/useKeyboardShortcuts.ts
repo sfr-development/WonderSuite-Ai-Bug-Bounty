@@ -20,6 +20,11 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setActiveModule('docs');
+        return;
+      }
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
         const target = MODULE_KEYS[e.key];
         if (target) {

@@ -22,6 +22,7 @@ import {
   Radio,
   FolderSearch,
   Fingerprint,
+  BookText,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronRight,
@@ -154,8 +155,17 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Settings at bottom */}
+      {/* Docs + Settings at bottom */}
       <div className="sidebar-bottom">
+        <button
+          className={`sidebar-item ${activeModule === 'docs' ? 'active' : ''}`}
+          onClick={() => setActiveModule('docs')}
+          data-tooltip={!expanded ? 'Documentation  (F1)' : undefined}
+          title={expanded ? 'Documentation (F1)' : undefined}
+        >
+          <BookText size={16} strokeWidth={1.8} />
+          {expanded && <span className="sidebar-label">Documentation</span>}
+        </button>
         <button
           className={`sidebar-item ${activeModule === 'settings' ? 'active' : ''}`}
           onClick={() => setActiveModule('settings')}

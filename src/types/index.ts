@@ -20,6 +20,7 @@ export type ModuleId =
   | 'oast'
   | 'osint'
   | 'discovery'
+  | 'docs'
   | 'settings';
 
 export interface HttpMessage {
