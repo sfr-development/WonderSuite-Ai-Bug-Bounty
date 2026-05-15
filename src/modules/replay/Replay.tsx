@@ -237,7 +237,7 @@ export function Replay() {
         const lines = tab.requestRaw.split('\n');
         let bodyStartIdx = -1;
         for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].replace('\r', '');
+          const line = lines[i].replace(/\r/g, '');
           if (line === '') { bodyStartIdx = i + 1; break; }
           const colonIdx = line.indexOf(':');
           if (colonIdx > 0) {

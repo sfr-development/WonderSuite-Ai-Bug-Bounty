@@ -30,6 +30,12 @@ const PLATFORMS = {
 
 const force = process.argv.includes('--force');
 
+// The only origin we trust manifest-listed download URLs from. Any URL that
+// doesn't match this prefix is rejected before being written to the pin file
+// — defends against a compromised / proxy-tampered manifest swapping in a
+// hostile download URL that our installer would then SHA-pin and serve.
+const TRUSTED_DOWNLOAD_PREFIX = 'https://storage.googleapis.com/chrome-for-testing-public/';
+
 async function fetchManifest() {
   const r = await fetch(MANIFEST_URI);
   if (!r.ok) throw new Error(`manifest GET ${r.status}`);
@@ -59,7 +65,15 @@ async function sha256OfUrl(url) {
 }
 
 async function main() {
-  const existing = fs.existsSync(PIN_PATH) ? JSON.parse(fs.readFileSync(PIN_PATH, 'utf8')) : null;
+  // Read the existing pin via try/catch instead of `existsSync` + `readFileSync`
+  // to close the TOCTOU window the latter pattern leaves between the check and
+  // the read (CodeQL `js/file-system-race`).
+  let existing = null;
+  try {
+    existing = JSON.parse(fs.readFileSync(PIN_PATH, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
   const manifest = await fetchManifest();
   const stable = manifest.channels.Stable;
   const newVersion = stable.version;
@@ -80,6 +94,15 @@ async function main() {
     const url = downloads[key];
     if (!url) {
       throw new Error(`platform ${key} not in manifest`);
+    }
+    // Allowlist the upstream origin so an attacker who tampers with the
+    // manifest cannot trick this script into pinning a hostile zip
+    // (CodeQL `js/http-to-file-access`).
+    if (!url.startsWith(TRUSTED_DOWNLOAD_PREFIX)) {
+      throw new Error(
+        `refusing to pin ${key}: URL '${url}' is not under the trusted ` +
+        `chrome-for-testing-public origin (${TRUSTED_DOWNLOAD_PREFIX})`,
+      );
     }
     console.log(`Hashing ${key} ...`);
     const sha = await sha256OfUrl(url);

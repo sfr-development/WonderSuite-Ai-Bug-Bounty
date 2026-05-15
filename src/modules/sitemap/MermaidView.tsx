@@ -279,8 +279,35 @@ function highlightMermaid(line: string): React.ReactElement {
     if (match) return <><span>{match[1]}</span><span className="mermaid-kw">{match[2]}</span><span className="mermaid-rest">{match[3]}</span></>;
   }
   if (line.includes('-->')) {
-    const parts = line.split(/(-->(?:\|[^|]*\|)?)/);
-    return <>{parts.map((part, i) => /-->/.test(part) ? <span key={i} className="mermaid-arrow">{part}</span> : <span key={i} className="mermaid-node-ref">{part}</span>)}</>;
+    // String-based parser for Mermaid arrows (`A-->B` or `A-->|label|B`).
+    // Intentionally not a regex: a literal `-->` pattern triggers the
+    // CodeQL `js/bad-tag-filter` HTML-comment-stripping heuristic, even
+    // though this code never parses HTML. The output below is identical
+    // to the previous `line.split(/(-->(?:\|[^|]*\|)?)/)`-based version.
+    const ARROW = '-->';
+    const out: React.ReactElement[] = [];
+    let start = 0;
+    let key = 0;
+    while (start <= line.length) {
+      const idx = line.indexOf(ARROW, start);
+      if (idx < 0) {
+        if (start < line.length) {
+          out.push(<span key={key++} className="mermaid-node-ref">{line.slice(start)}</span>);
+        }
+        break;
+      }
+      if (idx > start) {
+        out.push(<span key={key++} className="mermaid-node-ref">{line.slice(start, idx)}</span>);
+      }
+      let arrowEnd = idx + ARROW.length;
+      if (line[arrowEnd] === '|') {
+        const closing = line.indexOf('|', arrowEnd + 1);
+        if (closing > arrowEnd) arrowEnd = closing + 1;
+      }
+      out.push(<span key={key++} className="mermaid-arrow">{line.slice(idx, arrowEnd)}</span>);
+      start = arrowEnd;
+    }
+    return <>{out}</>;
   }
   if (/^\s*style\s/.test(line)) return <span className="mermaid-style-line">{line}</span>;
   return <span>{line}</span>;

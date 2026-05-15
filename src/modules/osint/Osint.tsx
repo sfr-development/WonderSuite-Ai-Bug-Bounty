@@ -249,7 +249,7 @@ export function Osint() {
         [/nginx/i, 'Nginx', 'Web Server', 'Server header'],
         [/apache/i, 'Apache', 'Web Server', 'Server header'],
         [/php/i, 'PHP', 'Language', 'Header or body'],
-        [/asp\.net/i, 'ASP.NET', 'Framework', 'Header or body'],
+        [/\basp\.net\b/i, 'ASP.NET', 'Framework', 'Header or body'],
         [/laravel/i, 'Laravel', 'Framework', 'Body pattern'],
         [/django/i, 'Django', 'Framework', 'Body pattern'],
         [/express/i, 'Express', 'Framework', 'Header pattern'],
