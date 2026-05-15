@@ -10,11 +10,14 @@
 
 .shell-body {
   display: flex;
+  flex: 1;
   overflow: hidden;
-  width: calc(100vw / var(--ui-scale, 1));
-  height: calc((100vh - 32px) / var(--ui-scale, 1));
-  transform: scale(var(--ui-scale, 1));
-  transform-origin: top left;
+  min-height: 0;
+  /* Chromium-native zoom: creates a scaled coordinate system *inside* the box
+     while leaving the box itself at its normal flex-allocated size. Content
+     fills the full available space cleanly at any --ui-scale, with no
+     pre-scale width/height compensation needed and no clipping artefacts. */
+  zoom: var(--ui-scale, 1);
 }
 
 .shell-main {
