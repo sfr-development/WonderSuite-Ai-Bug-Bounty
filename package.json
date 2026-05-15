@@ -19,7 +19,7 @@
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.10.2",
     "dagre": "^0.8.5",
-    "lucide-react": "^1.8.0",
+    "lucide-react": "^1.16.0",
     "mermaid": "^11.15.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
