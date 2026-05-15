@@ -106,7 +106,7 @@ function highlightHttp(raw: string) {
 
   const lines = headPart.split('\n');
   const firstLine = lines[0];
-  let firstLineJsx = <span className="hl-firstline">{firstLine}</span>;
+  let firstLineJsx: React.ReactElement;
   if (firstLine.startsWith('HTTP/')) {
     const parts = firstLine.split(' ');
     firstLineJsx = (
