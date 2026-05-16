@@ -77,22 +77,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-            nasm cmake clang libclang-dev
+            nasm cmake clang libclang-dev \
+            libpcap-dev
 
-      - name: Install build dependencies for boring-sys2 (macOS)
+      - name: Install build dependencies (macOS)
         if: matrix.settings.platform == 'macos-latest'
-        run: brew install nasm cmake
+        run: |
+          brew install nasm cmake
+          # libpcap is preinstalled on macOS runners; nothing more needed for pnet.
 
-      - name: Install build dependencies for boring-sys2 (Windows)
+      - name: Install build dependencies (Windows)
         if: matrix.settings.platform == 'windows-latest'
         shell: pwsh
         run: |
           choco install nasm --no-progress -y
           choco install llvm --no-progress -y
-          # Make NASM + libclang reachable for the rest of the job
           echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # No Npcap SDK install needed anymore — WinDivert is bundled in
+          # resources/drivers/windivert/ and dlopened at runtime via libloading.
 
       - name: Setup node
         uses: actions/setup-node@v4

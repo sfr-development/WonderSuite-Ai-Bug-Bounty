@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-05-16
+
+### Added — Ports module (new sidebar entry, Testing group)
+- **TCP Connect engine** — Tokio + dynamically-sized semaphore. AdaptiveTiming controller floats permits live via Little's Law (`in_flight = target_pps × RTT_p50`), re-evaluated every 2 s with a ±20 % dead-band, floor 64 / ceiling 65535. Stop button now `close()`s the semaphore so in-flight `acquire_owned` returns instantly — cancel feels sub-500 ms even at T5/T6.
+- **Real TCP SYN engine (raw sockets)** — not a stub:
+  - **Linux**: pnet `transport_channel(Layer4(Ipv4(TCP)))` over a kernel L3 raw socket. CAP_NET_RAW detected via the `caps` crate; if missing we surface a copy-paste `sudo setcap` command and gracefully fall back to TCP connect for this scan.
+  - **macOS**: same pnet code path (BPF under the hood). `geteuid() == 0` check; non-root path prints the `sudo` invocation.
+  - **Windows**: **WinDivert 2.2.2** (bundled, LGPLv3, EV-signed by Reqrypt LLC). The userspace driver is dlopened at runtime via the `windivert` crate — zero compile-time link against any pcap/Packet/wpcap library. RX uses a `NetworkLayer` handle with filter `inbound and ip and tcp and tcp.DstPort == <scanid> and (tcp.Syn or tcp.Rst)`; TX uses a separate handle with filter `"false"` (we only inject, never capture user traffic). Replaces the previous Npcap dependency — Npcap's free-edition licence forbids bundling without a $11,400/yr OEM contract, WinDivert's LGPLv3 permits redistribution unmodified.
+  - **Stateless cookies**: each SYN's `seq` = `SipHash(src_ip, dst_ip, dst_port, scan_secret)`. RX verifies `ack - 1 == cookie` → spoofs are filtered and per-probe state is zero bytes. Source port (40000–60000) doubles as a scan-ID filter.
+- **One-click "Install network driver" on Windows** — Settings → Ports SYN mode → ElevationModal detects missing WonderSuite network driver service and shows a "Install network driver" button. Tauri commands `portscan_driver_status` + `portscan_driver_install` copy the bundled `WinDivert.dll` next to our exe and `WinDivert64.sys` into `%ProgramData%\WonderSuite\drivers\`, then call `CreateServiceW` + `StartServiceW` via the Win32 SCM API. Single UAC prompt for life. "Re-check" button polls service status. HVCI / Memory Integrity detected via `HKLM\...\HypervisorEnforcedCodeIntegrity\Enabled`; on HVCI-strict machines we surface a clear "disable Memory Integrity in Windows Security to enable raw SYN" message and fall back to TCP connect.
+- **No external download required for WinDivert** — `WinDivert.dll` (46 KB), `WinDivert64.sys` (92 KB) and `WinDivert.lib` ship inside the WonderSuite installer's `resources/drivers/windivert/x64/` directory. Total bundled-driver footprint ~140 KB.
+- **UDP engine** — `tokio::net::UdpSocket` + protocol-specific probes for **14 services**: DNS (`.version.bind` CHAOS TXT), DHCP, TFTP RRQ, NTP v2 client, NetBIOS-NS wildcard, SNMP v1 GET `sysDescr.0` (community `public`), IKE/IPSec (500, 4500), RIP request, IPMI v2 RMCP+, OpenVPN v1 hard-reset, SSDP M-SEARCH, SIP OPTIONS, mDNS service enumeration, QUIC initial. Response → Open, ICMP-unreachable → Closed, timeout → OpenFiltered.
+- **Service detection now uses real `nmap-service-probes`** — bundled at build time (`include_str!`, 2.46 MB, **187 probes + 11 971 match patterns + 203 softmatches** from the canonical nmap repo). `service_probes.rs` parses the format (Probe / rarity / ports / sslports / totalwaitms / fallback / match / softmatch / Exclude) and compiles all regexes once on first access via `Lazy<ProbeDb>`. `$1..$9` capture-interpolation into `p/`, `v/`, `i/`, `h/`, `o/`, `d/`, `cpe:/` follows nmap's semantics. Drops the 15 hand-rolled v0.3.7-prerelease probes.
+- **All 3 scan modes now selectable** in the Ports UI — `Connect` (default, no admin), `SYN` (raw, admin/Npcap), `UDP` (no admin). ElevationModal calls `portscan_capability_check` to render OS-aware status (capabilities present? Npcap installed? version hint from registry).
+- **5 MCP tools** — `port_scan`, `port_scan_range`, `service_detect`, `banner_grab`, `port_scan_results`. Tool count **85 → 90**. AI can drive scans with `mode: "connect" | "syn" | "udp"`; UDP supported unprivileged on the MCP path.
+- **5 output formats** — JSONL, CSV, Nmap XML, gnmap, plain `ip:port`. Live-streamed JSONL during scan; the rest materialize on Export.
+- **Ports state lifted to a global zustand store** (`src/stores/portscanStore.ts`) — scan survives module-unmount, so popping the Ports module into a separate Tauri window mid-scan keeps it running and results stream into both windows.
+
+### Added — Multi-Window workspace
+- Right-click any sidebar module → **"Pop out to window"** spawns a native Tauri WebviewWindow with just that module. Detached state shows as a `window` pill (expanded) or gold dot (collapsed) on the sidebar item.
+- Cross-window state bridge for `sendTo` / `deleteSitemapNode` via Tauri events — "Send to Repeater" from Comparer in the main window still works when Repeater is in a separate window. Self-echo guarded by window-label comparison.
+- Geometry persists per moduleId in `localStorage ws_detached_layout_v1`; on app boot the main shell respawns each persisted window at its last position.
+- 240 ms cubic-bezier pop-in + 240 ms scale-down re-dock animations.
+- 6 new Tauri commands: `window_detach_module`, `window_redock_module`, `window_focus_detached`, `window_list_detached`, `window_move_detached`, `window_resize_detached`.
+
+### Added — UX polish
+- **Desktop notifications** via `tauri-plugin-notification` — Settings → General → "Desktop notifications" toggle. Fires a native OS toast on long-running task completion (port scan done, etc.). Auto-requests OS permission on first enable; persists state in `localStorage ws_desktop_notifications_enabled`.
+- **Live ticker** in Ports — pulsing pill stream of the last 8 results, state-colored.
+- **PPS sparkline** (160×32 SVG) over the last 60 s, peak label.
+- **Scan-completion summary** — donut chart of services by count (12-color palette) + horizontal-bar legend with relative scaling.
+- **Modern checkboxes + sliders** — custom-styled `.ports-modern-check` with checkmark pop-in animation; range slider with gradient fill + glowing thumb.
+- **"?" Unverified pill** on results that are open but lack a service banner or probe match, so the user knows which rows to spot-check manually.
+- **Splash titlebar logo removed** — drag area only, less visual noise.
+- **Zabbix-agent probe** (port 10050/10051) — ZBXD\x01-framed `agent.version` request, parses Zabbix version string from the response. Distinguishes legitimately-open-but-firewalled Zabbix agents (silent: marked unverified) from agents that whitelist our IP (marked `zabbix-agent` with version).
+
+### Changed
+- AI skill (`.claude/skills/wondersuite.md`) — Port Recon section rewritten with the real SYN/UDP engines, decision tree, auto-vuln-hunt hooks. Tool count 85 → 90. Description/trigger phrases extended ("port scan", "what's running on").
+- README — added Port Scanner + Multi-Window sections; MCP tool count 85 → 90; new "Port Recon (5)" row in the tool table; architecture diagram updated.
+- In-app docs (`src/modules/docs/content/ports.md`) — full Ports module documentation with mode / timing / probe details + auto-Npcap-install flow.
+- Tauri capability `default.json` extended to `main` + `detached-*` window labels with `create-webview-window`, `set-position`, `set-size`, `scale-factor`, `outer-position`, `inner-size`, `event listen/unlisten/emit`. Added `notification:default` + permission ops.
+- Sidebar items get a right-click context menu rendered via `createPortal(..., document.body)` so the menu is no longer clipped by the `zoom: var(--ui-scale)` containing-block on `.shell-body`.
+
+### Fixed
+- **Sidebar context menu shifted below the cursor** — `.shell-body` uses Chromium-native `zoom: var(--ui-scale)` which creates a new containing block for `position: fixed` descendants, so `top: y` was being computed from the zoomed-shell origin (below the titlebar). Fix: portal the menu into `document.body`.
+- **Stop button latency at high concurrency** — closing the semaphore (`scan.timing.permits.close()`) on stop wakes every blocked `acquire_owned()` with an error so the engine drains immediately instead of waiting on permits.
+- **Pop-out used to kill the running scan** — Ports state was React-local; now lives in a zustand store with global Tauri-event listeners attached once at first import. Scans run regardless of which window owns the UI.
+
+### Backend internals
+- New `src-tauri/src/portscan/` — `engine/connect.rs` (Tokio CONNECT scanner with adaptive permits), `engine/syn.rs` (cfg-gated per OS: Linux pnet transport, macOS bpf via pnet, Windows pcap + L2 frames + ARP gateway resolution), `engine/udp.rs` (Tokio `UdpSocket` with 14 protocol probes), `timing.rs` (T0–T6 templates + `RttStats` EWMA controller), `probes/` (TLS DER subject extraction; service-probe glue), `service_probes.rs` (nmap-service-probes parser + compiled regex match engine, `Lazy<ProbeDb>`), `npcap.rs` (Windows installer download + UAC-launch), `orchestrator.rs` (AppHandle-optional emit so MCP handlers can drive scans without a frontend), `targets.rs` (CIDR / range / hostname expansion + DNS resolve), `output.rs` (5 formats), `types.rs`.
+- New `src-tauri/src/window_manager.rs` — WebviewWindowBuilder-based detach lifecycle, `DashMap<module_id, window_label>` registry, on-destroy cleanup + `window:redocked` event broadcast.
+- New `src-tauri/build.rs` — auto-resolves Npcap SDK on Windows: respects `PCAP_LIBDIR`; falls back to `src-tauri/.npcap-sdk/`; lazy-downloads `npcap-sdk-1.13.zip` from `npcap.com/dist/` via PowerShell `Invoke-WebRequest` + `Expand-Archive` if neither is present.
+
+### Cargo deps added
+- `pnet 0.35` + `pnet_transport` + `pnet_packet` + `pnet_datalink` (cross-platform raw packet TX/RX + interface enumeration).
+- `socket2 0.5` (raw socket setup), `siphasher 1` (stateless SYN seq cookies), `once_cell 1` (`Lazy<ProbeDb>`).
+- Linux: `caps 0.5` + `libc`.
+- macOS: `libc`.
+- Windows: `windivert 0.6` (with `windivert-sys` bundled WinDivert SDK) + `windows 0.58` (SCM service API) + `windows-registry 0.5` (HVCI detection).
+- `tauri-plugin-notification 2` (desktop notifications).
+
+### CI / release pipeline
+- `release.yml` + `ci.yml` install `libpcap-dev` on Linux (pnet on Linux still uses libpcap headers for some build paths).
+- Windows runners need NO third-party SDK install — WinDivert SDK is vendored into the repo at `src-tauri/resources/drivers/windivert/`, and the `.cargo/config.toml` points `WINDIVERT_PATH` at it via `relative = true`.
+
 ## [0.3.6] — 2026-05-16
 
 ### Added

@@ -580,6 +580,85 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "port_scan".into(),
+            description: "TCP connect port scan against a single host. Returns summary (open count, services, sample) + scan_id for follow-up. Service detection (HTTP, TLS+cert, SSH, FTP/SMTP/IMAP/POP3 banners, MySQL, Postgres, Redis, Mongo, Memcached, RDP, VNC, SMB) runs in-process — no nmap subprocess. Adaptive concurrency via Little's Law. SYN/UDP modes land in v0.3.8 — use mode=\"connect\" for now.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string", "description": "Hostname, IPv4 or IPv6 address" },
+                    "ports": { "type": "string", "description": "Comma list / range / 'top-100' / 'top-1000' / 'all'", "default": "top-100" },
+                    "mode": { "type": "string", "enum": ["connect", "syn", "udp"], "default": "connect", "description": "TCP connect = no admin needed. UDP = no admin, detects open via protocol replies (DNS/SNMP/NTP/SSDP/etc), no closed detection without ICMP. SYN = falls back to connect until v0.3.8." },
+                    "timing": { "type": "string", "enum": ["T0","T1","T2","T3","T4","T5","T6"], "default": "T3" },
+                    "service_detect": { "type": "boolean", "default": true },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 5 },
+                    "max_wait_ms": { "type": "integer", "default": 20000, "description": "Cap how long this call waits for completion; returns partial summary if scan still running" }
+                },
+                "required": ["target"]
+            }),
+        },
+        ToolDef {
+            name: "port_scan_range".into(),
+            description: "Port scan across multiple hosts (CIDR, range, or list). Same options as port_scan plus `targets` array, `exclude_cdn` (drops CloudFront/Cloudflare/Akamai IPs), and `max_hosts` cap. AI: be considerate — /24 with top-1000 = ~256k probes.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "targets": { "type": "array", "items": { "type": "string" }, "description": "Hosts/IPs/CIDRs (e.g. '10.0.0.0/24', 'example.com', '10.0.0.1-50')" },
+                    "ports": { "type": "string", "default": "top-100" },
+                    "mode": { "type": "string", "enum": ["connect", "syn", "udp"], "default": "connect", "description": "TCP connect = no admin needed. UDP = no admin, detects open via protocol replies (DNS/SNMP/NTP/SSDP/etc), no closed detection without ICMP. SYN = falls back to connect until v0.3.8." },
+                    "timing": { "type": "string", "enum": ["T0","T1","T2","T3","T4","T5","T6"], "default": "T3" },
+                    "service_detect": { "type": "boolean", "default": true },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 5 },
+                    "exclude_cdn": { "type": "boolean", "default": false },
+                    "max_hosts": { "type": "integer", "description": "Cap on expanded host count" },
+                    "max_wait_ms": { "type": "integer", "default": 60000 }
+                },
+                "required": ["targets"]
+            }),
+        },
+        ToolDef {
+            name: "service_detect".into(),
+            description: "Surgical service detection against a known-open port. Runs the same in-process probe pipeline as port_scan: server-first banner → port-hint probe → TLS handshake → common fallbacks. Returns product/version/banner + TLS CN/SAN if applicable.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "host": { "type": "string" },
+                    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 7 },
+                    "timeout_ms": { "type": "integer", "default": 2000 }
+                },
+                "required": ["host", "port"]
+            }),
+        },
+        ToolDef {
+            name: "banner_grab".into(),
+            description: "Raw banner grab — connect, optionally send a payload, read up to max_bytes back. No probe synthesis — gives you the raw bytes (UTF-8 string if printable, hex otherwise). Use for custom protocol probing.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "host": { "type": "string" },
+                    "port": { "type": "integer" },
+                    "max_bytes": { "type": "integer", "default": 256, "maximum": 4096 },
+                    "timeout_ms": { "type": "integer", "default": 800 },
+                    "prefer_send": { "type": "string", "description": "Optional bytes to send before reading (UTF-8 only via this surface)" }
+                },
+                "required": ["host", "port"]
+            }),
+        },
+        ToolDef {
+            name: "port_scan_results".into(),
+            description: "Paginated drill-down for a previously-started scan. Returns a slice of results filtered to open by default.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "scan_id": { "type": "string" },
+                    "offset": { "type": "integer", "default": 0 },
+                    "limit": { "type": "integer", "default": 50, "maximum": 500 },
+                    "open_only": { "type": "boolean", "default": true }
+                },
+                "required": ["scan_id"]
+            }),
+        },
+        ToolDef {
             name: "oast_generate_payload".into(),
             description: "Generate OAST callback payloads for blind-vuln detection (auto-starts the HTTP listener on `port` so the returned URLs are immediately reachable; set WS_OAST_HOST env var to expose externally). Supports blind_sqli, blind_ssrf, blind_xxe, blind_cmdi, blind_xss, blind_ssti. After firing the payload, poll `oast_verify action=get_interactions` for callbacks.".into(),
             input_schema: serde_json::json!({

@@ -44,6 +44,10 @@ src-tauri/tree.txt
 .tauri-private-key
 .tauri-private-key.pub
 
+# Npcap SDK — auto-downloaded by src-tauri/build.rs on Windows builds.
+# We don't ship the SDK in the repo (it's freely redistributable but bulky).
+src-tauri/.npcap-sdk/
+
 # Marketing material — internal, do not publish
 tiktok-slides/
 tiktok-slides-*/

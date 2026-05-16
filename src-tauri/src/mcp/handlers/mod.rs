@@ -5,6 +5,7 @@ pub mod http;
 pub mod oast;
 pub mod osint;
 pub mod payloads;
+pub mod portscan;
 pub mod proxy;
 pub mod recon;
 pub mod scanner;
@@ -80,6 +81,12 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "discover_content" => recon::handle_discover_content(params).await,
         "find_secrets" => recon::handle_find_secrets(params).await,
         "dns_resolve" => recon::handle_dns_resolve(params).await,
+
+        "port_scan" => portscan::handle_port_scan(params).await,
+        "port_scan_range" => portscan::handle_port_scan_range(params).await,
+        "service_detect" => portscan::handle_service_detect(params).await,
+        "banner_grab" => portscan::handle_banner_grab(params).await,
+        "port_scan_results" => portscan::handle_port_scan_results(params).await,
 
         "oast_generate_payload" => oast::handle_oast_generate_payload(params).await,
         "oast_start_dns_server" => oast::handle_oast_start_dns_server(params).await,

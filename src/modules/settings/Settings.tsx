@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink } from 'lucide-react';
 import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { useAppStore } from '../../stores';
+import { notificationsEnabled, setNotificationsEnabled } from '../../lib/desktopNotify';
 import './Settings.css';
 
 
@@ -391,7 +393,9 @@ export function Settings() {
               </div>
               <button className="settings-toggle on" onClick={() => {}} />
             </div>
-            
+
+            <DesktopNotificationsToggle />
+
             <GlobalScopeSettings />
           </div>
           </>
@@ -1300,6 +1304,45 @@ function GeneralSystemInfo() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function DesktopNotificationsToggle() {
+  const [enabled, setEnabled] = useState(() => notificationsEnabled());
+  const [permission, setPermission] = useState<string>('unknown');
+
+  useEffect(() => {
+    isPermissionGranted().then((g) => setPermission(g ? 'granted' : 'unknown')).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = !enabled;
+    setEnabled(next);
+    setNotificationsEnabled(next);
+    if (next) {
+      try {
+        const granted = await isPermissionGranted();
+        if (!granted) {
+          const r = await requestPermission();
+          setPermission(r === 'granted' ? 'granted' : 'denied');
+        } else {
+          setPermission('granted');
+        }
+      } catch { setPermission('error'); }
+    }
+  };
+
+  return (
+    <div className="settings-row">
+      <div className="settings-label">
+        Desktop notifications
+        <span>
+          Native OS toast when long-running tasks finish (port scans, active scans, etc.)
+          {permission === 'denied' && <strong style={{ color: 'var(--orange,#fb923c)' }}> — OS permission denied; enable in Windows Settings → Notifications</strong>}
+        </span>
+      </div>
+      <button className={`settings-toggle ${enabled ? 'on' : ''}`} onClick={toggle} />
     </div>
   );
 }

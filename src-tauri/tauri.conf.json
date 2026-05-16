@@ -57,7 +57,10 @@
       "resources/wondersuite-extension/content/relay.js": "wondersuite-extension/content/relay.js",
       "resources/wondersuite-extension/images/icon-16.png": "wondersuite-extension/images/icon-16.png",
       "resources/wondersuite-extension/images/icon-48.png": "wondersuite-extension/images/icon-48.png",
-      "resources/wondersuite-extension/images/icon-128.png": "wondersuite-extension/images/icon-128.png"
+      "resources/wondersuite-extension/images/icon-128.png": "wondersuite-extension/images/icon-128.png",
+      "resources/drivers/windivert/WinDivert.dll": "drivers/windivert/WinDivert.dll",
+      "resources/drivers/windivert/WinDivert64.sys": "drivers/windivert/WinDivert64.sys",
+      "resources/drivers/windivert/LICENSE": "drivers/windivert/LICENSE"
     },
     "linux": {
       "deb": {

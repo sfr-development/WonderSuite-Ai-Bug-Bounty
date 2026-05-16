@@ -13,6 +13,8 @@ mod oast_commands;
 mod osint_commands;
 mod payload_commands;
 mod port_commands;
+mod portscan;
+mod portscan_commands;
 mod project;
 mod proxy;
 mod proxy_commands;
@@ -47,12 +49,15 @@ pub fn run() {
     let intruder_state = intruder::create_intruder_state();
     let ws_state = websocket_commands::create_ws_state();
     let window_state = window_manager::create_window_state();
+    let portscan_state = portscan::orchestrator::create_state();
+    mcp::handlers::portscan::init_state(portscan_state.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(mcp_state)
         .manage(proxy_state)
         .manage(scanner_state)
@@ -60,6 +65,7 @@ pub fn run() {
         .manage(intruder_state)
         .manage(ws_state)
         .manage(window_state)
+        .manage(portscan_state)
         .invoke_handler(tauri::generate_handler![
             commands::send_http_request,
             commands::mcp_start,
@@ -155,6 +161,16 @@ pub fn run() {
             window_manager::window_list_detached,
             window_manager::window_move_detached,
             window_manager::window_resize_detached,
+            portscan_commands::portscan_start,
+            portscan_commands::portscan_stop,
+            portscan_commands::portscan_status,
+            portscan_commands::portscan_list,
+            portscan_commands::portscan_results,
+            portscan_commands::portscan_summary,
+            portscan_commands::portscan_export,
+            portscan_commands::portscan_capability_check,
+            portscan_commands::portscan_driver_status,
+            portscan_commands::portscan_driver_install,
             system::get_system_info,
             browser::browser_detect,
             browser::browser_status,

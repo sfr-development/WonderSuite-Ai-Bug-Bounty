@@ -1,6 +1,6 @@
 ---
 name: wondersuite
-description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (85 tools — proxy + browser + scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser".
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (90 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
 ---
 
 # WonderSuite Pentest Operating Manual
@@ -216,7 +216,7 @@ generate_report({format: "markdown" | "json", scan_id?})
 
 ---
 
-## Tool Reference (85 tools)
+## Tool Reference (90 tools)
 
 ### HTTP / Send Request (the workhorses)
 
@@ -320,6 +320,40 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - **`graphql_introspect({url})`** — discover GraphQL schema (works against many "disabled introspection" servers).
 - **`dns_resolve`**, **`tech_detect`**, **`analyze_cdn_waf`** — basics.
 
+### Port Recon (5 tools — v0.3.7)
+
+In-process port scanner with **three real engines**: TCP Connect (no admin), TCP SYN (raw sockets, requires CAP_NET_RAW / root / Npcap), and UDP (no admin, response-based detection). Service detection runs in-process against **187 probes + 12k match patterns** from nmap's canonical `nmap-service-probes` file — no nmap subprocess. Adaptive concurrency via Little's Law (`in_flight = pps × RTT`).
+
+- **`port_scan({target, ports, mode, timing, service_detect, intensity, max_wait_ms})`** — scan a single host. `ports`: `"top-100"` (default), `"top-1000"`, `"80,443"`, `"1-1024"`, `"all"`. `mode`: `"connect" | "syn" | "udp"` (defaults `connect`). `timing`: T0 paranoid → T6 ludicrous (default T3). Returns `{scan_id, total_probes, targets_resolved, ports_count, summary}` — summary has `total_open`, `by_service` histogram, and a 50-item sample.
+- **`port_scan_range({targets: [...], ports, mode, exclude_cdn, max_hosts, max_wait_ms})`** — scan multiple hosts (CIDR, range, hostnames). `exclude_cdn` drops known CDN ranges. **Be considerate** — `/24` × top-1000 = ~256k probes. SYN mode is much faster than connect for large ranges.
+- **`service_detect({host, port, intensity, timeout_ms})`** — surgical service detection on a known-open port. Runs the full nmap-service-probes pipeline: NULL banner read → port-relevant active probes by rarity ≤ intensity → fallback chain. Returns `{service: {name, product, version, banner, tls_cn, tls_san, info, hostname, os, device, cpe[]}}`.
+- **`banner_grab({host, port, max_bytes, timeout_ms, prefer_send?})`** — raw banner read. No probe synthesis. Returns banner string if printable + hex either way. Use for custom protocols.
+- **`port_scan_results({scan_id, offset, limit, open_only})`** — paginated drill-down for a previously-issued scan_id.
+
+Scan-mode decision:
+```
+Quick triage, no admin               → mode="connect"
+Large subnet, speed + stealth, admin → mode="syn"  (needs CAP_NET_RAW / root / Npcap)
+DNS / SNMP / NTP / IPMI / SIP recon  → mode="udp"
+```
+
+Tool-by-tool decision:
+```
+Single host, fast triage           → port_scan(target, ports="top-100")
+Subnet sweep                       → port_scan_range(targets, exclude_cdn=true)
+Already know port open, want svc   → service_detect(host, port)
+Raw bytes for custom regex match   → banner_grab(host, port, prefer_send="...")
+Drill into a previous scan's full result set → port_scan_results(scan_id, offset, limit)
+```
+
+Privilege model:
+- **Linux SYN**: needs `CAP_NET_RAW`. Tell the user: `sudo setcap cap_net_raw,cap_net_admin=+eip /path/to/wondersuite`. Without it the engine **gracefully falls back to TCP connect** so the scan still produces results.
+- **macOS SYN**: needs `sudo` to run WonderSuite. No `setcap` equivalent.
+- **Windows SYN**: uses **bundled WinDivert** (LGPLv3, EV-signed, ~140 KB). First SYN scan triggers a single UAC prompt to install the kernel driver as a system service. No external download. HVCI / Memory Integrity must be disabled for the driver to load — the UI surfaces this clearly and falls back to TCP connect when HVCI is enforced.
+- **UDP**: no admin needed. Without raw ICMP we can't distinguish `closed` from `open|filtered` (same limitation as nmap UDP without root).
+
+Auto-finding hooks: when `service_detect` reports an `auth_required:false` on a sensitive service (Redis, Mongo, Memcached, anonymous FTP, Elasticsearch) — emit a finding via the scanner-finding event and mention it explicitly. Look for `product` strings matching known CVE-prone software (old OpenSSH, old nginx, etc.) and cross-reference against findings.
+
 ### Codec / Crypto
 
 - **`encode` / `decode`** — base64 / URL / hex.
@@ -418,6 +452,6 @@ Severity scale: `critical | high | medium | low | info`. Use `info` for things l
 
 ## One-Liner You Can Steal
 
-> "I'm wired into a local WonderSuite MCP server (85 tools — proxy / browser / scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+> "I'm wired into a local WonderSuite MCP server (90 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
 
 That's the right opening line for any new engagement.

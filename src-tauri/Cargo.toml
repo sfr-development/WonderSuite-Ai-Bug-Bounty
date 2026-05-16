@@ -18,6 +18,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "socks", "stream"] }
@@ -57,6 +58,15 @@ const-oid = { version = "0.9", features = ["db"] }
 # ── Crypto utilities ──
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
+siphasher = "1"
+once_cell = "1"
+
+# ── Raw-socket SYN port scanner (v0.3.7) ──
+# Just packet building/parsing — we deliberately do NOT pull pnet_datalink
+# because its Windows backend forces a link against Packet.lib (pcap import
+# library) even when unused. The Windows SYN path uses WinDivert at the
+# WFP callout layer instead, which doesn't need L2 plumbing.
+pnet_packet = "0.35"
 
 # ── PKCS#12 (PFX) generation for Windows SChannel TLS identity ──
 p12 = "0.6"
@@ -90,6 +100,39 @@ idna = "1"
 wreq = { version = "5", default-features = false, features = ["json", "stream", "gzip", "brotli", "deflate", "socks"] }
 wreq-util = { version = "2", features = ["emulation"] }
 webpki-root-certs = "1"
+
+# Per-platform raw-socket SYN scanner extras.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+# L3 raw socket TX/RX via pnet's transport layer. Unix-only — Windows uses
+# WinDivert (kernel WFP callout) instead.
+pnet_transport = "0.35"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = "0.5"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Manual WinDivert FFI via libloading — see src/portscan/windivert_ffi.rs.
+# We bundle WinDivert.dll + WinDivert64.sys (LGPLv3, EV-signed by Reqrypt LLC)
+# under resources/drivers/windivert/ and dlopen the DLL at *first SYN scan*
+# (not at app startup), so the .exe launches cleanly on machines with no
+# pcap stack. No `windivert` / `windivert-sys` crate dep — those force a
+# static link that breaks app startup on stock Windows.
+libloading = "0.8"
+windows = { version = "0.58", features = [
+    "Win32_System_Services",
+    "Win32_System_Registry",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-registry = "0.5"
 
 # ── Release Profile ──
 [profile.release]

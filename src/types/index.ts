@@ -5,6 +5,7 @@ export type ModuleId =
   | 'replay'
   | 'attack'
   | 'scan'
+  | 'ports'
   | 'sitemap'
   | 'tokens'
   | 'tools'

@@ -1,0 +1,1085 @@
+.ports-module {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+/* ─── Toolbar ───────────────────────────────────────────────── */
+.ports-toolbar {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ports-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.ports-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.ports-field.grow {
+  flex: 1;
+}
+
+.ports-field label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-3);
+}
+
+.ports-field input {
+  padding: 7px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  transition: border-color 120ms;
+}
+
+.ports-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ports-field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ports-actions {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.ports-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.ports-btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.ports-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ports-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0a0a;
+}
+
+.ports-btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+.ports-btn.danger {
+  background: var(--red, #e53e3e);
+  border-color: var(--red, #e53e3e);
+  color: white;
+}
+
+.ports-btn.ghost {
+  background: transparent;
+  font-weight: 500;
+}
+
+/* ─── Presets ───────────────────────────────────────────────── */
+.ports-presets {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.ports-preset-chip {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: 4px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.ports-preset-chip:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.ports-preset-chip.active {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.ports-preset-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ─── Mode/Timing/Flags row ─────────────────────────────────── */
+.ports-options {
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.ports-block-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-3);
+  display: block;
+  margin-bottom: 5px;
+}
+
+.ports-mode-cards {
+  display: flex;
+  gap: 6px;
+}
+
+.ports-mode-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.ports-mode-card:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+
+.ports-mode-card.active {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.ports-mode-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ports-mode-name {
+  white-space: nowrap;
+}
+
+.ports-admin-pill {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  background: rgba(229, 62, 62, 0.15);
+  border: 1px solid rgba(229, 62, 62, 0.35);
+  color: var(--red, #e53e3e);
+  border-radius: 3px;
+}
+
+.ports-timing {
+  min-width: 200px;
+}
+
+.ports-timing-chips {
+  display: flex;
+  gap: 2px;
+}
+
+.ports-timing-chip {
+  width: 28px;
+  padding: 6px 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.ports-timing-chip:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.ports-timing-chip:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+
+.ports-timing-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0a0a;
+}
+
+.ports-timing-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.ports-timing-name {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.ports-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  flex: 1;
+  align-items: center;
+}
+
+/* ─── Modern checkboxes (used everywhere in the module) ─────── */
+.ports-modern-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  transition: color 120ms;
+}
+
+.ports-modern-check:hover:not(.disabled) {
+  color: var(--text-0);
+}
+
+.ports-modern-check.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ports-modern-check input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.ports-check-box {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  position: relative;
+  transition: all 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.ports-modern-check:hover:not(.disabled) .ports-check-box {
+  border-color: var(--accent);
+}
+
+.ports-modern-check input:checked + .ports-check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ports-modern-check input:checked + .ports-check-box::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 5px;
+  height: 9px;
+  border: solid #0a0a0a;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  animation: ports-check-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes ports-check-pop {
+  from { transform: rotate(45deg) scale(0.4); opacity: 0; }
+  to { transform: rotate(45deg) scale(1); opacity: 1; }
+}
+
+.ports-check-label {
+  white-space: nowrap;
+}
+
+/* ─── Modern slider ─────────────────────────────────────────── */
+.ports-modern-slider {
+  position: relative;
+  width: 120px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.ports-modern-slider.disabled { opacity: 0.5; }
+
+.ports-slider-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ports-slider-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  border-radius: 2px;
+  transition: width 100ms ease;
+}
+
+.ports-modern-slider input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ports-modern-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(232, 161, 69, 0.4);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.ports-modern-slider input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 12px rgba(232, 161, 69, 0.6);
+}
+
+.ports-modern-slider input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: pointer;
+}
+
+.ports-intensity-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ports-intensity-label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.ports-intensity-value {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 12px;
+  text-align: center;
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+/* ─── Live bar (progress + live stats + sparkline) ────────── */
+.ports-livebar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "progress sparkline"
+    "stats sparkline";
+  gap: 4px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-1);
+  align-items: center;
+}
+
+.ports-progressbar {
+  grid-area: progress;
+}
+
+.ports-progress-rail {
+  height: 4px;
+  background: var(--bg-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ports-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  border-radius: 2px;
+  transition: width 200ms ease;
+  box-shadow: 0 0 8px rgba(232, 161, 69, 0.5);
+}
+
+.ports-progress-fill.running {
+  animation: ports-progress-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ports-progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.ports-live-stats {
+  grid-area: stats;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.ports-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-stat strong {
+  color: var(--text-0);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.ports-stat em {
+  font-style: normal;
+  color: var(--text-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.ports-stat-open strong { color: var(--green, #4ade80); }
+.ports-stat-filtered strong { color: var(--orange, #fb923c); }
+
+.ports-stat-idle {
+  font-size: 11px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.ports-spin {
+  animation: spin 1s linear infinite;
+  color: var(--accent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── pps sparkline ────────────────────────────────────────── */
+.ports-sparkline {
+  grid-area: sparkline;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 160px;
+}
+
+.ports-sparkline svg {
+  display: block;
+}
+
+.ports-sparkline-max {
+  font-size: 9px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ports-sparkline-empty {
+  font-size: 10px;
+  color: var(--text-3);
+  font-style: italic;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 30px;
+}
+
+/* ─── Live ticker ──────────────────────────────────────────── */
+.ports-ticker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border-bottom: 1px solid var(--border-1);
+  overflow: hidden;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-ticker-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: var(--accent-muted);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  flex-shrink: 0;
+}
+
+.ports-ticker-stream {
+  display: flex;
+  gap: 5px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.ports-ticker-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 2px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: 11px;
+  font-size: 10px;
+  color: var(--text-1);
+  white-space: nowrap;
+  animation: ports-ticker-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ports-ticker-pill strong {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.ports-ticker-pill em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.ports-ticker-pill.state-open {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.35);
+  color: var(--green, #4ade80);
+}
+
+.ports-ticker-pill.state-open strong { color: var(--green, #4ade80); }
+.ports-ticker-pill.state-open em { color: var(--green, #4ade80); }
+
+.ports-ticker-pill.state-filtered {
+  background: rgba(251, 146, 60, 0.1);
+  border-color: rgba(251, 146, 60, 0.25);
+  color: var(--orange, #fb923c);
+}
+
+.ports-ticker-pill.state-closed {
+  opacity: 0.55;
+}
+
+.ports-ticker-waiting {
+  font-size: 10px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+@keyframes ports-ticker-in {
+  from { transform: translateX(-12px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* ─── Scan summary (donut + legend) ─────────────────────── */
+.ports-summary {
+  padding: 14px 16px;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border-bottom: 1px solid var(--border-1);
+  animation: ports-summary-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes ports-summary-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ports-summary-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ports-summary-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--accent);
+}
+
+.ports-summary-meta {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  color: var(--text-3);
+}
+
+.ports-summary-body {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.ports-donut {
+  flex-shrink: 0;
+}
+
+.ports-donut-num {
+  font-size: 24px;
+  font-weight: 700;
+  fill: var(--text-0);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-donut-label {
+  font-size: 10px;
+  fill: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.ports-summary-legend {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 12px;
+}
+
+.ports-legend-row {
+  display: grid;
+  grid-template-columns: 10px 90px 1fr 30px;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ports-legend-name {
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ports-legend-bar {
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ports-legend-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.ports-legend-count {
+  text-align: right;
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+/* ─── Results toolbar ──────────────────────────────────────── */
+.ports-results-toolbar {
+  padding: 8px 16px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.ports-filter {
+  flex: 1;
+  padding: 5px 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 11px;
+  max-width: 300px;
+}
+
+.ports-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ports-toggle-states {
+  font-size: 10px;
+}
+
+.ports-toggle-states .ports-check-box {
+  width: 12px;
+  height: 12px;
+}
+
+.ports-toggle-states input:checked + .ports-check-box::after {
+  left: 2px;
+  top: -1px;
+  width: 4px;
+  height: 8px;
+  border-width: 0 2px 2px 0;
+}
+
+.ports-result-count {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-export-group {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* ─── Results table ────────────────────────────────────────── */
+.ports-results-table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.ports-row-head,
+.ports-row-result {
+  display: grid;
+  grid-template-columns: 130px 60px 80px 90px 140px 90px 1fr 60px 70px;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11px;
+  align-items: center;
+}
+
+.ports-row-head {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-1);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 9px;
+  color: var(--text-3);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.ports-rows {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.ports-row-result {
+  border-bottom: 1px solid var(--border-0);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  color: var(--text-1);
+  transition: background 100ms;
+}
+
+.ports-row-result:hover {
+  background: var(--bg-1);
+}
+
+.ports-row-result.state-open {
+  border-left: 2px solid var(--green, #4ade80);
+}
+
+.ports-row-result.state-filtered {
+  opacity: 0.55;
+  border-left: 2px solid var(--orange, #fb923c);
+}
+
+.ports-row-result.state-closed {
+  opacity: 0.4;
+}
+
+.ports-row-result .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ports-state-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.ports-state-pill.open {
+  background: rgba(74, 222, 128, 0.18);
+  color: var(--green, #4ade80);
+}
+
+.ports-state-pill.filtered {
+  background: rgba(251, 146, 60, 0.18);
+  color: var(--orange, #fb923c);
+}
+
+.ports-state-pill.closed {
+  background: rgba(120, 120, 120, 0.15);
+  color: var(--text-3);
+}
+
+.ports-state-pill.open-filtered {
+  background: rgba(232, 161, 69, 0.18);
+  color: var(--accent);
+}
+
+.ports-unverified-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(251, 146, 60, 0.12);
+  border: 1px solid rgba(251, 146, 60, 0.32);
+  border-radius: 3px;
+  color: var(--orange, #fb923c);
+  cursor: help;
+}
+
+.cell.actions {
+  display: inline-flex;
+  gap: 3px;
+  justify-content: flex-end;
+}
+
+.ports-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 120ms;
+}
+
+.ports-row-btn:hover {
+  background: var(--bg-2);
+  border-color: var(--border-1);
+  color: var(--accent);
+}
+
+/* ─── Empty state ──────────────────────────────────────────── */
+.ports-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px;
+  color: var(--text-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ─── Elevation modal ──────────────────────────────────────── */
+.ports-elev-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: ports-elev-fade 160ms ease both;
+}
+
+@keyframes ports-elev-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ports-elev-modal {
+  width: 520px;
+  max-width: 90vw;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-m);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  animation: ports-elev-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes ports-elev-pop {
+  from { transform: scale(0.94); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.ports-elev-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+  border-bottom: 1px solid var(--border-1);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.ports-elev-body {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.6;
+}
+
+.ports-elev-body p {
+  margin: 0 0 12px;
+}
+
+.ports-elev-body ul {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: var(--text-2);
+}
+
+.ports-elev-body li {
+  margin-bottom: 4px;
+}
+
+.ports-elev-body code {
+  background: var(--bg-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.ports-elev-status {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-s);
+  align-items: flex-start;
+  font-size: 11px;
+}
+
+.ports-elev-status svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.ports-elev-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-1);
+}
+
+.ports-elev-npcap {
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ports-elev-npcap-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ports-elev-npcap-head strong {
+  font-size: 11px;
+  color: var(--text-0);
+}
+
+.ports-elev-npcap-head span {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.ports-elev-npcap .ports-btn {
+  justify-content: center;
+}
+
+.ports-elev-ok {
+  background: rgba(74, 222, 128, 0.1) !important;
+  border-color: rgba(74, 222, 128, 0.32) !important;
+  color: var(--green, #4ade80);
+}
+
+.ports-elev-ok svg { color: var(--green, #4ade80); }

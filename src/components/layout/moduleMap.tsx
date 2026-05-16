@@ -8,6 +8,7 @@ export const moduleMap: Record<string, React.LazyExoticComponent<React.Component
   replay:     lazy(() => import('../../modules/replay/Replay').then(m => ({ default: m.Replay }))),
   attack:     lazy(() => import('../../modules/attack/Attack').then(m => ({ default: m.Attack }))),
   scan:       lazy(() => import('../../modules/scan/Scan').then(m => ({ default: m.Scan }))),
+  ports:      lazy(() => import('../../modules/ports/Ports').then(m => ({ default: m.Ports }))),
   sitemap:    lazy(() => import('../../modules/sitemap/Sitemap').then(m => ({ default: m.Sitemap }))),
   tokens:     lazy(() => import('../../modules/tokens/Tokens').then(m => ({ default: m.Tokens }))),
   tools:      lazy(() => import('../../modules/tools/Tools').then(m => ({ default: m.Tools }))),
@@ -29,7 +30,7 @@ export const moduleMap: Record<string, React.LazyExoticComponent<React.Component
 
 export const moduleLabels: Record<string, string> = {
   dashboard: 'Dashboard', intercept: 'Intercept', traffic: 'Traffic',
-  replay: 'Repeater', attack: 'Intruder', scan: 'Scanner',
+  replay: 'Repeater', attack: 'Intruder', scan: 'Scanner', ports: 'Ports',
   sitemap: 'Sitemap', tokens: 'Sequencer', tools: 'Tools',
   findings: 'Findings', comparer: 'Comparer', logger: 'Logger',
   organizer: 'Organizer', agent: 'Agent', templates: 'Templates',

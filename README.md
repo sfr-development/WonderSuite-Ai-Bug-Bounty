@@ -136,7 +136,76 @@ TLS impersonation is **on by default**. It can be disabled in **Settings → Bro
 
 Multi-level fetcher with robots.txt + sitemap.xml + `/.well-known/` + JS endpoint extraction discovery, soft-404 detection, SPA-aware rendering hooks, cookie + path canonicalization. Regex-based fast path for static apps; for SPAs the browser MCP surface is the better tool.
 
-### MCP Server — 85 Tools + Operator Skill
+### Port Scanner — In-Process, Adaptive, Three-Mode (v0.3.7+)
+
+Built-in port scanner with **three real engines**: TCP Connect (no admin, default), TCP SYN (raw sockets via bundled WinDivert on Windows / pnet on Linux+macOS), and UDP (no admin, response-based protocol detection). **No nmap subprocess** — service detection runs against the real `nmap-service-probes` file (187 probes, 12k+ regex match patterns) embedded at build time. **Adaptive concurrency via Little's Law** (`in_flight = target_pps × RTT_p50`) — the permit pool floats with observed network conditions every 2 seconds, where RustScan's `batch_size` is fixed at startup. Live streaming results to a virtualized table; presets (Top-100, Top-1000, Web, Dev, DB, All); timing templates T0 paranoid → T6 ludicrous; export to JSONL, CSV, Nmap XML, gnmap, or `ip:port`. CIDR + range + hostname expansion. Idle-mode caps at ~100 pps for field-laptop use.
+
+#### How it flows — three modes, one orchestrator
+
+```mermaid
+flowchart TB
+    UI(["Ports module<br/><sub>target · ports · mode · timing · service_detect</sub>"])
+
+    UI --> Orch{"Orchestrator<br/><sub>portscan::orchestrator</sub>"}
+
+    subgraph Modes["Engine dispatch by mode"]
+      direction LR
+      Connect["<b>TCP Connect</b><br/><sub>tokio::net::TcpStream<br/>kernel TCP/IP stack<br/>no admin</sub>"]
+      Syn["<b>TCP SYN</b> · raw sockets<br/><sub>WinDivert (Win) · pnet (Linux/macOS)<br/>SipHash stateless cookies<br/>masscan-style RX dedup</sub>"]
+      Udp["<b>UDP</b><br/><sub>tokio::net::UdpSocket<br/>14 protocol-specific probes<br/>DNS · NTP · SNMP · SSDP · …</sub>"]
+    end
+
+    Orch -->|mode=connect| Connect
+    Orch -->|mode=syn| Syn
+    Orch -->|mode=udp| Udp
+
+    subgraph Timing["Adaptive permits — Little's Law"]
+      direction TB
+      RTT["RTT EWMA p50"]
+      Calc["target_pps × RTT_p50<br/>= in_flight permits"]
+      Sem["tokio::Semaphore<br/><sub>permits live-resized<br/>every 2 s · dead-band ±20 %</sub>"]
+      RTT --> Calc --> Sem
+    end
+
+    Connect & Syn & Udp --> Sem
+    Sem -->|"acquire_owned().await"| Probe[/"Per-probe socket I/O"/]
+
+    Probe -->|response| ProbeDb["<b>nmap-service-probes</b><br/><sub>include_str!() at build time<br/>187 probes · 11 971 matches<br/>compiled regex via Lazy&lt;ProbeDb&gt;</sub>"]
+    ProbeDb -->|match| Result["ScanResult<br/><sub>state · service · product · version · banner</sub>"]
+
+    Result --> Emit["Tauri emit<br/><sub>portscan:result · :progress · :done</sub>"]
+    Emit --> Live(["Live UI<br/><sub>virtualized table<br/>pps sparkline<br/>services donut</sub>"])
+    Emit -->|persists| Store["zustand portscanStore<br/><sub>survives module-unmount + pop-out</sub>"]
+
+    classDef ui     fill:#1f2937,stroke:#94a3b8,stroke-width:1.5px,color:#e2e8f0
+    classDef orch   fill:#3b0764,stroke:#a855f7,stroke-width:2px,color:#f3e8ff
+    classDef engine fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#d1fae5
+    classDef store  fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#dbeafe
+    classDef probe  fill:#7c2d12,stroke:#fb923c,stroke-width:2px,color:#fed7aa
+
+    class UI,Live ui
+    class Orch orch
+    class Connect,Syn,Udp,Probe engine
+    class RTT,Calc,Sem orch
+    class ProbeDb probe
+    class Result,Emit,Store store
+```
+
+#### Privilege model
+
+| Platform | Connect | SYN | UDP |
+|---|---|---|---|
+| Linux | no admin | `cap_net_raw` via `setcap` | no admin (raw ICMP optional for closed-port detection) |
+| macOS | no admin | root (signed launchd helper coming) | no admin |
+| Windows | no admin | bundled **WinDivert** (LGPLv3, EV-signed by Reqrypt LLC) — one UAC consent for the SCM service install, no external download | no admin |
+
+WonderSuite ships WinDivert 2.2.2 inside the installer (`WinDivert.dll` + `WinDivert64.sys`, 140 KB total). At first SYN scan the UI offers a one-click "Install network driver" button → `ShellExecuteExW` with verb `runas` → UAC consent → `sc.exe create` + `sc.exe start` register the kernel service. WinDivert.dll is dlopened from the resource_dir at scan time via `libloading` — **no compile-time link**, so the .exe launches cleanly on machines that don't have the driver yet (graceful fallback to TCP connect with a clear error message). HVCI / Memory Integrity detected via registry; on HVCI-strict machines the SYN engine surfaces a clear "disable Memory Integrity" message and falls back to connect.
+
+### Multi-Window Workspace (v0.3.7+)
+
+Right-click any sidebar module → **"Pop out to window"** spawns a native Tauri window with just that module. Cross-monitor workflow: Comparer on monitor 1, Repeater on monitor 2, Logger on monitor 3, main shell on monitor 4. Geometry persists per moduleId in localStorage — windows respawn at the same position on app restart (workspace save). Cross-window state bridge via Tauri events: "Send to Repeater" from the Traffic tab in the main window still works when Repeater is detached. 240 ms pop-in animation, 240 ms scale-down re-dock. Each detached window is a separate WebView (~40-60 MB RAM) but shares one Rust backend — no IPC duplication.
+
+### MCP Server — 90 Tools + Operator Skill
 
 Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsurf, VS Code, Antigravity, Gemini CLI, …) to autonomously conduct security research against WonderSuite's tool surface. Ships with a project-level Claude skill ([`.claude/skills/wondersuite.md`](.claude/skills/wondersuite.md)) that teaches the AI workflows, error-recovery, and when-to-ask-vs-act — see [Skill File](#skill-file--teach-your-ai-how-to-use-wondersuite) below.
 
@@ -148,6 +217,7 @@ Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsur
 | Intruder | `fuzz_request` — Sniper · Battering Ram · Pitchfork · Cluster Bomb |
 | Browser (24) | `browser_open` · **`browser_attach`** (reuse running WonderBrowser; `auto_launch:true` spawns) · `browser_close` · `browser_navigate` · **`browser_snapshot`** (a11y tree + ref=eN + forms-with-labels + honeypot detection + security block) · `browser_screenshot` (writes JPEG to disk, returns path) · **`browser_click`** (CDP-native, isTrusted:true, humanlike trajectory) · **`browser_type`** (CDP `insertText` with Gaussian cadence) · **`browser_fill_form`** (ref/selector/name + auto-submit; ref path goes through humanlike CDP input) · `browser_press_key` (CDP `dispatchKeyEvent`) · `browser_scroll` (CDP `mouseWheel` event) · `browser_select_option` · `browser_set_file_input` · `browser_get_outer_html` · `browser_evaluate` · **`browser_storage_full`** (cookies+LS+SS+IDB+SW+caches+cookie_header) · `browser_console` (incl. CSP violations) · `browser_dom_sinks` (innerHTML/eval/postMessage enum) · `browser_network_traffic` (CDP ring buffer) · **`browser_replay_to_proxy`** (hand browser request to Repeater) · `browser_resource_hints` (robots/well-known/sourcemaps) · `browser_wait_for` · `browser_tabs` · **`browser_stealth_check`** (self-test the human-emulation stack) |
 | Recon | `crawl_target` · `discover_content` · `discover_subdomains` (concurrent DNS) · `find_secrets` · `dns_resolve` (with CDN detection) · `js_link_finder` |
+| Port Scanner (5) | **`port_scan`** (host + presets + 15 in-process probes) · **`port_scan_range`** (CIDR/range/list, `exclude_cdn`) · **`service_detect`** (probe a known-open port) · **`banner_grab`** (raw bytes, custom payload) · **`port_scan_results`** (paginated drill-down) |
 | OSINT | `whois_lookup` · `asn_lookup` · `crtsh_search` · `wayback_lookup` · `hackertarget_lookup` · `ip_geolocation` · `tech_detect` · `favicon_hash` · `reverse_ip_lookup` · `graphql_introspect` |
 | Codec | `encode` · `decode` · `hash` · `smart_decode` · **`analyze_jwt`** (alg=none, kid SQLi/traversal, jku/x5u SSRF, HS/RS confusion) |
 | OAST | `oast_verify` (auto-bind HTTP listener, self-test, get_interactions) · `oast_start_dns_server` · `oast_start_smtp_server` · `oast_generate_payload` (auto-bind + path-correlated `callback_url` per payload) |
@@ -292,7 +362,7 @@ flowchart TB
                 OAST["<b>OAST Listener</b><br/><sub>HTTP · DNS · SMTP<br/>Path-correlated callbacks</sub>"]
             end
 
-            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>85 security tools</b><br/>incl. 24 pentest-grade browser tools</sub>"]
+            MCP["<b>MCP Server</b><br/><sub>Axum · JSON-RPC 2.0 · :3100<br/><b>90 security tools</b><br/>incl. 24 browser + 5 port-scan tools</sub>"]
 
             Payloads[("Payload Arsenal<br/><sub>SecLists · PayloadsAllTheThings<br/>157k payloads</sub>")]
         end
@@ -458,7 +528,7 @@ wondersuite/
 │       │   │   └── handlers.rs   #   tool handlers
 │       │   ├── handlers/         # Other tool handlers (proxy, scanner, …)
 │       │   ├── router.rs         # JSON-RPC dispatcher
-│       │   └── mod.rs            # Tool definitions (85 tools)
+│       │   └── mod.rs            # Tool definitions (90 tools)
 │       ├── proxy/                # MITM proxy engine
 │       │   ├── engine.rs         # Core proxy logic + impersonate branch
 │       │   ├── ca.rs             # Certificate authority
