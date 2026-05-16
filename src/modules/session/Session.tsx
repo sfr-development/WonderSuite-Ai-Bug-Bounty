@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Cookie, ListChecks, Play, Plus, Trash2, Download, Upload, RefreshCcw, Check, X, ToggleLeft, ToggleRight, Zap } from 'lucide-react';
+import { Cookie, ListChecks, Play, Plus, Trash2, Download, Upload, RefreshCcw, Check, X, ToggleLeft, ToggleRight, Zap, Link2, Link2Off } from 'lucide-react';
+import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
 import './Session.css';
 
 type SessionTab = 'cookies' | 'macros' | 'rules';
@@ -34,6 +35,18 @@ export function Session() {
   const [macroResult, setMacroResult] = useState<Record<string, string> | null>(null);
 
   const [rules, setRules] = useState<RuleItem[]>([]);
+
+  const [browserSyncLive, setBrowserSyncLive] = useState(false);
+
+  const pollBrowserSync = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const live = await invoke<boolean>('session_browser_sync_status');
+      setBrowserSyncLive(live);
+    } catch { setBrowserSyncLive(false); }
+  }, []);
+
+  useVisibilityAwareInterval(pollBrowserSync, 4000);
 
   const loadCookies = useCallback(async () => {
     try {
@@ -210,6 +223,16 @@ export function Session() {
               <button className="session-action-btn" onClick={importCookies}><Upload size={9} /> Import</button>
               <button className="session-action-btn danger" onClick={clearAllCookies}><Trash2 size={9} /> Clear All</button>
               <button className="session-action-btn" onClick={loadCookies}><RefreshCcw size={9} /></button>
+              <span
+                className={`session-browser-sync ${browserSyncLive ? 'live' : 'idle'}`}
+                title={browserSyncLive
+                  ? 'WonderBrowser is open — every cookie edit is pushed via CDP Network.setCookie.'
+                  : 'No active WonderBrowser CDP session. Open a browser to enable live-sync.'}
+              >
+                {browserSyncLive
+                  ? <><Link2 size={10} /> Live-sync to browser</>
+                  : <><Link2Off size={10} /> Jar-only (no browser)</>}
+              </span>
             </div>
 
             {editCookie && (

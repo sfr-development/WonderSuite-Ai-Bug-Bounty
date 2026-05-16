@@ -130,6 +130,7 @@ pub fn run() {
             session_commands::session_create_rule,
             session_commands::session_toggle_rule,
             session_commands::session_delete_rule,
+            session_commands::session_browser_sync_status,
             intruder::intruder_start,
             intruder::intruder_stop,
             intruder::intruder_pause,
