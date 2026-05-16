@@ -13,6 +13,17 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 [![License](https://img.shields.io/badge/License-MIT-success?style=flat-square)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](#contributing)
 
+[![Latest Release](https://img.shields.io/github/v/release/sfr-development/WonderSuite-Ai-Bug-Bounty?style=flat-square&logo=github&label=latest&color=success)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest)
+[![Release Date](https://img.shields.io/github/release-date/sfr-development/WonderSuite-Ai-Bug-Bounty?style=flat-square&color=blue)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest)
+[![Downloads (total)](https://img.shields.io/github/downloads/sfr-development/WonderSuite-Ai-Bug-Bounty/total?style=flat-square&logo=github&color=orange&label=downloads)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases)
+[![Downloads (latest)](https://img.shields.io/github/downloads/sfr-development/WonderSuite-Ai-Bug-Bounty/latest/total?style=flat-square&color=orange&label=downloads%20%28latest%29)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest)
+[![Stars](https://img.shields.io/github/stars/sfr-development/WonderSuite-Ai-Bug-Bounty?style=flat-square&logo=github&color=yellow)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/stargazers)
+[![Forks](https://img.shields.io/github/forks/sfr-development/WonderSuite-Ai-Bug-Bounty?style=flat-square&logo=github&color=blueviolet)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/network/members)
+[![Last Commit](https://img.shields.io/github/last-commit/sfr-development/WonderSuite-Ai-Bug-Bounty?style=flat-square&color=informational)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/commits/main)
+[![CI](https://img.shields.io/github/actions/workflow/status/sfr-development/WonderSuite-Ai-Bug-Bounty/ci.yml?branch=main&style=flat-square&logo=github&label=CI)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/sfr-development/WonderSuite-Ai-Bug-Bounty/codeql.yml?branch=main&style=flat-square&logo=github&label=CodeQL)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/actions/workflows/codeql.yml)
+
+[**Download**](#download) ·
 [**Features**](#core-capabilities) ·
 [**Screenshots**](#screenshots) ·
 [**Getting Started**](#getting-started) ·
@@ -420,7 +431,32 @@ flowchart TB
 | HTTP Client | reqwest with TLS 1.3 |
 | OAST | Embedded axum HTTP listener + tokio UDP DNS server + raw-TCP SMTP listener, shared `INTERACTIONS` log |
 
+## Download
+
+Pre-built, code-signed installers for all major platforms are published on every release. The Tauri updater also serves these binaries — running WonderSuite checks `latest.json` on startup and offers an in-app update when a new version is available.
+
+<div align="center">
+
+| Platform | Installer | Notes |
+|---|---|---|
+| **Windows 10/11 (x64)** | [`.msi`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) · [`.exe` (NSIS)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) | Bundles WinDivert 2.2.2 — one UAC consent on first SYN scan, none afterward |
+| **macOS (Apple Silicon)** | [`WonderSuite_*_aarch64.dmg`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) | M1 / M2 / M3 / M4 native |
+| **macOS (Intel)** | [`WonderSuite_*_x64.dmg`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) | x86_64 native |
+| **Linux (x86_64)** | [`.AppImage`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) · [`.deb`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) · [`.rpm`](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest) | Raw-socket SYN scan needs `CAP_NET_RAW` |
+
+**[📥 Latest release →](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases/latest)** &nbsp;·&nbsp; **[All releases →](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/releases)** &nbsp;·&nbsp; **[Changelog →](CHANGELOG.md)**
+
+![Total downloads](https://img.shields.io/github/downloads/sfr-development/WonderSuite-Ai-Bug-Bounty/total?style=for-the-badge&logo=github&color=orange&label=total%20downloads)
+![Latest release downloads](https://img.shields.io/github/downloads/sfr-development/WonderSuite-Ai-Bug-Bounty/latest/total?style=for-the-badge&color=success&label=latest%20release)
+![Stars](https://img.shields.io/github/stars/sfr-development/WonderSuite-Ai-Bug-Bounty?style=for-the-badge&logo=github&color=yellow)
+
+</div>
+
+Every artifact is reproducibly built in GitHub Actions and ships with a Tauri-updater signature (`.sig` next to each installer). Verify a download against the published Ed25519 public key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`).
+
 ## Getting Started
+
+> Skip this section if you just want to run WonderSuite — grab a [pre-built installer](#download) above. The instructions below are for building from source.
 
 ### Prerequisites
 
@@ -430,7 +466,7 @@ flowchart TB
 - On **Linux**: `webkit2gtk-4.1`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `build-essential`
 - On **macOS**: Xcode Command Line Tools
 
-### Installation
+### Installation (from source)
 
 ```bash
 git clone https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty.git
