@@ -288,7 +288,7 @@ export function Ports() {
           <span className="ports-ticker-label">{running ? 'LIVE' : 'LAST'}</span>
           <div className="ports-ticker-stream">
             {tickerEntries.map((r, i) => (
-              <span key={`${r.ip}:${r.port}:${r.ts}`} className={`ports-ticker-pill state-${r.state.replace('|', '-')}`} style={{ opacity: 1 - i * 0.1 }}>
+              <span key={`${r.ip}:${r.port}:${r.ts}`} className={`ports-ticker-pill state-${r.state.replace(/\|/g, '-')}`} style={{ opacity: 1 - i * 0.1 }}>
                 <strong>{r.ip}</strong>:{r.port}
                 {r.service?.name && <em> · {r.service.name}</em>}
               </span>
@@ -380,11 +380,11 @@ function Row({ r, sendTo }: { r: ScanResult; sendTo: SendToFn }) {
   const noService = isOpen && !r.service;
   const isHttp = r.service?.name === 'http' || r.service?.name === 'https' || r.port === 80 || r.port === 443 || r.port === 8080 || r.port === 8443;
   return (
-    <div className={`ports-row-result state-${r.state.replace('|', '-')}`}>
+    <div className={`ports-row-result state-${r.state.replace(/\|/g, '-')}`}>
       <div className="cell host">{r.ip}</div>
       <div className="cell port">{r.port}</div>
       <div className="cell state">
-        <span className={`ports-state-pill ${r.state.replace('|', '-')}`}>{r.state}</span>
+        <span className={`ports-state-pill ${r.state.replace(/\|/g, '-')}`}>{r.state}</span>
         {noService && (
           <span className="ports-unverified-pill" title="Open but no service banner / probe match — verify manually">
             <HelpCircle size={9} />
