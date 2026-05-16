@@ -43,6 +43,65 @@
   min-height: 0;
 }
 
+/* ─── Detached module placeholder ─────────────────────────── */
+.shell-detached-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.shell-detached-placeholder-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 36px;
+  background: var(--bg-1);
+  border: 1px dashed var(--border-1);
+  border-radius: var(--radius-m);
+  max-width: 420px;
+  text-align: center;
+}
+
+.shell-detached-placeholder-title {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.shell-detached-placeholder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.shell-detached-btn {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  color: var(--text-1);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.shell-detached-btn:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.shell-detached-btn.accent {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.shell-detached-btn.accent:hover {
+  background: var(--accent-border);
+}
+
 /* ─── TOAST NOTIFICATIONS ─── */
 .shell-toast-container {
   position: fixed;

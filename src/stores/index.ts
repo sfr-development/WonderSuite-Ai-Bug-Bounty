@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ModuleId, ReplayTab } from '../types';
+import { broadcastAction, subscribeAction } from './crossWindowSync';
 
 export interface ToastConfig {
   id: string;
@@ -48,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     const activeModule = moduleMap[tool] || tool as ModuleId;
     set({ activeModule, pendingSendTo: { tool, method, url, requestRaw, responseRaw, target } });
+    void broadcastAction({ kind: 'sendTo', tool, method, url, requestRaw, responseRaw, target });
   },
   clearSendTo: () => set({ pendingSendTo: null }),
   
@@ -88,7 +90,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
 
   pendingDeleteUrl: null,
-  deleteSitemapNode: (url) => set({ pendingDeleteUrl: url }),
+  deleteSitemapNode: (url) => {
+    set({ pendingDeleteUrl: url });
+    void broadcastAction({ kind: 'deleteSitemapNode', url });
+  },
   clearDeleteUrl: () => set({ pendingDeleteUrl: null }),
 
   sitemapBlacklist: new Set(JSON.parse(localStorage.getItem('ws_sitemap_blacklist') || '[]')),
@@ -119,6 +124,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 }));
+
+// Mirror cross-module actions broadcast from other windows. Applied as a
+// local `set` so we do not re-broadcast (would loop).
+void subscribeAction((action) => {
+  const moduleMap: Record<string, ModuleId> = {
+    repeater: 'replay', intruder: 'attack', sequencer: 'tokens',
+    comparer: 'comparer', organizer: 'organizer', tools: 'tools',
+    scan: 'scan', sitemap: 'sitemap', discovery: 'discovery',
+  };
+  if (action.kind === 'sendTo') {
+    const activeModule = moduleMap[action.tool] || (action.tool as ModuleId);
+    useAppStore.setState({
+      activeModule,
+      pendingSendTo: {
+        tool: action.tool,
+        method: action.method,
+        url: action.url,
+        requestRaw: action.requestRaw,
+        responseRaw: action.responseRaw,
+        target: action.target,
+      },
+    });
+  } else if (action.kind === 'deleteSitemapNode') {
+    useAppStore.setState({ pendingDeleteUrl: action.url });
+  } else if (action.kind === 'setActiveModule') {
+    useAppStore.setState({ activeModule: action.moduleId });
+  }
+});
 
 interface ReplayState {
   tabs: ReplayTab[];

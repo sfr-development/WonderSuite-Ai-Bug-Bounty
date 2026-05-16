@@ -26,6 +26,7 @@ mod system;
 mod tls_impersonate;
 mod updater;
 mod websocket_commands;
+mod window_manager;
 
 use proxy_commands::ProxyAppState;
 use tauri::Manager;
@@ -45,6 +46,7 @@ pub fn run() {
     let session_state = session::create_session_state();
     let intruder_state = intruder::create_intruder_state();
     let ws_state = websocket_commands::create_ws_state();
+    let window_state = window_manager::create_window_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -57,6 +59,7 @@ pub fn run() {
         .manage(session_state)
         .manage(intruder_state)
         .manage(ws_state)
+        .manage(window_state)
         .invoke_handler(tauri::generate_handler![
             commands::send_http_request,
             commands::mcp_start,
@@ -146,6 +149,12 @@ pub fn run() {
             websocket_commands::ws_add_match_replace,
             websocket_commands::ws_get_match_replace,
             websocket_commands::ws_remove_match_replace,
+            window_manager::window_detach_module,
+            window_manager::window_redock_module,
+            window_manager::window_focus_detached,
+            window_manager::window_list_detached,
+            window_manager::window_move_detached,
+            window_manager::window_resize_detached,
             system::get_system_info,
             browser::browser_detect,
             browser::browser_status,

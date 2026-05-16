@@ -1,6 +1,6 @@
 [package]
 name = "wondersuite"
-version = "0.3.6"
+version = "0.3.7"
 description = "AI-Native Web Security Testing Platform"
 authors = ["WonderSuite Team"]
 edition = "2021"
