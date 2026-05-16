@@ -61,8 +61,17 @@ pub async fn window_detach_module(
         .inner_size(w, h)
         .min_inner_size(500.0, 400.0)
         .decorations(false)
-        .transparent(true)
         .resizable(true);
+
+    // `transparent` on macOS uses private APIs and requires the
+    // `macos-private-api` Tauri feature, which we don't enable. Windows +
+    // Linux support transparency in the public API. Skip the call on macOS
+    // — the detached window still works fine, just with a regular opaque
+    // chrome around our slim titlebar.
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.transparent(true);
+    }
 
     if let (Some(px), Some(py)) = (x, y) {
         builder = builder.position(px, py);
