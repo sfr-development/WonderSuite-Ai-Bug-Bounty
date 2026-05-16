@@ -853,14 +853,18 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "passive_scan".into(),
-            description: "Passive security scan — analyzes response for security headers, cookie flags, CORS misconfig, info disclosure. No extra attack requests sent.".into(),
+            description: "Passive security scan — analyzes response for security headers, cookie flags, CORS misconfig, info disclosure. By default issues a single GET. Pass `intercept_id` (UUID) or `traffic_id` (numeric) to replay the original request's method/headers/body instead — letting you scan authenticated POST/PUT endpoints, GraphQL mutations, or any non-GET flow exactly as the user saw it.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "description": "Target URL to analyze" },
-                    "checks": { "type": "array", "items": { "type": "string" }, "description": "Check categories: all, headers, cookies, cors, info_disclosure", "default": ["all"] }
-                },
-                "required": ["target"]
+                    "target": { "type": "string", "description": "Target URL to analyze. Optional if intercept_id / traffic_id is given." },
+                    "checks": { "type": "array", "items": { "type": "string" }, "description": "Check categories: all, headers, cookies, cors, info_disclosure", "default": ["all"] },
+                    "intercept_id": { "type": "string", "description": "UUID of an on-hold intercepted request (from get_intercepted). Reuses its method/headers/body for the scan." },
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID. Reuses the logged request's method/headers/body." },
+                    "method": { "type": "string", "description": "Explicit HTTP method override (e.g. POST, PUT, PATCH). Defaults to GET, or the method from intercept/traffic." },
+                    "headers": { "type": "object", "description": "Header overrides (added on top of any headers from intercept/traffic)." },
+                    "body": { "type": "string", "description": "Explicit body override." }
+                }
             }),
         },
         ToolDef {
@@ -921,20 +925,24 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "active_scan".into(),
-            description: "Active vulnerability scanner — error-based + time-based SQLi, reflected XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. With `with_oast: true` (default when scan_types=['all']) also probes blind SQLi, blind cmdi, blind SSRF and log4shell via the bundled OAST listener — every callback becomes a critical, certain-confidence finding.".into(),
+            description: "Active vulnerability scanner — error-based + time-based SQLi, reflected XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. With `with_oast: true` (default when scan_types=['all']) also probes blind SQLi, blind cmdi, blind SSRF and log4shell via the bundled OAST listener — every callback becomes a critical, certain-confidence finding.\n\nInjection points: query string parameters AND request body parameters (JSON object keys + form-urlencoded fields). Pass `intercept_id` (UUID, on-hold intercept) or `traffic_id` (numeric, traffic log) to inherit the original method/headers/body — scanner then fuzzes both URL and body in place, preserving auth headers, cookies, CSRF tokens, and content-type. Critical for POST APIs, GraphQL endpoints, and any flow where the body is the actual attack surface.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "description": "Target URL with query parameters to test" },
+                    "target": { "type": "string", "description": "Target URL with query parameters to test. Optional if intercept_id / traffic_id is given." },
                     "scan_types": { "type": "array", "items": { "type": "string" }, "description": "all | sqli | xss | ssti | lfi | open_redirect | header_injection", "default": ["all"] },
                     "max_payloads_per_type": { "type": "integer", "default": 25 },
                     "max_concurrent": { "type": "integer", "default": 5 },
                     "timeout_secs": { "type": "integer", "default": 15 },
                     "with_oast": { "type": "boolean", "description": "Include OAST blind probes (auto-starts listener). Defaults to true when scan_types includes 'all'.", "default": true },
                     "oast_port": { "type": "integer", "default": 8888 },
-                    "oast_wait_ms": { "type": "integer", "default": 15000, "description": "How long to wait for OAST callbacks after the last probe." }
-                },
-                "required": ["target"]
+                    "oast_wait_ms": { "type": "integer", "default": 15000, "description": "How long to wait for OAST callbacks after the last probe." },
+                    "intercept_id": { "type": "string", "description": "UUID of an on-hold intercepted request (from get_intercepted). Scanner replays the original method/headers/body AND fuzzes JSON body keys + form-urlencoded body fields in addition to query parameters." },
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID. Same effect as intercept_id but reads from the traffic log." },
+                    "method": { "type": "string", "description": "Explicit HTTP method override (e.g. POST, PUT, PATCH)." },
+                    "headers": { "type": "object", "description": "Header overrides (added on top of any headers from intercept/traffic)." },
+                    "body": { "type": "string", "description": "Explicit body override (overrides any body from intercept/traffic)." }
+                }
             }),
         },
         ToolDef {
@@ -968,18 +976,19 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "send_to_intruder".into(),
-            description: "Convert a proxy traffic entry into a fuzz_request config with auto-detected injection points. Returns a ready-to-use intruder config.".into(),
+            description: "Convert a proxy traffic entry OR a still-pending intercepted request into a fuzz_request config with auto-detected injection points. Detects injection points in query string, JSON body, form-urlencoded body, multipart form-data parts, and Cookie header values. Works on POST/PUT/PATCH/DELETE bodies. Pass `intercept_id` (UUID from get_intercepted) OR `traffic_id` (numeric from proxy_get_traffic) — at least one required. Returns a ready-to-use intruder config you can pass straight to fuzz_request.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "traffic_id": { "type": "integer", "description": "Traffic entry ID to convert" }
-                },
-                "required": ["traffic_id"]
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID (from proxy_get_traffic). Use this for already-logged requests." },
+                    "intercept_id": { "type": "string", "description": "UUID of a still-pending intercepted request (from get_intercepted). Use this to attack an on-hold request WITHOUT forwarding it first — the body is read straight from the held raw_request." },
+                    "category": { "type": "string", "description": "Override the payload category heuristic (e.g. force 'sqli' on every injection point regardless of parameter name)." }
+                }
             }),
         },
         ToolDef {
             name: "get_intercepted".into(),
-            description: "List all intercepted requests/responses waiting for a decision. Use with forward_intercepted to modify and forward.".into(),
+            description: "List all intercepted requests/responses waiting for a decision. Each item has a UUID `id`, the original `raw_request`, plus a `parsed` object with the request body broken out at `parsed.body` (and headers at `parsed.headers`, query at `parsed.query_params`, content-type at `parsed.content_type`). To attack an intercepted request without forwarding it, pass the UUID `id` straight to `send_to_intruder.intercept_id`, `passive_scan.intercept_id`, or `active_scan.intercept_id`. To modify and forward, use forward_intercepted.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {}

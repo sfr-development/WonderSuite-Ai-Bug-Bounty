@@ -2,6 +2,7 @@ pub mod active;
 pub mod fuzzer;
 pub mod passive;
 pub mod reporting;
+pub mod source;
 
 use serde::{Deserialize, Serialize};
 

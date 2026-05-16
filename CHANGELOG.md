@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-05-16
+
+### Fixed — Intercept → Attack body-bridge (critical)
+- **The bug**: With the proxy interceptor turned on, virtually **every attack tool was unable to reach the request body of the held request**. `send_to_intruder` required a numeric `traffic_id`, but intercepted requests have a UUID `id` — the bridge between the on-hold-intercept world and the attack chain literally didn't exist. `passive_scan` / `active_scan` always re-fetched the URL as a clean unauthenticated GET, dropping cookies, Authorization headers, CSRF tokens, JSON bodies, form bodies, and method. Net effect: POST APIs, GraphQL endpoints, and any authenticated flow were unscannable from a held intercept.
+- **The fix**: introduce a unified *source* abstraction (`mcp::handlers::scanner::source::ResolvedSource`) that resolves an attack target from any of `intercept_id` (UUID), `traffic_id` (numeric), or explicit `target`/`method`/`headers`/`body`. All three attack tools now consume it.
+  - **`send_to_intruder`** — accepts `intercept_id` *or* `traffic_id`. Body-injection markers now cover **POST, PUT, PATCH, DELETE** (was POST-only). Detects and marks injection points in: JSON object keys, **form-urlencoded fields** (`a=1&b=2`), multipart-form-data part names, and **every Cookie name** in the Cookie header. Previously: query-string-only on POSTs with JSON-object bodies.
+  - **`passive_scan`** — replays the intercepted method + headers + body for the baseline fetch and the CORS-origin probe. Authenticated-flow header analysis (CORS, cookies, info-disclosure) now works on POST/PUT endpoints and behind login.
+  - **`active_scan`** — fuzzes **both URL query parameters AND body parameters** (form-urlencoded + JSON keys) for SQLi (error + time-blind), XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection, and OAST blind probes (cmdi / SSRF / log4shell / shellshock). Replays original method + cookies + auth headers on every probe.
+- **MCP schema upgrades** — `get_intercepted` description now documents the `parsed.body` / `parsed.headers` / `parsed.query_params` shape and the `intercept_id` attack path. `send_to_intruder`, `passive_scan`, and `active_scan` advertise the new `intercept_id` / `traffic_id` / `method` / `headers` / `body` parameters.
+- **No more "forward-then-attack" race** — previously the only path to body data was: intercept → `forward_intercepted` (poll up to 5 s for response) → grab `response.traffic_id` → call attack tool. Slow targets that took >5 s left the agent with `resolved_no_response_yet` and no traffic_id, breaking the chain. The new path lets attacks fire **directly against a still-held intercept**, with zero forwarding required.
+
+### Internal
+- New module `src-tauri/src/mcp/handlers/scanner/source.rs` — central `ResolvedSource` + helpers `parse_form_body`, `replace_form_param`, `replace_json_param`.
+- `src-tauri/src/mcp/handlers/proxy.rs` exposes `parse_raw_request` + `fetch_intercepted` for cross-module reuse.
+- `src-tauri/src/mcp/handlers/scanner/active.rs` — introduces `InjectionPoint` (query / body-form / body-json), `collect_injection_points`, `mutate`, `dispatch_req`. Every existing scan-type loop now goes through the dispatcher, so each probe inherits the original request's method, headers, cookies, body.
+
 ## [0.3.7] — 2026-05-16
 
 ### Added — Ports module (new sidebar entry, Testing group)

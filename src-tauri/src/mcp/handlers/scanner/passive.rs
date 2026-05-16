@@ -1,9 +1,15 @@
+use super::source::ResolvedSource;
 use super::{next_finding_id, Finding};
 use crate::mcp::types::HandlerResult;
 use std::collections::HashMap;
 
 pub async fn handle_passive_scan(params: &serde_json::Value) -> HandlerResult {
-    let target = params["target"].as_str().ok_or("target URL is required")?;
+    // v0.3.8: resolve source from intercept_id / traffic_id / target so that
+    // the scan can replay the *original* request (POST body, auth headers,
+    // cookies) instead of forcing a clean GET that misses everything behind
+    // a login or POST-only endpoint.
+    let source = super::source::resolve(params).await?;
+    let target: &str = &source.url;
 
     let check_filter: Vec<String> = params["checks"]
         .as_array()
@@ -21,7 +27,7 @@ pub async fn handle_passive_scan(params: &serde_json::Value) -> HandlerResult {
         .map_err(|e| format!("Client error: {}", e))?;
 
     let start = std::time::Instant::now();
-    let response = client.get(target).send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let response = replay(&source, &client, &target).await.map_err(|e| format!("Request failed: {}", e))?;
 
     let status = response.status().as_u16();
     let headers: HashMap<String, String> = response
@@ -177,7 +183,8 @@ pub async fn handle_passive_scan(params: &serde_json::Value) -> HandlerResult {
     }
 
     if check_all || check_filter.contains(&"cors".into()) {
-        let cors_result = client.get(target).header("Origin", "https://evil-attacker.com").send().await;
+        let cors_result =
+            replay_with_header(&source, &client, &target, "Origin", "https://evil-attacker.com").await;
 
         if let Ok(cors_resp) = cors_result {
             let cors_headers: HashMap<String, String> = cors_resp
@@ -239,7 +246,7 @@ pub async fn handle_passive_scan(params: &serde_json::Value) -> HandlerResult {
                 }
             }
 
-            if let Ok(null_resp) = client.get(target).header("Origin", "null").send().await {
+            if let Ok(null_resp) = replay_with_header(&source, &client, &target, "Origin", "null").await {
                 if let Some(acao) = null_resp.headers().get("access-control-allow-origin") {
                     if acao.to_str().unwrap_or("") == "null" {
                         findings.push(Finding {
@@ -389,7 +396,34 @@ pub async fn handle_passive_scan(params: &serde_json::Value) -> HandlerResult {
         "findings_by_severity": severity_counts,
         "findings": findings,
         "checks_performed": if check_all { vec!["headers", "cookies", "cors", "info_disclosure"] } else { check_filter.iter().map(|s| s.as_str()).collect() },
+        "source": {
+            "origin": source.origin,
+            "method": source.method,
+            "had_body": !source.body.is_empty(),
+            "header_count": source.headers.len(),
+        },
     }))
+}
+
+/// Replay the source request against `url`. Used as the baseline fetch.
+async fn replay(
+    source: &ResolvedSource,
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    source.builder(client, url).send().await
+}
+
+/// Replay with an additional / overridden header — used by the CORS reflection
+/// check, which probes the same endpoint with attacker-controlled Origin.
+async fn replay_with_header(
+    source: &ResolvedSource,
+    client: &reqwest::Client,
+    url: &str,
+    name: &str,
+    value: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    source.builder(client, url).header(name, value).send().await
 }
 
 fn check_missing_header(

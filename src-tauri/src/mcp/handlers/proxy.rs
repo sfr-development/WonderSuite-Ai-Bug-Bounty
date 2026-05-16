@@ -8,6 +8,73 @@ fn proxy() -> Result<Arc<ProxyState>, String> {
     get_global_proxy_state().ok_or_else(|| "Proxy not initialized — proxy state is unavailable".to_string())
 }
 
+/// Parsed view of a raw HTTP/1.1 request string. Used by the bridge between
+/// intercept and attack tools so a still-on-hold intercept item can be fed
+/// straight into send_to_intruder / passive_scan / active_scan without a
+/// roundtrip through forward_intercepted (which previously was the *only*
+/// path to a numeric traffic_id and broke whenever the upstream took >5s).
+pub(crate) struct ParsedRawRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: String,
+}
+
+/// Parse `raw_request` (the on-hold InterceptedItem.raw_request string) into
+/// method / url / headers map / body. `host_hint` is taken from the intercept
+/// item; we use it to resolve the request-line's path into a full URL.
+/// `https_hint` decides http vs https when the request-line has only a path.
+pub(crate) fn parse_raw_request(raw: &str, host_hint: &str, https_hint: bool) -> ParsedRawRequest {
+    let mut method = String::new();
+    let mut path = String::new();
+    let mut headers: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut in_body = false;
+    let mut body_lines: Vec<&str> = Vec::new();
+
+    for (i, line) in raw.lines().enumerate() {
+        if i == 0 {
+            // Request line: METHOD PATH HTTP/x.y
+            let mut parts = line.splitn(3, ' ');
+            method = parts.next().unwrap_or("").to_string();
+            path = parts.next().unwrap_or("").to_string();
+            continue;
+        }
+        if in_body {
+            body_lines.push(line);
+        } else if line.trim().is_empty() {
+            in_body = true;
+        } else if let Some((k, v)) = line.split_once(':') {
+            headers.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+
+    let scheme = if https_hint { "https" } else { "http" };
+    let url = if path.starts_with("http://") || path.starts_with("https://") {
+        path.clone()
+    } else if !host_hint.is_empty() {
+        format!("{}://{}{}", scheme, host_hint, path)
+    } else {
+        path.clone()
+    };
+
+    ParsedRawRequest { method, url, headers, body: body_lines.join("\n") }
+}
+
+/// Look up a still-pending intercept by UUID and return its parsed request.
+/// Used by handlers that accept `intercept_id` as an alternative to
+/// `traffic_id` — bridging the on-hold-intercept world to the attack tools.
+pub(crate) async fn fetch_intercepted(
+    ps: &Arc<ProxyState>,
+    intercept_id: &str,
+) -> Result<ParsedRawRequest, String> {
+    let pending = ps.pending_intercepts.lock().await;
+    let p = pending
+        .get(intercept_id)
+        .ok_or_else(|| format!("Intercept '{}' not found (already forwarded/dropped?)", intercept_id))?;
+    let https_hint = p.item.url.starts_with("https://");
+    Ok(parse_raw_request(&p.item.raw_request, &p.item.host, https_hint))
+}
+
 pub async fn handle_proxy_start(params: &serde_json::Value) -> HandlerResult {
     let ps = proxy()?;
     let port = params["port"].as_u64().unwrap_or(8080) as u16;
@@ -786,39 +853,62 @@ pub async fn handle_send_to_repeater(params: &serde_json::Value) -> HandlerResul
     }
 }
 
-/// Send to Intruder — Take a traffic entry and convert it to a fuzz_request config.
-/// The AI can then modify the config and call fuzz_request directly.
+/// Send to Intruder — Take a traffic entry OR a still-pending intercept and
+/// convert it to a fuzz_request config with auto-detected injection points
+/// for query, body (JSON / form-urlencoded), and Cookie header values.
+///
+/// Accepts either `traffic_id` (numeric, from the traffic log) or
+/// `intercept_id` (UUID, from get_intercepted) — bridges the on-hold-intercept
+/// path into the attack chain without forcing the agent to forward first.
 pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResult {
     let ps = proxy()?;
 
-    let traffic_id = params["traffic_id"].as_u64().ok_or("traffic_id is required")?;
+    // Source resolution: prefer explicit intercept_id when present, otherwise
+    // fall back to traffic_id. One of the two is mandatory.
+    let intercept_id = params["intercept_id"].as_str();
+    let traffic_id = params["traffic_id"].as_u64();
 
-    let traffic = ps.traffic.lock().await;
-    let entry = traffic
-        .iter()
-        .find(|e| e.id == traffic_id)
-        .ok_or(format!("Traffic entry {} not found", traffic_id))?;
-
-    let query_params: Vec<(String, String)> = if let Ok(parsed) = url::Url::parse(&entry.url) {
-        parsed.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    let (method, url, request_body, headers, source_id, source_kind): (
+        String,
+        String,
+        String,
+        std::collections::HashMap<String, String>,
+        String,
+        &'static str,
+    ) = if let Some(iid) = intercept_id {
+        let parsed = fetch_intercepted(&ps, iid).await?;
+        (parsed.method, parsed.url, parsed.body, parsed.headers, iid.to_string(), "intercept")
+    } else if let Some(tid) = traffic_id {
+        let traffic = ps.traffic.lock().await;
+        let entry =
+            traffic.iter().find(|e| e.id == tid).ok_or_else(|| format!("Traffic entry {} not found", tid))?;
+        let hdrs: std::collections::HashMap<String, String> = entry
+            .request_headers
+            .lines()
+            .filter_map(|line| {
+                line.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            })
+            .collect();
+        (
+            entry.method.clone(),
+            entry.url.clone(),
+            entry.request_body.clone(),
+            hdrs,
+            tid.to_string(),
+            "traffic",
+        )
     } else {
-        vec![]
+        return Err(
+            "Either `traffic_id` (from proxy_get_traffic) or `intercept_id` (from get_intercepted) is required.".into(),
+        );
     };
 
-    let headers: std::collections::HashMap<String, String> = entry
-        .request_headers
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let query_params: Vec<(String, String)> = url::Url::parse(&url)
+        .map(|parsed| parsed.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+        .unwrap_or_default();
 
-    let mut suggested_url = entry.url.clone();
+    let mut suggested_url = url.clone();
+    let mut suggested_body = request_body.clone();
     let mut positions = Vec::new();
     let override_category = params["category"].as_str();
 
@@ -837,22 +927,139 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
         }));
     }
 
-    if entry.method == "POST" && !entry.request_body.is_empty() {
-        if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(&entry.request_body) {
-            if let Some(obj) = body_json.as_object() {
-                for (key, value) in obj {
+    // Body injection — accept POST/PUT/PATCH/DELETE (anything that typically
+    // carries a body) and probe BOTH JSON-object AND form-urlencoded layouts.
+    // Previously this was POST-only and JSON-only → form-encoded bodies
+    // (`a=1&b=2`) and PUT/PATCH APIs produced zero body markers.
+    let method_upper = method.to_ascii_uppercase();
+    let body_method = matches!(method_upper.as_str(), "POST" | "PUT" | "PATCH" | "DELETE");
+    if body_method && !request_body.is_empty() {
+        let ctype = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.to_ascii_lowercase())
+            .unwrap_or_default();
+
+        let mut body_keys_added: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // 1. JSON body — top-level object keys.
+        let looks_json = ctype.contains("json")
+            || request_body.trim_start().starts_with('{')
+            || request_body.trim_start().starts_with('[');
+        if looks_json {
+            if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(&request_body) {
+                if let Some(obj) = body_json.as_object() {
+                    for (key, value) in obj {
+                        let marker = format!("§{}§", key);
+                        let category = override_category.unwrap_or_else(|| infer_payload_category(key));
+                        // Replace the value in the raw body so the marker is
+                        // injected literally. Best-effort substring replace —
+                        // works for primitives, falls back to no replace for
+                        // nested objects/arrays.
+                        let value_str = match value {
+                            serde_json::Value::String(s) => format!("\"{}\"", s),
+                            _ => value.to_string(),
+                        };
+                        let value_with_marker = format!("\"{}\"", marker);
+                        suggested_body = suggested_body.replace(&value_str, &value_with_marker);
+                        positions.push(serde_json::json!({
+                            "marker": marker,
+                            "original_value": value,
+                            "parameter": key,
+                            "location": "body_json",
+                            "source": "file",
+                            "file_category": category,
+                            "limit": 200
+                        }));
+                        body_keys_added.insert(key.clone());
+                    }
+                }
+            }
+        }
+
+        // 2. Form-urlencoded body — `a=1&b=2`. Detected by content-type OR by
+        // the absence of `{`/`[` and the presence of `=`.
+        let looks_form = ctype.contains("x-www-form-urlencoded")
+            || (!looks_json && request_body.contains('=') && !request_body.contains('\n'));
+        if looks_form {
+            for pair in request_body.split('&') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    let key = key.trim();
+                    if key.is_empty() || body_keys_added.contains(key) {
+                        continue;
+                    }
                     let marker = format!("§{}§", key);
                     let category = override_category.unwrap_or_else(|| infer_payload_category(key));
+                    suggested_body =
+                        suggested_body.replace(&format!("{}={}", key, value), &format!("{}={}", key, marker));
                     positions.push(serde_json::json!({
                         "marker": marker,
                         "original_value": value,
                         "parameter": key,
-                        "location": "body",
+                        "location": "body_form",
                         "source": "file",
                         "file_category": category,
                         "limit": 200
                     }));
+                    body_keys_added.insert(key.to_string());
                 }
+            }
+        }
+
+        // 3. Multipart — detected by content-type. Mark each form-data part by
+        // its `name="..."` attribute. We don't rewrite the body; the agent gets
+        // pointers it can target with body_regex match rules.
+        if ctype.starts_with("multipart/form-data") {
+            let part_re = regex::Regex::new("name=\"([^\"]+)\"").ok();
+            if let Some(re) = part_re {
+                for cap in re.captures_iter(&request_body) {
+                    if let Some(name) = cap.get(1) {
+                        let key = name.as_str();
+                        if body_keys_added.contains(key) {
+                            continue;
+                        }
+                        let category = override_category.unwrap_or_else(|| infer_payload_category(key));
+                        positions.push(serde_json::json!({
+                            "marker": format!("§{}§", key),
+                            "original_value": serde_json::Value::Null,
+                            "parameter": key,
+                            "location": "body_multipart",
+                            "source": "file",
+                            "file_category": category,
+                            "limit": 200,
+                            "note": "multipart name — replace the value of this form-data part manually before fuzzing",
+                        }));
+                        body_keys_added.insert(key.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Cookie header — each cookie name is a parameter. Cookies are a *very*
+    // common SQLi / XSS vector that gets missed when scanners only look at
+    // query strings. We mark each Cookie name with a §§ marker that fuzz_request
+    // can substitute.
+    if let Some(cookie_header) =
+        headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("cookie")).map(|(_, v)| v.clone())
+    {
+        for pair in cookie_header.split(';') {
+            if let Some((name, value)) = pair.split_once('=') {
+                let name = name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let category = override_category.unwrap_or_else(|| infer_payload_category(name));
+                positions.push(serde_json::json!({
+                    "marker": format!("§cookie_{}§", name),
+                    "original_value": value.trim(),
+                    "parameter": name,
+                    "location": "cookie",
+                    "source": "file",
+                    "file_category": category,
+                    "limit": 200,
+                    "note": "Cookie value — substitute via match_rules / Header injection in fuzz_request",
+                }));
             }
         }
     }
@@ -860,10 +1067,10 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
     let intruder_config = serde_json::json!({
         "attack_type": "sniper",
         "base_request": {
-            "method": entry.method,
+            "method": method,
             "url": suggested_url,
             "headers": headers,
-            "body": entry.request_body,
+            "body": suggested_body,
         },
         "positions": positions,
         "match_rules": [
@@ -876,13 +1083,15 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
     });
 
     Ok(serde_json::json!({
+        "source": source_kind,
+        "source_id": source_id,
         "traffic_id": traffic_id,
+        "intercept_id": intercept_id,
         "original_request": {
-            "method": entry.method,
-            "url": entry.url,
-            "host": entry.host,
+            "method": method,
+            "url": url,
             "headers": headers,
-            "body": entry.request_body,
+            "body": request_body,
         },
         "injection_points": positions.len(),
         "intruder_config": intruder_config,

