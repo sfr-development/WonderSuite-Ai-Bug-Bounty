@@ -104,12 +104,8 @@ impl Address {
 
 // ── Function pointer types ──────────────────────────────────────────────
 
-pub type FnWinDivertOpen = unsafe extern "system" fn(
-    filter: *const c_char,
-    layer: i32,
-    priority: i16,
-    flags: u64,
-) -> Handle;
+pub type FnWinDivertOpen =
+    unsafe extern "system" fn(filter: *const c_char, layer: i32, priority: i16, flags: u64) -> Handle;
 
 pub type FnWinDivertSend = unsafe extern "system" fn(
     handle: Handle,
@@ -129,11 +125,7 @@ pub type FnWinDivertRecv = unsafe extern "system" fn(
 
 pub type FnWinDivertClose = unsafe extern "system" fn(handle: Handle) -> i32;
 
-pub type FnWinDivertSetParam = unsafe extern "system" fn(
-    handle: Handle,
-    param: i32,
-    value: u64,
-) -> i32;
+pub type FnWinDivertSetParam = unsafe extern "system" fn(handle: Handle, param: i32, value: u64) -> i32;
 
 // ── Loaded API ──────────────────────────────────────────────────────────
 
@@ -154,24 +146,19 @@ impl WinDivertApi {
         // SAFETY: we control the DLL path (resource dir) and the function
         // signatures match the WinDivert ABI documented in windivert.h.
         unsafe {
-            let lib = Library::new(dll_path)
-                .map_err(|e| format!("LoadLibrary {}: {}", dll_path.display(), e))?;
+            let lib =
+                Library::new(dll_path).map_err(|e| format!("LoadLibrary {}: {}", dll_path.display(), e))?;
 
-            let open: Symbol<FnWinDivertOpen> = lib
-                .get(b"WinDivertOpen\0")
-                .map_err(|e| format!("get WinDivertOpen: {}", e))?;
-            let send: Symbol<FnWinDivertSend> = lib
-                .get(b"WinDivertSend\0")
-                .map_err(|e| format!("get WinDivertSend: {}", e))?;
-            let recv: Symbol<FnWinDivertRecv> = lib
-                .get(b"WinDivertRecv\0")
-                .map_err(|e| format!("get WinDivertRecv: {}", e))?;
-            let close: Symbol<FnWinDivertClose> = lib
-                .get(b"WinDivertClose\0")
-                .map_err(|e| format!("get WinDivertClose: {}", e))?;
-            let set_param: Symbol<FnWinDivertSetParam> = lib
-                .get(b"WinDivertSetParam\0")
-                .map_err(|e| format!("get WinDivertSetParam: {}", e))?;
+            let open: Symbol<FnWinDivertOpen> =
+                lib.get(b"WinDivertOpen\0").map_err(|e| format!("get WinDivertOpen: {}", e))?;
+            let send: Symbol<FnWinDivertSend> =
+                lib.get(b"WinDivertSend\0").map_err(|e| format!("get WinDivertSend: {}", e))?;
+            let recv: Symbol<FnWinDivertRecv> =
+                lib.get(b"WinDivertRecv\0").map_err(|e| format!("get WinDivertRecv: {}", e))?;
+            let close: Symbol<FnWinDivertClose> =
+                lib.get(b"WinDivertClose\0").map_err(|e| format!("get WinDivertClose: {}", e))?;
+            let set_param: Symbol<FnWinDivertSetParam> =
+                lib.get(b"WinDivertSetParam\0").map_err(|e| format!("get WinDivertSetParam: {}", e))?;
 
             let api = WinDivertApi {
                 open: *open,
@@ -185,13 +172,7 @@ impl WinDivertApi {
         }
     }
 
-    pub fn open_handle(
-        &self,
-        filter: &str,
-        layer: i32,
-        priority: i16,
-        flags: u64,
-    ) -> Result<Handle, String> {
+    pub fn open_handle(&self, filter: &str, layer: i32, priority: i16, flags: u64) -> Result<Handle, String> {
         let cfilter = CString::new(filter).map_err(|e| format!("filter cstring: {}", e))?;
         let h = unsafe { (self.open)(cfilter.as_ptr(), layer, priority, flags) };
         if h == INVALID_HANDLE {

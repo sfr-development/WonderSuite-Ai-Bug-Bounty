@@ -58,12 +58,10 @@ pub fn check_capability() -> Result<SynCaps, String> {
     {
         match caps::has_cap(None, caps::CapSet::Effective, caps::Capability::CAP_NET_RAW) {
             Ok(true) => Ok(SynCaps { available: true }),
-            _ => Err(
-                "CAP_NET_RAW missing. Grant via:\n\
+            _ => Err("CAP_NET_RAW missing. Grant via:\n\
                  sudo setcap cap_net_raw,cap_net_admin=+eip <wondersuite-binary>\n\
                  …or re-run with sudo."
-                    .into(),
-            ),
+                .into()),
         }
     }
     #[cfg(target_os = "macos")]
@@ -163,9 +161,7 @@ async fn unix_syn_scan(
     use pnet_packet::ipv4::{checksum as ipv4_csum, Ipv4Flags, MutableIpv4Packet};
     use pnet_packet::tcp::{ipv4_checksum as tcp4_csum, MutableTcpPacket, TcpFlags};
     use pnet_packet::Packet;
-    use pnet_transport::{
-        tcp_packet_iter, transport_channel, TransportChannelType, TransportProtocol,
-    };
+    use pnet_transport::{tcp_packet_iter, transport_channel, TransportChannelType, TransportProtocol};
 
     if check_capability().is_err() {
         return;
@@ -174,8 +170,7 @@ async fn unix_syn_scan(
     let secret: u64 = rand::random();
     let src_port: u16 = 40000 + (rand::random::<u16>() % 20000);
 
-    let chan_type =
-        TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp));
+    let chan_type = TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp));
     let (mut tx_chan, mut rx_chan) = match transport_channel(65536, chan_type) {
         Ok(c) => c,
         Err(_) => return,
@@ -204,8 +199,7 @@ async fn unix_syn_scan(
                         continue;
                     }
                     let flags = tcp.get_flags();
-                    let state = if flags & (TcpFlags::SYN | TcpFlags::ACK)
-                        == (TcpFlags::SYN | TcpFlags::ACK)
+                    let state = if flags & (TcpFlags::SYN | TcpFlags::ACK) == (TcpFlags::SYN | TcpFlags::ACK)
                     {
                         RxState::Open
                     } else if flags & TcpFlags::RST != 0 {
@@ -359,10 +353,8 @@ async fn windows_syn_scan(
     // RX handle: sniff-mode (don't actually divert packets — the kernel
     // still needs them). Filter to our scan-id's destination port + relevant
     // TCP flags. Lifetime: keep the Handle pointer alive in this task.
-    let rx_filter = format!(
-        "inbound and ip and tcp and tcp.DstPort == {} and (tcp.Syn or tcp.Rst)",
-        src_port
-    );
+    let rx_filter =
+        format!("inbound and ip and tcp and tcp.DstPort == {} and (tcp.Syn or tcp.Rst)", src_port);
     let rx_handle = match api.open_handle(
         &rx_filter,
         crate::portscan::windivert_ffi::LAYER_NETWORK,
@@ -430,8 +422,7 @@ async fn windows_syn_scan(
                 continue;
             }
             let flags = tcp.get_flags();
-            let state = if flags & (TcpFlags::SYN | TcpFlags::ACK) == (TcpFlags::SYN | TcpFlags::ACK)
-            {
+            let state = if flags & (TcpFlags::SYN | TcpFlags::ACK) == (TcpFlags::SYN | TcpFlags::ACK) {
                 RxState::Open
             } else if flags & TcpFlags::RST != 0 {
                 RxState::Closed
@@ -532,13 +523,7 @@ async fn windows_syn_scan(
             let mut send_len: u32 = 0;
             let tx_handle = tx_handle_usize as crate::portscan::windivert_ffi::Handle;
             unsafe {
-                (api.send)(
-                    tx_handle,
-                    buf.as_ptr() as *const _,
-                    buf.len() as u32,
-                    &mut send_len,
-                    &addr,
-                );
+                (api.send)(tx_handle, buf.as_ptr() as *const _, buf.len() as u32, &mut send_len, &addr);
             }
             sent += 1;
             progress_tick();

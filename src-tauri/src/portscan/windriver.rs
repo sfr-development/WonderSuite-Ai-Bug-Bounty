@@ -54,9 +54,13 @@ pub fn find_bundled_sys() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn find_bundled_dll() -> Option<std::path::PathBuf> { None }
+pub fn find_bundled_dll() -> Option<std::path::PathBuf> {
+    None
+}
 #[cfg(not(target_os = "windows"))]
-pub fn find_bundled_sys() -> Option<std::path::PathBuf> { None }
+pub fn find_bundled_sys() -> Option<std::path::PathBuf> {
+    None
+}
 
 #[cfg(target_os = "windows")]
 const SERVICE_NAME: &str = "WonderSuiteNet";
@@ -181,9 +185,7 @@ fn install_service_uac(sys_path: &std::path::Path) -> Result<(), String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
-    use windows::Win32::UI::Shell::{
-        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    };
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
     use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
     let cmd_path = std::env::temp_dir().join("wondersuite-install-driver.cmd");
@@ -215,8 +217,7 @@ fn install_service_uac(sys_path: &std::path::Path) -> Result<(), String> {
     };
 
     unsafe {
-        ShellExecuteExW(&mut info as *mut _)
-            .map_err(|e| format!("ShellExecuteExW (runas) failed: {}", e))?;
+        ShellExecuteExW(&mut info as *mut _).map_err(|e| format!("ShellExecuteExW (runas) failed: {}", e))?;
         if !info.hProcess.is_invalid() {
             let _ = WaitForSingleObject(info.hProcess, INFINITE);
             let _ = CloseHandle(info.hProcess);
@@ -268,9 +269,8 @@ fn service_query_status() -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn hvci_is_enabled() -> bool {
-    let key = windows_registry::LOCAL_MACHINE.open(
-        r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
-    );
+    let key = windows_registry::LOCAL_MACHINE
+        .open(r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity");
     match key {
         Ok(k) => k.get_u32("Enabled").unwrap_or(0) == 1,
         Err(_) => false,

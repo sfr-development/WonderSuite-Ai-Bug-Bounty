@@ -144,10 +144,7 @@ async fn start_scan_inner(
                         // task ticks 0/total and the user sees a confusing
                         // "100% / 0 open" result with no explanation.
                         if let Some(app) = &app_for_engine {
-                            let _ = app.emit(
-                                "portscan:error",
-                                (scan_id_for_engine.clone(), msg.clone()),
-                            );
+                            let _ = app.emit("portscan:error", (scan_id_for_engine.clone(), msg.clone()));
                         }
                         eprintln!("[syn] capability missing: {}", msg);
                         // Drop tx so the fan-out task sees end-of-stream and
