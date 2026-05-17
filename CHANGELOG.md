@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-05-17
+
+### Fixed — Proxy upstream-request reliability (wreq path)
+Two sporadic upstream-side errors disappear with this release. Both were first-release-of-the-feature gaps in the Chrome-TLS-impersonation path (introduced in v0.3.0, 4 days ago) — the reqwest fallback path was already correct.
+
+- **`502 - http2 error → stream error received: unspecific protocol error detected`** on hosts behind aggressive H2-idling CDNs (Cloudflare, Akamai, etc.). Root cause: wreq's connection pool reused a half-closed H2 socket *after* the server had sent a GOAWAY frame mid-idle, getting `REFUSED_STREAM` / `PROTOCOL_ERROR` on the next request. wreq 5.x has no `http2_keep_alive_*` PING knobs to detect this proactively, so we attack it three ways:
+  - `pool_idle_timeout`: **30 s → 5 s** — well under typical CDN idle-GOAWAY thresholds (10–20 s), so stale conns are evicted before they can be reused.
+  - `http2_max_retry_count(2)` — wreq's built-in transparent retry on transient h2 errors.
+  - **App-level retry-once** in `forward_via_impersonate` — sniffs the formatted error chain for `unspecific protocol error` / `PROTOCOL_ERROR` / `REFUSED_STREAM` / `GOAWAY` / `connection reset` / `broken pipe` / `unexpected eof` and resends the request on a fresh connection (50 ms cool-off so pool eviction has time to land).
+  - `tcp_keepalive(15s)` + `tcp_keepalive_interval(5s)` + `tcp_keepalive_retries(3)` — TCP-level dead-conn detection for NAT timeouts and load-balancer session-table expiry.
+
+- **`502 - TLS handshake failed: cert verification failed - IP address mismatch [CERTIFICATE_VERIFY_FAILED]`** when proxying direct-IP URLs (e.g. `https://212.72.183.88/`). Root cause: BoringSSL inside wreq strictly validates the upstream cert's SAN against the URL host — but when the user navigates by IP, the real cert is for a domain, never the IP literal. The reqwest fallback path already did `.danger_accept_invalid_certs(true)` (see `engine.rs` build_default_client); the wreq path was missing the equivalent. Fixed by adding `.cert_verification(false)` to the wreq builder.
+  - **Why this is the correct default for a pentest tool**: Burp Suite, mitmproxy, and Caido all disable upstream cert validation by default — security testers need to MITM self-signed certs, expired certs, hostname/SAN mismatches, and direct-IP connections. The browser→proxy hop is still validated through the user's OS trust store via WonderSuite's local CA; only the proxy→origin hop is affected.
+
+### Internal
+- `src-tauri/src/tls_impersonate.rs::build_client` — new connection-pool/keep-alive/TLS-validation policy documented inline.
+- `src-tauri/src/proxy/engine.rs::forward_via_impersonate` — new retry loop with `is_h2_transient_error` classifier (matches against the formatted wreq error chain).
+
 ## [0.3.8] — 2026-05-16
 
 ### Fixed — Intercept → Attack body-bridge (critical)
