@@ -5,8 +5,19 @@ use tokio::sync::Mutex;
 
 pub type IntruderState = Arc<Mutex<IntruderManager>>;
 
+// v0.3.10: global accessor so MCP handlers can drive the Intruder engine
+// without a Tauri State<'_, _> wrapper. Populated at app startup mirroring
+// the same OnceLock pattern used for proxy_commands::GLOBAL_PROXY_STATE.
+static GLOBAL_INTRUDER_STATE: std::sync::OnceLock<IntruderState> = std::sync::OnceLock::new();
+
 pub fn create_intruder_state() -> IntruderState {
-    Arc::new(Mutex::new(IntruderManager::new()))
+    let s: IntruderState = Arc::new(Mutex::new(IntruderManager::new()));
+    let _ = GLOBAL_INTRUDER_STATE.set(s.clone());
+    s
+}
+
+pub fn intruder_state() -> Option<IntruderState> {
+    GLOBAL_INTRUDER_STATE.get().cloned()
 }
 
 pub struct IntruderManager {
@@ -264,6 +275,14 @@ pub async fn intruder_start(
     state: tauri::State<'_, IntruderState>,
     config: IntruderConfig,
 ) -> Result<String, String> {
+    let state_clone = state.inner().clone();
+    start_attack_from_state(state_clone, config).await
+}
+
+/// v0.3.10: reusable engine entry that doesn't require a Tauri `State` —
+/// used by the MCP `intruder_start` handler so the AI agent can drive the
+/// Intruder without going through Tauri IPC.
+pub async fn start_attack_from_state(state: IntruderState, config: IntruderConfig) -> Result<String, String> {
     let attack_id = uuid::Uuid::new_v4().to_string();
     let aid = attack_id.clone();
 
@@ -338,13 +357,22 @@ pub async fn intruder_start(
         );
     }
 
-    let state_clone = state.inner().clone();
+    let state_clone = state.clone();
     let template = config.request_template.clone();
     let grep_rules = config.grep_rules.clone();
     let throttle = config.throttle_ms;
     let follow_redirects = config.follow_redirects;
+    // v0.3.10: `config.threads` is finally honored. Defaults to 10 if the
+    // caller passes 0 (the JSON-default route). Previously the runner was a
+    // strict sequential `for` loop — documented multi-thread feature was a
+    // lie. Now: bounded concurrency via tokio::Semaphore so #threads is the
+    // ceiling AND throttle still applies between dispatches.
+    let concurrency = if config.threads == 0 { 10 } else { config.threads };
 
     tokio::spawn(async move {
+        use std::sync::Arc;
+        use tokio::sync::Semaphore;
+
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(15))
@@ -357,132 +385,166 @@ pub async fn intruder_start(
             .unwrap_or_default();
 
         let start = std::time::Instant::now();
+        let sem = Arc::new(Semaphore::new(concurrency));
+        let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         for (i, payloads) in payload_matrix.iter().enumerate() {
-            {
+            // Pause / stop check — once per dispatch. Cheap, just reads the
+            // attack status from the manager.
+            loop {
                 let mgr = state_clone.lock().await;
                 if let Some(attack) = mgr.attacks.get(&aid) {
                     if attack.status == "stopped" {
+                        // Stop signal — wait for in-flight to drain, then exit.
+                        drop(mgr);
+                        for h in handles.drain(..) {
+                            let _ = h.await;
+                        }
+                        let mut mgr = state_clone.lock().await;
+                        if let Some(attack) = mgr.attacks.get_mut(&aid) {
+                            attack.elapsed_ms = start.elapsed().as_millis() as u64;
+                        }
+                        return;
+                    }
+                    if attack.status != "paused" {
                         break;
                     }
-                    if attack.status == "paused" {
-                        drop(mgr);
-                        loop {
-                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                            let mgr = state_clone.lock().await;
-                            if let Some(a) = mgr.attacks.get(&aid) {
-                                if a.status != "paused" {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
+                    drop(mgr);
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                drop(mgr);
+                break;
+            }
+
+            // Acquire a permit (this throttles concurrency without coupling
+            // it to dispatch timing).
+            let permit = match sem.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+
+            // Per-payload owned data for the spawned task.
+            let payload_refs: Vec<String> = payloads.clone();
+            let injected = {
+                let refs: Vec<&str> = payload_refs.iter().map(|s| s.as_str()).collect();
+                inject_payload(&template, &positions, &refs)
+            };
+            let (method, url, headers, body) = parse_request_template(&injected);
+            let client = client.clone();
+            let grep_rules = grep_rules.clone();
+            let state_for_task = state_clone.clone();
+            let aid_for_task = aid.clone();
+            let payload_label = payloads.join(" | ");
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit; // released on drop
+                let req_start = std::time::Instant::now();
+                let mut result = AttackResult {
+                    id: i + 1,
+                    position: 0,
+                    payload: payload_label,
+                    status: 0,
+                    length: 0,
+                    time_ms: 0,
+                    error: String::new(),
+                    grep_match: false,
+                    grep_extracts: HashMap::new(),
+                    response_headers: String::new(),
+                    response_body_preview: String::new(),
+                };
+
+                let req = match method.as_str() {
+                    "POST" => client.post(&url),
+                    "PUT" => client.put(&url),
+                    "DELETE" => client.delete(&url),
+                    "PATCH" => client.patch(&url),
+                    _ => client.get(&url),
+                };
+
+                let mut req = req;
+                for (k, v) in &headers {
+                    if k.to_lowercase() != "host" && k.to_lowercase() != "content-length" {
+                        req = req.header(k.as_str(), v.as_str());
                     }
                 }
-            }
-
-            let payload_refs: Vec<&str> = payloads.iter().map(|s| s.as_str()).collect();
-            let injected = inject_payload(&template, &positions, &payload_refs);
-            let (method, url, headers, body) = parse_request_template(&injected);
-
-            let req_start = std::time::Instant::now();
-            let mut result = AttackResult {
-                id: i + 1,
-                position: 0,
-                payload: payloads.join(" | "),
-                status: 0,
-                length: 0,
-                time_ms: 0,
-                error: String::new(),
-                grep_match: false,
-                grep_extracts: HashMap::new(),
-                response_headers: String::new(),
-                response_body_preview: String::new(),
-            };
-
-            let req = match method.as_str() {
-                "POST" => client.post(&url),
-                "PUT" => client.put(&url),
-                "DELETE" => client.delete(&url),
-                "PATCH" => client.patch(&url),
-                _ => client.get(&url),
-            };
-
-            let mut req = req;
-            for (k, v) in &headers {
-                if k.to_lowercase() != "host" && k.to_lowercase() != "content-length" {
-                    req = req.header(k.as_str(), v.as_str());
+                if let Some(ref b) = body {
+                    req = req.body(b.clone());
                 }
-            }
-            if let Some(ref b) = body {
-                req = req.body(b.clone());
-            }
 
-            match req.send().await {
-                Ok(resp) => {
-                    result.status = resp.status().as_u16();
-                    result.response_headers = resp
-                        .headers()
-                        .iter()
-                        .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let resp_body = resp.text().await.unwrap_or_default();
-                    result.length = resp_body.len();
-                    result.response_body_preview = resp_body.chars().take(2000).collect();
-                    result.time_ms = req_start.elapsed().as_millis() as u64;
+                match req.send().await {
+                    Ok(resp) => {
+                        result.status = resp.status().as_u16();
+                        result.response_headers = resp
+                            .headers()
+                            .iter()
+                            .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let resp_body = resp.text().await.unwrap_or_default();
+                        result.length = resp_body.len();
+                        result.response_body_preview = resp_body.chars().take(2000).collect();
+                        result.time_ms = req_start.elapsed().as_millis() as u64;
 
-                    for rule in &grep_rules {
-                        match rule.rule_type.as_str() {
-                            "match" => match regex::Regex::new(&rule.pattern) {
-                                Ok(re) => {
-                                    if re.is_match(&resp_body) {
-                                        result.grep_match = true;
+                        for rule in &grep_rules {
+                            match rule.rule_type.as_str() {
+                                "match" => match regex::Regex::new(&rule.pattern) {
+                                    Ok(re) => {
+                                        if re.is_match(&resp_body) {
+                                            result.grep_match = true;
+                                        }
                                     }
-                                }
-                                _ => {
-                                    if resp_body.contains(&rule.pattern) {
-                                        result.grep_match = true;
+                                    _ => {
+                                        if resp_body.contains(&rule.pattern) {
+                                            result.grep_match = true;
+                                        }
                                     }
-                                }
-                            },
-                            "extract" => {
-                                if let Ok(re) = regex::Regex::new(&rule.pattern) {
-                                    if let Some(caps) = re.captures(&resp_body) {
-                                        let group = rule.group.unwrap_or(1);
-                                        if let Some(m) = caps.get(group) {
-                                            let name = rule
-                                                .name
-                                                .clone()
-                                                .unwrap_or_else(|| format!("extract_{}", group));
-                                            result.grep_extracts.insert(name, m.as_str().to_string());
+                                },
+                                "extract" => {
+                                    if let Ok(re) = regex::Regex::new(&rule.pattern) {
+                                        if let Some(caps) = re.captures(&resp_body) {
+                                            let group = rule.group.unwrap_or(1);
+                                            if let Some(m) = caps.get(group) {
+                                                let name = rule
+                                                    .name
+                                                    .clone()
+                                                    .unwrap_or_else(|| format!("extract_{}", group));
+                                                result.grep_extracts.insert(name, m.as_str().to_string());
+                                            }
                                         }
                                     }
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
+                    Err(e) => {
+                        result.error = e.to_string();
+                        result.time_ms = req_start.elapsed().as_millis() as u64;
+                    }
                 }
-                Err(e) => {
-                    result.error = e.to_string();
-                    result.time_ms = req_start.elapsed().as_millis() as u64;
-                }
-            }
 
-            {
-                let mut mgr = state_clone.lock().await;
-                if let Some(attack) = mgr.attacks.get_mut(&aid) {
+                let mut mgr = state_for_task.lock().await;
+                if let Some(attack) = mgr.attacks.get_mut(&aid_for_task) {
                     attack.results.push(result);
-                    attack.completed_payloads = i + 1;
+                    attack.completed_payloads += 1;
                     attack.elapsed_ms = start.elapsed().as_millis() as u64;
                 }
-            }
+            });
+            handles.push(handle);
 
+            // Inter-dispatch throttle (NOT per completion). Cheap delay so we
+            // can drip-feed concurrency on rate-limited targets.
             if throttle > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(throttle)).await;
             }
+        }
+
+        // Wait for every in-flight task to finish before marking the attack
+        // completed. Results may be slightly out-of-order in `attack.results`
+        // (each carries its own `id`), which is fine.
+        for h in handles {
+            let _ = h.await;
         }
 
         let mut mgr = state_clone.lock().await;

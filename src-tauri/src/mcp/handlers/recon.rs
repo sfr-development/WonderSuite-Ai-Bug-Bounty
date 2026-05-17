@@ -795,14 +795,28 @@ pub async fn handle_find_secrets(params: &serde_json::Value) -> HandlerResult {
         return Err("Provide either 'text' or 'target'".into());
     };
 
+    // v0.3.10: patterns expanded + de-bugged.
+    //   - `internal_ip` was 3-octet only (`10.X.Y`); 10/8 addresses with all
+    //     four octets like `10.5.42.7` were partial-matched and sometimes
+    //     swallowed by the `email` regex first. Now matches full /8 /12 /16.
+    //   - `stripe_key` was a single bucket; live keys (sk_live_*, pk_live_*)
+    //     and test keys (sk_test_*) deserve different severities because the
+    //     live one can charge real money.
+    //   - Added `slack_webhook`, `discord_webhook`, `azure_storage_key`,
+    //     `npm_token`, `sentry_dsn`, `firebase_url`.
     let secret_patterns = vec![
         ("aws_access_key", r"AKIA[0-9A-Z]{16}"),
         ("aws_secret_key", r#"(?i)aws.{0,20}['"][0-9a-zA-Z/+]{40}['"]"#),
         ("github_token", r"gh[pousr]_[A-Za-z0-9_]{36,}"),
         ("google_api_key", r"AIza[0-9A-Za-z_-]{35}"),
         ("slack_token", r"xox[bpors]-[0-9]{10,13}-[0-9a-zA-Z]{10,}"),
+        ("slack_webhook", r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"),
+        (
+            "discord_webhook",
+            r"https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]+",
+        ),
         ("jwt_token", r"eyJ[A-Za-z0-9-_]+\.eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_.+/=]+"),
-        ("private_key", r"-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----"),
+        ("private_key", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
         (
             "api_key_generic",
             r#"(?i)(?:api[_-]?key|apikey|api_secret|access_token)\s*[:=]\s*["']?([A-Za-z0-9_\-]{16,})["']?"#,
@@ -810,37 +824,91 @@ pub async fn handle_find_secrets(params: &serde_json::Value) -> HandlerResult {
         ("password_field", r#"(?i)(?:password|passwd|pwd|secret)\s*[:=]\s*["']([^"']{4,})["']"#),
         (
             "database_url",
-            r#"(?i)(?:postgres|mysql|mongodb|redis)://[^\s'"]+#),
-        ("internal_ip", r"\b(?:10|172\.(?:1[6-9]|2[0-9]|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b"),
-        ("internal_url", r#"(?i)(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|internal\.|staging\.|dev\.)[^\s'"]*"#,
+            r#"(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|mssql|oracle|clickhouse|cockroachdb)://[^\s'"]+#,
+        ),
+        // v0.3.10: match all four octets of /8 /12 /16. Note `\b` boundaries
+        // keep us from matching inside longer numeric strings.
+        (
+            "internal_ip",
+            r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b",
+        ),
+        (
+            "internal_url",
+            r#"(?i)(?:https?://)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|internal\.|staging\.|dev\.)[^\s'"]*"#,
         ),
         ("email", r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
         ("bearer_token", r"(?i)bearer\s+[A-Za-z0-9._~+/-]+=*"),
-        ("stripe_key", r"(?:sk|pk)_(?:live|test)_[0-9a-zA-Z]{24,}"),
+        // Split live vs test (severity differs in match arm below).
+        ("stripe_live_key", r"(?:sk|pk|rk)_live_[0-9a-zA-Z]{24,}"),
+        ("stripe_test_key", r"(?:sk|pk|rk)_test_[0-9a-zA-Z]{24,}"),
         ("sendgrid_key", r"SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"),
         ("twilio_key", r"SK[0-9a-fA-F]{32}"),
+        ("npm_token", r"npm_[A-Za-z0-9]{36,}"),
+        (
+            "azure_storage_key",
+            r#"(?i)(?:azure[._-]?storage[._-]?key|accountkey)\s*[:=]\s*["']?[A-Za-z0-9+/=]{86,90}["']?"#,
+        ),
+        ("sentry_dsn", r"https://[a-f0-9]{32}@(?:[a-z0-9.-]+\.)?sentry\.io/[0-9]+"),
+        ("firebase_url", r"https://[a-z0-9-]+\.firebaseio\.com/?"),
         (
             "heroku_key",
             r"(?i)heroku.*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         ),
     ];
 
+    // v0.3.10: helper that checks whether `position` lies inside a URL
+    // authority section (after `://`). Used to demote email-shaped matches
+    // that are actually `user:pass@host` in a connection string. Rust regex
+    // has no lookbehind, so we post-filter.
+    fn is_inside_url_authority(text: &str, position: usize) -> bool {
+        // Walk back up to 200 chars looking for `://` without an intervening
+        // whitespace/quote (which would end the URL).
+        let look_back = position.saturating_sub(200);
+        let window = &text[look_back..position];
+        if let Some(pos) = window.rfind("://") {
+            let between = &window[pos + 3..];
+            // If no terminating whitespace/quote between `://` and our match,
+            // we're still inside the URL.
+            !between.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'')
+        } else {
+            false
+        }
+    }
+
     let mut found_secrets: Vec<serde_json::Value> = Vec::new();
     for (name, pattern) in &secret_patterns {
         if let Ok(re) = regex::Regex::new(pattern) {
             for m in re.find_iter(&text) {
+                // v0.3.10: skip email FPs that are part of a connection
+                // string authority (`user:pass@host`). The `database_url`
+                // pattern will catch the whole URL separately, so we don't
+                // lose signal — just stop flagging `pass@db.internal` as a
+                // standalone email.
+                if *name == "email" && is_inside_url_authority(&text, m.start()) {
+                    continue;
+                }
                 let value = m.as_str();
                 let display =
                     if value.len() > 100 { format!("{}...", &value[..100]) } else { value.to_string() };
-                found_secrets.push(serde_json::json!({
-                    "type": name, "value": display, "position": m.start(),
-                    "severity": match *name {
-                        "aws_access_key" | "aws_secret_key" | "private_key" | "database_url" | "password_field" => "critical",
-                        "github_token" | "stripe_key" | "jwt_token" | "bearer_token" => "high",
-                        "api_key_generic" | "google_api_key" | "slack_token" => "medium",
-                        "internal_url" | "internal_ip" | "email" => "low",
-                        _ => "info"
+                // v0.3.10: severity ladder corrected — Stripe LIVE keys can
+                // charge real money, so they're critical, not "high".
+                let severity = match *name {
+                    "aws_access_key" | "aws_secret_key" | "private_key" | "database_url"
+                    | "password_field" | "stripe_live_key" | "slack_webhook" | "discord_webhook"
+                    | "azure_storage_key" => "critical",
+                    "github_token" | "stripe_test_key" | "jwt_token" | "bearer_token" | "npm_token"
+                    | "sendgrid_key" | "twilio_key" => "high",
+                    "api_key_generic" | "google_api_key" | "slack_token" | "sentry_dsn" | "firebase_url" => {
+                        "medium"
                     }
+                    "internal_url" | "internal_ip" | "email" => "low",
+                    _ => "info",
+                };
+                found_secrets.push(serde_json::json!({
+                    "type": name,
+                    "value": display,
+                    "position": m.start(),
+                    "severity": severity,
                 }));
             }
         }

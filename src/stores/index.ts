@@ -53,9 +53,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   clearSendTo: () => set({ pendingSendTo: null }),
   
-  globalScope: [],
-  addScope: (pattern) => set((s) => ({ globalScope: s.globalScope.includes(pattern) ? s.globalScope : [...s.globalScope, pattern] })),
-  removeScope: (pattern) => set((s) => ({ globalScope: s.globalScope.filter((p) => p !== pattern) })),
+  // v0.3.10: persisted across launches. Previously the user's in-scope
+  // rules vanished on every app close. Backwards-compatible: invalid JSON
+  // / first launch falls back to an empty list.
+  globalScope: (() => {
+    try {
+      const raw = localStorage.getItem('ws_global_scope_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : [];
+    } catch { return []; }
+  })(),
+  addScope: (pattern) => set((s) => {
+    const next = s.globalScope.includes(pattern) ? s.globalScope : [...s.globalScope, pattern];
+    try { localStorage.setItem('ws_global_scope_v1', JSON.stringify(next)); } catch {}
+    return { globalScope: next };
+  }),
+  removeScope: (pattern) => set((s) => {
+    const next = s.globalScope.filter((p) => p !== pattern);
+    try { localStorage.setItem('ws_global_scope_v1', JSON.stringify(next)); } catch {}
+    return { globalScope: next };
+  }),
   isInScope: (testUrl) => {
     const scope = get().globalScope;
     if (scope.length === 0) return true; // if no scope defined, everything is in-scope
@@ -175,20 +193,84 @@ const defaultTab: ReplayTab = {
   isLoading: false,
 };
 
-export const useReplayStore = create<ReplayState>((set) => ({
-  tabs: [defaultTab],
-  activeTabId: 'tab-1',
-  addTab: (tab) => set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id })),
+// v0.3.10: Repeater tabs persist across launches. Previously a long-running
+// Repeater session with N drafted tabs was lost on every restart — high
+// friction for chained-engagement testing. We persist tabs + activeTabId
+// only; isLoading / responseRaw / response metadata get reset on rehydrate
+// because they're transient.
+const REPLAY_KEY = 'ws_replay_tabs_v1';
+
+function loadReplay(): { tabs: ReplayTab[]; activeTabId: string | null } {
+  try {
+    const raw = localStorage.getItem(REPLAY_KEY);
+    if (!raw) return { tabs: [defaultTab], activeTabId: 'tab-1' };
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) {
+      return { tabs: [defaultTab], activeTabId: 'tab-1' };
+    }
+    const tabs: ReplayTab[] = parsed.tabs.map((t: any) => ({
+      id: String(t.id ?? `tab-${Math.random().toString(36).slice(2, 8)}`),
+      name: String(t.name ?? 'Restored Tab'),
+      method: String(t.method ?? 'GET'),
+      url: String(t.url ?? ''),
+      requestRaw: String(t.requestRaw ?? ''),
+      responseRaw: '',          // transient
+      statusCode: null,         // transient
+      responseTimeMs: null,     // transient
+      responseSize: null,       // transient
+      isLoading: false,         // transient
+    }));
+    const activeTabId =
+      typeof parsed.activeTabId === 'string' && tabs.some((t) => t.id === parsed.activeTabId)
+        ? parsed.activeTabId
+        : tabs[0].id;
+    return { tabs, activeTabId };
+  } catch {
+    return { tabs: [defaultTab], activeTabId: 'tab-1' };
+  }
+}
+
+function saveReplay(tabs: ReplayTab[], activeTabId: string | null) {
+  try {
+    const sanitized = tabs.map((t) => ({
+      id: t.id, name: t.name, method: t.method, url: t.url, requestRaw: t.requestRaw,
+    }));
+    localStorage.setItem(REPLAY_KEY, JSON.stringify({ tabs: sanitized, activeTabId }));
+  } catch {}
+}
+
+const initialReplay = loadReplay();
+
+export const useReplayStore = create<ReplayState>((set, get) => ({
+  tabs: initialReplay.tabs,
+  activeTabId: initialReplay.activeTabId,
+  addTab: (tab) => set((s) => {
+    const next = { tabs: [...s.tabs, tab], activeTabId: tab.id };
+    saveReplay(next.tabs, next.activeTabId);
+    return next;
+  }),
   removeTab: (id) =>
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== id);
       const activeTabId =
         s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
+      saveReplay(tabs, activeTabId);
       return { tabs, activeTabId };
     }),
-  setActiveTab: (id) => set({ activeTabId: id }),
+  setActiveTab: (id) => set(() => {
+    const s = get();
+    saveReplay(s.tabs, id);
+    return { activeTabId: id };
+  }),
   updateTab: (id, updates) =>
-    set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, ...updates } : t)),
-    })),
+    set((s) => {
+      const tabs = s.tabs.map((t) => (t.id === id ? { ...t, ...updates } : t));
+      // Don't write to disk on every keystroke or transient response update.
+      // We only persist when one of the durable fields changed.
+      const updatesNeedSave = ['name', 'method', 'url', 'requestRaw'].some(
+        (k) => k in updates,
+      );
+      if (updatesNeedSave) saveReplay(tabs, s.activeTabId);
+      return { tabs };
+    }),
 }));

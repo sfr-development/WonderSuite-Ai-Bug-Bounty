@@ -24,6 +24,13 @@ pub async fn handle_tool_call(name: &str, params: &serde_json::Value) -> Result<
     handlers::dispatch(name, params).await
 }
 
+/// v0.3.10: dynamic count of MCP tools. Used by `proxy_get_capabilities` to
+/// stop reporting a hardcoded `mcp_tools: 18` forever — the count now
+/// follows whatever `tool_definitions()` returns.
+pub fn tool_count() -> usize {
+    tool_definitions().len()
+}
+
 pub fn tool_definitions() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -128,8 +135,23 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "proxy_get_traffic".into(),
-            description: "Retrieve captured proxy traffic entries.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "default": 50 } } }),
+            description: "Retrieve captured proxy traffic entries with structured filters and a summary/detail mode. Use `mode: \"summary\"` for an agent-friendly metadata-only view (id, method, host, path, status, sizes; ~30x smaller than `detail`). Filters can be combined: `host` (substring), `method`, `mime` (substring), `status_min`/`status_max`, `exclude_static` (skip images/css/js/fonts), `exclude_third_party` + `primary_host` (skip everything not on your target domain).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "default": 50 },
+                    "mode": { "type": "string", "enum": ["summary", "detail"], "default": "detail", "description": "summary = metadata only; detail = full headers + body preview" },
+                    "body_preview_bytes": { "type": "integer", "default": 4096, "description": "Truncate request/response bodies to this many bytes (detail mode only)" },
+                    "host": { "type": "string", "description": "Host substring filter (e.g. 'papierkram.de')" },
+                    "method": { "type": "string", "description": "Method filter (GET/POST/PUT/PATCH/DELETE)" },
+                    "mime": { "type": "string", "description": "Content-Type substring filter (e.g. 'json', 'html')" },
+                    "status_min": { "type": "integer", "default": 0, "description": "Inclusive lower status bound" },
+                    "status_max": { "type": "integer", "default": 999, "description": "Inclusive upper status bound" },
+                    "exclude_static": { "type": "boolean", "default": false, "description": "Skip images, CSS, JS, fonts, maps, video by extension" },
+                    "exclude_third_party": { "type": "boolean", "default": false, "description": "Only keep entries whose host contains `primary_host`" },
+                    "primary_host": { "type": "string", "description": "Used with exclude_third_party — the target host you're auditing" }
+                }
+            }),
         },
         ToolDef {
             name: "proxy_search_traffic".into(),
@@ -689,6 +711,111 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                     "action": { "type": "string", "enum": ["start_server", "self_test", "get_interactions", "clear"], "default": "self_test" },
                     "port": { "type": "integer", "default": 8888 },
                     "correlation_id": { "type": "string" }
+                }
+            }),
+        },
+        ToolDef {
+            name: "oast_start_http_server".into(),
+            description: "Explicitly bring up the OAST HTTP callback listener (v0.3.10). By default oast_generate_payload also starts it lazily — use this if you want the listener ready before generating multiple payloads. Bind address respects WS_OAST_BIND / WS_OAST_HOST (loopback by default, 0.0.0.0 only when user opts in via a non-loopback WS_OAST_HOST or explicit WS_OAST_BIND).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "port": { "type": "integer", "default": 8888 } }
+            }),
+        },
+        ToolDef {
+            name: "oast_poll_interactions".into(),
+            description: "Poll the OAST interaction log for callbacks. The MISSING piece in the blind-vuln chain (v0.3.10) — previously the agent could fire blind payloads but had no way to observe callbacks. Use `since_offset` to incrementally tail new callbacks across polls (response includes `next_offset`). Filter by `correlation_id` (from oast_generate_payload) and/or `kind` (\"http\" | \"dns\" | \"smtp\").".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "since_offset": { "type": "integer", "default": 0, "description": "Number of entries already seen; only entries beyond this are returned." },
+                    "correlation_id": { "type": "string", "description": "Filter to callbacks for a specific OAST payload" },
+                    "kind": { "type": "string", "enum": ["http", "dns", "smtp"], "description": "Filter by listener type" },
+                    "limit": { "type": "integer", "default": 200 }
+                }
+            }),
+        },
+        ToolDef {
+            name: "oast_status".into(),
+            description: "Snapshot of OAST listener state — running ports, callback host, bind address, total interactions in log.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "oast_clear".into(),
+            description: "Clear the OAST interaction log. Useful before a fresh OAST campaign.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "intruder_start".into(),
+            description: "Fire an Intruder attack (v0.3.10). Accepts either the `intruder_config` blob returned by send_to_intruder (fastest path) or explicit `request_template` + `payload_sets` + `grep_rules`. Honors `threads` (concurrency, default 10), `throttle_ms`, `follow_redirects`. Attack types: sniper, battering_ram, pitchfork, cluster_bomb. Returns `attack_id` to poll with intruder_status / intruder_results.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "intruder_config": { "type": "object", "description": "Pass the exact `intruder_config` from send_to_intruder." },
+                    "request_template": { "type": "string", "description": "Raw HTTP request with §marker§ placeholders." },
+                    "payload_sets": { "type": "array", "description": "Array of payload-set objects (payload_type, values/from/to/step, etc)." },
+                    "base_request": { "type": "object", "description": "Alternative to request_template: method + url + headers + body." },
+                    "positions": { "type": "array", "description": "Position metadata (from send_to_intruder)." },
+                    "grep_rules": { "type": "array", "description": "Anomaly detection rules (match/extract)." },
+                    "attack_type": { "type": "string", "enum": ["sniper", "battering_ram", "pitchfork", "cluster_bomb"], "default": "sniper" },
+                    "threads": { "type": "integer", "default": 10 },
+                    "max_concurrent": { "type": "integer", "description": "Alias for threads." },
+                    "throttle_ms": { "type": "integer", "default": 0 },
+                    "delay_ms": { "type": "integer", "description": "Alias for throttle_ms." },
+                    "follow_redirects": { "type": "boolean", "default": false }
+                }
+            }),
+        },
+        ToolDef {
+            name: "intruder_status".into(),
+            description: "Poll the progress of a running Intruder attack — completed/total payloads, elapsed time, results count, anomaly count.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "attack_id": { "type": "string" } },
+                "required": ["attack_id"]
+            }),
+        },
+        ToolDef {
+            name: "intruder_results".into(),
+            description: "Fetch Intruder attack results with filters. Use `only_anomalies: true` to skip baseline (no-match) results, `status_filter` to keep only specific status codes (e.g. 200, 500), `offset`+`limit` for pagination. Each result has payload, status, length, time_ms, grep_match flag, grep_extracts dict, response preview.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "attack_id": { "type": "string" },
+                    "only_anomalies": { "type": "boolean", "default": false },
+                    "status_filter": { "type": "integer", "description": "Keep only results matching this exact HTTP status." },
+                    "limit": { "type": "integer", "default": 100 },
+                    "offset": { "type": "integer", "default": 0 }
+                },
+                "required": ["attack_id"]
+            }),
+        },
+        ToolDef {
+            name: "intruder_stop".into(),
+            description: "Cancel a running Intruder attack. In-flight requests drain; the attack transitions to status `stopped`.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "attack_id": { "type": "string" } },
+                "required": ["attack_id"]
+            }),
+        },
+        ToolDef {
+            name: "intruder_list".into(),
+            description: "List all Intruder attacks (active and historical) in the current session with status, progress, and anomaly counts.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "js_library_audit".into(),
+            description: "Detect frontend JS libraries and their versions on a page (v0.3.10). Pure detection — NO CVE / vulnerability data is bundled. Once you have `(library, version)` pairs, do CVE research yourself (web search, your own knowledge of known issues, retire.js public DB) and decide which deserve a finding. Input modes (exactly one): `url` (fetch + scan), `html` (scan provided), `traffic_id` (pull response from proxy traffic log), `js` (scan a single JS body). Set `follow_scripts: true` to also fetch each external script src — catches minified libs whose header comment survived but whose URL is generic.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Target URL to fetch and scan." },
+                    "html": { "type": "string", "description": "Raw HTML to scan." },
+                    "js": { "type": "string", "description": "Raw JS body to scan (only comment_patterns apply)." },
+                    "traffic_id": { "type": "integer", "description": "Numeric proxy traffic ID — scan that response's body." },
+                    "follow_scripts": { "type": "boolean", "default": false, "description": "Also fetch + scan each <script src=…>. Slower but catches minified libs." },
+                    "follow_limit": { "type": "integer", "default": 8, "description": "Max external scripts to follow." }
                 }
             }),
         },

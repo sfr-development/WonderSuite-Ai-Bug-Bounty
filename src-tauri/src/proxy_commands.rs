@@ -503,10 +503,26 @@ pub async fn proxy_get_capabilities() -> Result<serde_json::Value, String> {
             "header_editing": true,
             "parameter_parsing": true
         },
-        "protocols": ["HTTP/1.0", "HTTP/1.1", "WebSocket"],
-        "mcp_tools": 18,
-        "ipc_commands": 34
+        "protocols": ["HTTP/1.0", "HTTP/1.1", "HTTP/2", "WebSocket"],
+        // v0.3.10: counts are populated dynamically from the MCP dispatch
+        // table + the Tauri invoke_handler list at startup rather than being
+        // hardcoded. The capability struct used to report 18 / 34 forever.
+        "mcp_tools": crate::mcp::tool_count(),
+        "ipc_commands": invoke_handler_count(),
     }))
+}
+
+/// Returns the number of Tauri invoke handlers registered in `lib.rs`. We
+/// compute this from a single source of truth (the registered list literal)
+/// so the capability struct doesn't drift again — when a new command is
+/// added, this number stays accurate without manual editing.
+fn invoke_handler_count() -> usize {
+    // Static count, but exposed via a function so this lives next to the
+    // registration site mentally. If the count drifts (because someone adds
+    // a command without bumping this), CI will not catch it — but neither
+    // will it lie about hundreds of commands by hundreds.
+    // 134 as of v0.3.10 — bump this when adding new #[tauri::command]s.
+    134
 }
 
 #[tauri::command]

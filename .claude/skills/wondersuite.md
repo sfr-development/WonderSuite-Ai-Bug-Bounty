@@ -1,6 +1,6 @@
 ---
 name: wondersuite
-description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (90 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (100 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
 ---
 
 # WonderSuite Pentest Operating Manual
@@ -59,9 +59,47 @@ crtsh_search({domain})        # second source for subdomain enum
 wayback_lookup({domain})      # archived URLs often leak deleted endpoints
 discover_content({target, wordlist: "common"})
 find_secrets({content_or_url})# scan crawl output for AWS keys / JWTs / API tokens
+js_library_audit({url})       # detect frontend libraries + versions — see below
 ```
 
 For SPAs: `crawl_target` is regex-based and blind to client-side routing — fall back to `browser_open` + `browser_snapshot` + `browser_resource_hints`.
+
+### Library Inventory → Outdated → CVE Hunt (v0.3.10)
+
+**`js_library_audit` detects WHAT is running. You research WHAT'S VULNERABLE yourself.** That separation is intentional — WonderSuite ships pure detection so the library knowledge stays fresh; CVE / advisory data ages out the moment we release. Your job is to read each `(library, version)` pair from the detection output, then check it against the actual current security landscape using your own knowledge plus web search.
+
+**The workflow:**
+
+```
+js_library_audit({url: target})
+  # → { detections: [
+  #       { library: "jquery",   version: "1.7.2", source: "script_src", script_url: "/js/jquery-1.7.2.min.js" },
+  #       { library: "bootstrap", version: "3.3.7", source: "script_src", script_url: "..." },
+  #       { library: "next.js",   version: null,    source: "html_pattern", evidence: "__NEXT_DATA__" },
+  #     ] }
+```
+
+Then for each detection:
+
+1. **Pinned version?** (e.g. `jquery 1.7.2`) — apply known-CVE knowledge:
+   - Do you remember CVEs that affect this version?
+   - If not certain: web search `<library> <version> CVE`, `<library> <version> security advisory`, `<library> <version> retire.js`.
+   - Concrete sources to consult: GitHub Advisory Database, retire.js's public `jsrepository.json` on GitHub, Snyk Vulnerability DB, NPM audit, the project's own changelog (often calls out security fixes in the version-N-after summary).
+2. **Detection without version** (`version: null` — e.g. Next.js detected via `__NEXT_DATA__` but no version visible) — try `follow_scripts: true` to fetch `/_next/static/chunks/*` and look for inline version comments; if still no version, ask the user to inspect manually (`browser_navigate` + DevTools).
+3. **Generic CDN URL** (e.g. `bundle.min.js` with no version in filename) — set `follow_scripts: true` so the tool fetches the body and tries to extract a version from the inline header comment.
+4. **For each library version that's outdated OR has a known CVE you've confirmed**, file a finding. Severity follows the CVE itself (use NVD CVSS scores or vendor advisories). Use this output style:
+
+```
+[severity] Outdated <library> <version> with <known-vuln-type>
+  evidence:    <library>@<version> detected via <source> at <script_url-if-present>
+               + your CVE-research citation (URL, advisory id)
+  detail:      what the CVE allows, why it matters in this context
+  fix:         upgrade to <safe-version>; immediate mitigations if upgrade isn't possible
+```
+
+**Anti-pattern**: don't report "outdated library" findings without a SPECIFIC CVE or known issue. "jQuery 1.7.2 is old" is not a finding; "jQuery 1.7.2 is vulnerable to CVE-2011-4969 (selector-based XSS via location.hash)" is. The version-detection step is exact; the CVE-attribution step is your research.
+
+**When to run js_library_audit**: at the start of every engagement (right after `crawl_target`), and again after each significant navigation in `browser_open`, since SPAs lazy-load chunks. Repeat per-host across subdomains — different teams ship different stacks.
 
 ### Auto-Vulnerability-Hunt During Every Browser Flow
 
@@ -216,7 +254,7 @@ generate_report({format: "markdown" | "json", scan_id?})
 
 ---
 
-## Tool Reference (90 tools)
+## Tool Reference (100 tools)
 
 ### HTTP / Send Request (the workhorses)
 
@@ -452,6 +490,6 @@ Severity scale: `critical | high | medium | low | info`. Use `info` for things l
 
 ## One-Liner You Can Steal
 
-> "I'm wired into a local WonderSuite MCP server (90 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+> "I'm wired into a local WonderSuite MCP server (100 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
 
 That's the right opening line for any new engagement.

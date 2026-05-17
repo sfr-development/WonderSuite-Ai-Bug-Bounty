@@ -2,6 +2,8 @@ pub mod advanced;
 pub mod cdn_waf;
 pub mod codec;
 pub mod http;
+pub mod intruder;
+pub mod jslib;
 pub mod oast;
 pub mod osint;
 pub mod payloads;
@@ -81,6 +83,9 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "discover_content" => recon::handle_discover_content(params).await,
         "find_secrets" => recon::handle_find_secrets(params).await,
         "dns_resolve" => recon::handle_dns_resolve(params).await,
+        // v0.3.10: client-side library + version detection (detection only;
+        // CVE research is the agent's responsibility).
+        "js_library_audit" => jslib::handle_js_library_audit(params).await,
 
         "port_scan" => portscan::handle_port_scan(params).await,
         "port_scan_range" => portscan::handle_port_scan_range(params).await,
@@ -91,7 +96,19 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "oast_generate_payload" => oast::handle_oast_generate_payload(params).await,
         "oast_start_dns_server" => oast::handle_oast_start_dns_server(params).await,
         "oast_start_smtp_server" => oast::handle_oast_start_smtp_server(params).await,
+        "oast_start_http_server" => oast::handle_oast_start_http_server(params).await,
+        "oast_poll_interactions" => oast::handle_oast_poll_interactions(params).await,
+        "oast_status" => oast::handle_oast_status(params).await,
+        "oast_clear" => oast::handle_oast_clear(params).await,
         "oast_verify" => oast::handle_oast_verify(params).await,
+
+        // v0.3.10: Intruder driver — previously the agent could only QUEUE
+        // attacks via send_to_intruder but had no way to fire/observe them.
+        "intruder_start" => intruder::handle_intruder_start(params).await,
+        "intruder_stop" => intruder::handle_intruder_stop(params).await,
+        "intruder_status" => intruder::handle_intruder_status(params).await,
+        "intruder_results" => intruder::handle_intruder_results(params).await,
+        "intruder_list" => intruder::handle_intruder_list(params).await,
 
         "crtsh_search" => osint::handle_crtsh_search(params).await,
         "wayback_lookup" => osint::handle_wayback_lookup(params).await,

@@ -7,6 +7,7 @@ pub mod crawler;
 mod crawler_commands;
 mod http2;
 mod intruder;
+mod jslib;
 mod mcp;
 mod oast;
 mod oast_commands;
@@ -119,6 +120,7 @@ pub fn run() {
             proxy_commands::proxy_get_capabilities,
             proxy_commands::proxy_get_statistics,
             scanner_commands::scanner_start_active,
+            scanner_commands::scanner_stop,
             scanner_commands::scanner_status,
             scanner_commands::scanner_get_findings,
             scanner_commands::scanner_get_result,

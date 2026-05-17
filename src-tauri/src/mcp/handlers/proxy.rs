@@ -60,6 +60,48 @@ pub(crate) fn parse_raw_request(raw: &str, host_hint: &str, https_hint: bool) ->
     ParsedRawRequest { method, url, headers, body: body_lines.join("\n") }
 }
 
+/// v0.3.10: recursively descend a JSON value and emit every scalar leaf as
+/// `(json_pointer_path, value)`. Used by `send_to_intruder` to mark only
+/// fuzzable scalar leaves instead of replacing whole nested objects with
+/// string payloads (which breaks JSON shape on the wire).
+///
+/// Depth-limited (16) to defeat malicious or pathological inputs. Arrays
+/// produce paths like `key[0]`, `key[1]`. Objects produce dotted paths.
+pub(crate) fn collect_scalar_leaves(
+    v: &serde_json::Value,
+    prefix: &str,
+    out: &mut Vec<(String, serde_json::Value)>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return;
+    }
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map {
+                let path = if prefix.is_empty() { k.clone() } else { format!("{}.{}", prefix, k) };
+                collect_scalar_leaves(val, &path, out, depth + 1);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for (i, val) in arr.iter().enumerate() {
+                let path = format!("{}[{}]", prefix, i);
+                collect_scalar_leaves(val, &path, out, depth + 1);
+            }
+        }
+        serde_json::Value::String(_) | serde_json::Value::Number(_) | serde_json::Value::Bool(_) => {
+            // Scalar leaves get a path even if prefix is empty (caller used
+            // empty prefix → root scalar, very rare for real bodies).
+            let path = if prefix.is_empty() { "root".to_string() } else { prefix.to_string() };
+            out.push((path, v.clone()));
+        }
+        serde_json::Value::Null => {
+            // Skip nulls — not a fuzz-able value, but the path can still be
+            // referenced by an agent if it wants to populate.
+        }
+    }
+}
+
 /// Look up a still-pending intercept by UUID and return its parsed request.
 /// Used by handlers that accept `intercept_id` as an alternative to
 /// `traffic_id` — bridging the on-hold-intercept world to the attack tools.
@@ -206,32 +248,117 @@ pub async fn handle_proxy_get_traffic(params: &serde_json::Value) -> HandlerResu
     let ps = proxy()?;
     let limit = params["limit"].as_u64().unwrap_or(100) as usize;
 
+    // v0.3.10: structured filters + summary/detail modes. Without filters a
+    // single call could blow >30 KB on 5 entries when the bodies are huge
+    // (YouTube telemetry, GraphQL mutations) — useless for an LLM agent
+    // working a token budget. Filters apply BEFORE the body is serialized.
+    let host_filter = params["host"].as_str();
+    let method_filter = params["method"].as_str().map(|s| s.to_ascii_uppercase());
+    let mime_filter = params["mime"].as_str().map(|s| s.to_ascii_lowercase());
+    let exclude_static = params["exclude_static"].as_bool().unwrap_or(false);
+    let exclude_third_party = params["exclude_third_party"].as_bool().unwrap_or(false);
+    let status_min = params["status_min"].as_u64().unwrap_or(0) as u16;
+    let status_max = params["status_max"].as_u64().unwrap_or(999) as u16;
+    let mode = params["mode"].as_str().unwrap_or("detail"); // "summary" | "detail"
+    let body_preview_bytes = params["body_preview_bytes"].as_u64().unwrap_or(4096) as usize;
+    let primary_host = params["primary_host"].as_str(); // for exclude_third_party
+
+    // Static-resource extension check.
+    fn is_static_ext(path: &str) -> bool {
+        let p = path.to_ascii_lowercase();
+        const EXTS: &[&str] = &[
+            ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".css", ".js", ".woff", ".woff2",
+            ".ttf", ".eot", ".map", ".mp4", ".webm",
+        ];
+        EXTS.iter().any(|e| p.ends_with(e))
+    }
+
     let traffic = ps.get_traffic().await;
     let total = traffic.len();
 
-    let entries: Vec<&TrafficEntry> = traffic.iter().rev().take(limit).collect();
-    let entries_json: Vec<serde_json::Value> = entries
+    let filtered: Vec<&TrafficEntry> = traffic
+        .iter()
+        .rev()
+        .filter(|e| {
+            if let Some(h) = host_filter {
+                if !e.host.contains(h) {
+                    return false;
+                }
+            }
+            if let Some(m) = &method_filter {
+                if &e.method.to_ascii_uppercase() != m {
+                    return false;
+                }
+            }
+            if let Some(mt) = &mime_filter {
+                if !e.mime_type.to_ascii_lowercase().contains(mt) {
+                    return false;
+                }
+            }
+            if e.status < status_min || e.status > status_max {
+                return false;
+            }
+            if exclude_static && is_static_ext(&e.path) {
+                return false;
+            }
+            if exclude_third_party {
+                if let Some(ph) = primary_host {
+                    if !e.host.contains(ph) {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .take(limit)
+        .collect();
+
+    let entries_json: Vec<serde_json::Value> = filtered
         .iter()
         .map(|e| {
-            serde_json::json!({
-                "id": e.id, "timestamp": e.timestamp, "method": e.method,
-                "url": e.url, "host": e.host, "path": e.path, "port": e.port,
-                "tls": e.tls, "status": e.status,
-                "response_length": e.response_length,
-                "response_time_ms": e.response_time_ms,
-                "mime_type": e.mime_type,
-                "request_headers": e.request_headers,
-                "request_body": e.request_body,
-                "response_headers": e.response_headers,
-                "response_body": truncate_utf8(&e.response_body, 4096),
-                "source": e.source, "notes": e.notes, "color": e.color
-            })
+            if mode == "summary" {
+                // Metadata-only. ~30x smaller than detail mode for an agent
+                // that just wants to know "what's interesting in here".
+                serde_json::json!({
+                    "id": e.id,
+                    "timestamp": e.timestamp,
+                    "method": e.method,
+                    "url": e.url,
+                    "host": e.host,
+                    "path": e.path,
+                    "status": e.status,
+                    "mime_type": e.mime_type,
+                    "response_length": e.response_length,
+                    "response_time_ms": e.response_time_ms,
+                    "request_body_size": e.request_body.len(),
+                    "tls": e.tls,
+                    "source": e.source,
+                    "notes": e.notes,
+                    "color": e.color,
+                })
+            } else {
+                serde_json::json!({
+                    "id": e.id, "timestamp": e.timestamp, "method": e.method,
+                    "url": e.url, "host": e.host, "path": e.path, "port": e.port,
+                    "tls": e.tls, "status": e.status,
+                    "response_length": e.response_length,
+                    "response_time_ms": e.response_time_ms,
+                    "mime_type": e.mime_type,
+                    "request_headers": e.request_headers,
+                    "request_body": truncate_utf8(&e.request_body, body_preview_bytes),
+                    "response_headers": e.response_headers,
+                    "response_body": truncate_utf8(&e.response_body, body_preview_bytes),
+                    "source": e.source, "notes": e.notes, "color": e.color
+                })
+            }
         })
         .collect();
 
     Ok(serde_json::json!({
         "total": total,
+        "filtered": filtered.len(),
         "returned": entries_json.len(),
+        "mode": mode,
         "entries": entries_json
     }))
 }
@@ -942,37 +1069,94 @@ pub async fn handle_send_to_intruder(params: &serde_json::Value) -> HandlerResul
 
         let mut body_keys_added: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // 1. JSON body — top-level object keys.
+        // 1. JSON body — recursive descent into nested objects + arrays.
+        //
+        // v0.3.10: previously we only marked top-level object keys, which
+        // produced two broken results: (a) for nested objects like
+        // `{ variables: { settingsId: "..." } }`, replacing `variables` with
+        // a string payload broke JSON shape → upstream returned 400 every
+        // probe → zero signal. (b) for GraphQL we'd mark the `query` field
+        // (the GraphQL mutation source, structural) as XSS-categorized →
+        // 400. The fix: descend into objects, collect every SCALAR LEAF as
+        // an injection point, name it by its JSON pointer (`settingsId`,
+        // `variables.settingsId`, `variables.targets[0]`), and GraphQL-aware
+        // skip the `query`/`operationName` keys (structural), focusing on
+        // `variables.*` instead.
         let looks_json = ctype.contains("json")
             || request_body.trim_start().starts_with('{')
             || request_body.trim_start().starts_with('[');
         if looks_json {
             if let Ok(body_json) = serde_json::from_str::<serde_json::Value>(&request_body) {
-                if let Some(obj) = body_json.as_object() {
-                    for (key, value) in obj {
-                        let marker = format!("§{}§", key);
-                        let category = override_category.unwrap_or_else(|| infer_payload_category(key));
-                        // Replace the value in the raw body so the marker is
-                        // injected literally. Best-effort substring replace —
-                        // works for primitives, falls back to no replace for
-                        // nested objects/arrays.
-                        let value_str = match value {
-                            serde_json::Value::String(s) => format!("\"{}\"", s),
-                            _ => value.to_string(),
-                        };
-                        let value_with_marker = format!("\"{}\"", marker);
-                        suggested_body = suggested_body.replace(&value_str, &value_with_marker);
-                        positions.push(serde_json::json!({
-                            "marker": marker,
-                            "original_value": value,
-                            "parameter": key,
-                            "location": "body_json",
-                            "source": "file",
-                            "file_category": category,
-                            "limit": 200
-                        }));
-                        body_keys_added.insert(key.clone());
+                // GraphQL heuristic: top-level keys `query`/`operationName`
+                // are structural, `variables` is the data surface. When we
+                // see that exact shape, descend only into `variables`.
+                let is_graphql = body_json
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.contains("query") || s.contains("mutation") || s.contains("subscription"))
+                    .unwrap_or(false)
+                    && body_json.get("variables").is_some();
+
+                let mut leaves: Vec<(String, serde_json::Value)> = Vec::new();
+                if is_graphql {
+                    if let Some(vars) = body_json.get("variables") {
+                        collect_scalar_leaves(vars, "variables", &mut leaves, 0);
                     }
+                } else {
+                    collect_scalar_leaves(&body_json, "", &mut leaves, 0);
+                }
+
+                // Hard cap so a 50-element array doesn't blow up the
+                // intruder config. Caller can re-issue with more after
+                // pruning.
+                const MAX_BODY_LEAVES: usize = 40;
+                let trimmed = leaves.len() > MAX_BODY_LEAVES;
+                let leaves_iter = leaves.into_iter().take(MAX_BODY_LEAVES);
+
+                for (path, value) in leaves_iter {
+                    // Marker name is derived from the path (preserve dot/[i]
+                    // notation so the agent can see exactly what's being
+                    // fuzzed).
+                    let marker = format!("§{}§", path);
+                    // Use the LAST segment for category inference (e.g.
+                    // `variables.targets[3]` -> `targets`).
+                    let cat_key = path.rsplit_once('.').map(|(_, k)| k).unwrap_or(&path);
+                    let cat_key = cat_key.split('[').next().unwrap_or(cat_key);
+                    let category = override_category.unwrap_or_else(|| infer_payload_category(cat_key));
+
+                    // Replace literal value in the raw body. We render the
+                    // original value as JSON, replace with quoted marker.
+                    // Best-effort; non-unique scalars may co-replace with
+                    // others but the markers + path metadata still let the
+                    // agent pick which to target.
+                    let value_str = match &value {
+                        serde_json::Value::String(s) => format!("\"{}\"", s),
+                        _ => value.to_string(),
+                    };
+                    let value_with_marker = format!("\"{}\"", marker);
+                    suggested_body = suggested_body.replace(&value_str, &value_with_marker);
+
+                    positions.push(serde_json::json!({
+                        "marker": marker,
+                        "original_value": value,
+                        "parameter": path,
+                        "location": "body_json",
+                        "source": "file",
+                        "file_category": category,
+                        "limit": 200,
+                        "graphql": is_graphql,
+                    }));
+                    body_keys_added.insert(path);
+                }
+
+                if trimmed {
+                    positions.push(serde_json::json!({
+                        "note": format!(
+                            "Body has more than {} scalar leaves — only first {} marked. Use `category` override or filter on `parameter` path to focus.",
+                            MAX_BODY_LEAVES, MAX_BODY_LEAVES
+                        ),
+                        "location": "meta",
+                    }));
                 }
             }
         }

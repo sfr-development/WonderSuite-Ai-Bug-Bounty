@@ -49,6 +49,7 @@ fn normalize_target(raw: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn scanner_start_active(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ScannerState>,
     proxy_app_state: tauri::State<'_, crate::proxy_commands::ProxyAppState>,
     target: String,
@@ -110,6 +111,44 @@ pub async fn scanner_start_active(
                 }
                 Err(e) => format!("error: {}", e),
             };
+        }
+    });
+
+    // v0.3.10: real-time finding emitter. Findings.tsx has been listening
+    // for `scanner-finding` since v0.3.0 but the Rust side never emitted —
+    // the panel only refreshed via polling. This task watches the scan's
+    // findings vector and emits each new finding as it appears. Sidecar
+    // model: zero overhead in the hot loop, ~250ms latency from push to
+    // UI receipt.
+    let app_emit = app.clone();
+    let live_emit = live.clone();
+    let scan_id_emit = scan_id.clone();
+    tokio::spawn(async move {
+        use tauri::Emitter;
+        let mut last_emitted = 0usize;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let (status, new_findings) = {
+                let Ok(snap) = live_emit.result.lock() else { break };
+                let new_findings: Vec<scanner::ScanFinding> =
+                    snap.findings.iter().skip(last_emitted).cloned().collect();
+                (snap.status.clone(), new_findings)
+            };
+            for finding in new_findings {
+                last_emitted += 1;
+                let _ = app_emit.emit(
+                    "scanner-finding",
+                    serde_json::json!({
+                        "scan_id": scan_id_emit,
+                        "finding": finding,
+                    }),
+                );
+            }
+            // Stop the watcher when the scan is no longer running. We do
+            // one more pass first (above) so the final batch lands.
+            if status == "completed" || status == "cancelled" || status.starts_with("error:") {
+                break;
+            }
         }
     });
 

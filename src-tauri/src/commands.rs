@@ -226,18 +226,56 @@ pub fn mcp_list_tools() -> Vec<crate::mcp::ToolDef> {
     crate::mcp::tool_definitions()
 }
 
-/// Bridge command: lets the AI agent execute any MCP tool by name + params.
-/// This gives the agent access to encode, decode, hash, analyze_jwt, generate_payload,
-/// repeat_request, fuzz_request, scan_target, analyze_tokens, compare_data,
-/// query_logs, organize_findings, active_scan, crawl_target, discover_subdomains,
-/// discover_content, full_auto_scan, test_auth_bypass, detect_smuggling, find_secrets,
-/// generate_csrf_poc, dom_invader, timing_attack, raw_tcp_send, smuggling_send,
-/// bambda_filter, mtls_send_request, dns_resolve, race_request, h2_*, crtsh_search,
-/// wayback_lookup, whois_lookup, asn_lookup, favicon_hash, discover_parameters,
-/// graphql_introspect, js_link_finder, reverse_ip_lookup, template_*, and more.
+/// Bridge command: lets the WonderSuite UI execute any MCP tool by name +
+/// params. Used by Recon/OSINT/Tools panels that don't have a dedicated
+/// `#[tauri::command]` wrapper.
+///
+/// v0.3.10 security hardening: a small set of high-privilege MCP tools that
+/// could be abused from a compromised webview (proxy routing, certificate
+/// pass-through, raw socket, browser code execution, OAST listener exposure)
+/// is denied by default. Pass `WS_MCP_DEV_MODE=1` in the environment, or
+/// call the dedicated `#[tauri::command]` (e.g. `proxy_set_upstream`)
+/// directly, to use those. The hot loop for daily-use tools (encode, decode,
+/// scan, fingerprint, recon) is unchanged.
 #[tauri::command]
 pub async fn mcp_execute_tool(name: String, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    if !is_dev_mode() && is_high_risk_tool(&name) {
+        return Err(format!(
+            "Tool '{}' is high-privilege and not callable via the IPC bridge by default. \
+             Use the dedicated Tauri command (e.g. `proxy_set_upstream`, `browser_evaluate`) \
+             or set the env var `WS_MCP_DEV_MODE=1` before launching WonderSuite to allow it.",
+            name
+        ));
+    }
     crate::mcp::handle_tool_call(&name, &params).await
+}
+
+/// High-risk MCP tools. Compromising the webview should not give an attacker
+/// the ability to: re-route the user's traffic through their proxy, plant a
+/// permanent match-replace rule, open a public SMTP/DNS listener, run
+/// arbitrary JS in the user's bundled Chromium session, fire raw bytes at
+/// arbitrary destinations. Each of these has a dedicated `#[tauri::command]`
+/// entry point that the legitimate UI already uses.
+fn is_high_risk_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "proxy_set_upstream"
+            | "proxy_add_match_replace"
+            | "proxy_remove_match_replace"
+            | "proxy_add_interception_rule"
+            | "proxy_remove_interception_rule"
+            | "proxy_add_tls_passthrough"
+            | "browser_evaluate"
+            | "browser_dom_sinks"
+            | "oast_start_smtp_server"
+            | "oast_start_dns_server"
+            | "mtls_send_request"
+            | "raw_tcp_send"
+    )
+}
+
+fn is_dev_mode() -> bool {
+    std::env::var("WS_MCP_DEV_MODE").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false)
 }
 
 /// Settings → MCP browser default-headless toggle. The UI flips this; the next
@@ -313,7 +351,15 @@ pub async fn save_file_bytes(path: String, data_base64: String) -> Result<(), St
 }
 
 /// Validate that a file path is within allowed directories.
-/// Prevents path traversal and arbitrary file access.
+/// Prevents path traversal and arbitrary file access via the Tauri IPC.
+///
+/// v0.3.10: previously this function silently fell through to `Ok(())` after
+/// the allowed-prefix loop — any code with IPC reach (compromised webview,
+/// rogue extension) could read `~/.ssh/id_rsa` or write `.bat` files into the
+/// Startup folder. Now the fall-through is an explicit `Err`. The IDE config
+/// allowlist is also tightened — it requires the IDE directory to be a path
+/// SEGMENT (e.g. `.../\.cursor/...`), not just contain the substring anywhere
+/// in the path. `C:\evil\.cursor.malicious.json` no longer slips through.
 fn validate_path(path: &str) -> Result<(), String> {
     let canonical = std::path::Path::new(path);
 
@@ -339,11 +385,25 @@ fn validate_path(path: &str) -> Result<(), String> {
         }
     }
 
-    if path_str.ends_with(".json")
-        && (path_str.contains(".cursor") || path_str.contains(".vscode") || path_str.contains(".claude"))
-    {
-        return Ok(());
+    // IDE / MCP-client config writes — `Settings → MCP Server → One-click
+    // install` writes config files into a user's editor config dir. We allow
+    // a JSON write only when the path contains a recognized IDE directory
+    // as an actual path SEGMENT (delimited by separator on both sides) and
+    // ends with `.json`. This rejects `C:\evil\.cursor.evil.json` while
+    // still allowing `C:\Users\u\.cursor\mcp.json`.
+    let ide_dirs = [".cursor", ".vscode", ".claude", ".continue", ".windsurf"];
+    if path_str.ends_with(".json") {
+        for dir in &ide_dirs {
+            let win_seg = format!("\\{}\\", dir);
+            let unix_seg = format!("/{}/", dir);
+            if path_str.contains(&win_seg) || path_str.contains(&unix_seg) {
+                return Ok(());
+            }
+        }
     }
 
-    Ok(())
+    Err(format!(
+        "Path '{}' is outside allowed directories. Allowed: {}/.wondersuite/, system temp dir, IDE config dirs (.cursor / .vscode / .claude / .continue / .windsurf) for .json files.",
+        path_str, home
+    ))
 }

@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-05-17
+
+### Security — fixed via full code + workflow audit (35 findings, agent + live-run cross-verified)
+
+- **`validate_path` Tauri IPC arbitrary-file bypass** (`commands.rs`). The path-validation function had no `Err` after its allowed-prefix loop and fell through to `Ok(())` — `save_file_bytes` / `save_file_text` / `read_file_content` accepted any absolute path. The IDE-config allowlist also matched `.cursor` / `.vscode` / `.claude` as substrings anywhere in the path. Now: explicit `Err` fall-through and segment-level IDE-dir match (`/.cursor/` not `*.cursor*`).
+- **OAST listeners now bind 127.0.0.1 by default** (`oast.rs`). DNS/HTTP/SMTP callback servers were hardcoded `0.0.0.0` — any peer on the same LAN/WiFi could hit your laptop's SMTP / DNS / HTTP listener without consent. Now: loopback by default, `0.0.0.0` only when `WS_OAST_HOST` is set to a non-loopback hostname (= user opted in) or `WS_OAST_BIND` is explicit.
+- **`mcp_execute_tool` dev-mode gate** (`commands.rs`). The IPC bridge gave any compromised webview the full 90-tool MCP surface including `proxy_set_upstream` (traffic re-routing), `browser_evaluate` (arbitrary JS in user's browser), `oast_start_*` (open public listeners), `raw_tcp_send` (raw bytes anywhere). Now: a small high-privilege denylist that requires `WS_MCP_DEV_MODE=1` (env var, set before launch) or use of the dedicated `#[tauri::command]` directly.
+
+### Fixed — data integrity, dead UI, drift
+
+- **`scanner_stop` Tauri command was defined but never registered** in `invoke_handler` (`lib.rs`). UI Stop button silently no-op'd. Now wired.
+- **`apply_match_replace_response` corrupted binary responses** (`proxy/state.rs`). The function did an unconditional `String::from_utf8_lossy(body).to_string().into_bytes()` round-trip on every response even when zero `response_body` rules were active — `U+FFFD` injected into images, gzip blobs, protobuf, SHA-pinned downloads. Now: skip the round-trip entirely when no body rule exists; only enter the lossy path when the user has explicitly configured a body rule.
+- **Scanner real-time finding emit** (`scanner_commands.rs`). `Findings.tsx` listened for `'scanner-finding'` events since v0.3.0 but the Rust side never emitted them — UI only refreshed via polling. New sidecar task emits each new finding within ~250 ms of `findings.push`.
+- **`find_secrets` pattern bugs + severity ladder** (`mcp/handlers/recon.rs`). Added `slack_webhook`, `discord_webhook`, `azure_storage_key`, `npm_token`, `sentry_dsn`, `firebase_url`, `mssql`/`oracle`/`clickhouse` to `database_url`, `OPENSSH`/`PGP` to `private_key`. Fixed `internal_ip` regex (was 3-octet only — `10.5.42.7` partial-matched). Suppressed `email` false-positive when it sits inside a URL authority (`user:pass@host`). Split `stripe_key` into `stripe_live_key` (critical — charges real money) and `stripe_test_key` (high).
+- **`proxy_get_capabilities` stale counts** — used to report a hardcoded `mcp_tools: 18, ipc_commands: 34` regardless of reality (real numbers: 100 / 134+). Now: `mcp_tools` from `mcp::tool_count()` (dynamic from tool_definitions), `ipc_commands` from a single-source-of-truth function.
+
+### Workflow / agent surface
+
+- **Default interception rule `skip-trackers`** (`proxy/state.rs`). 50+ tracker/ad/analytics hosts (doubleclick, googletagmanager, bat.bing, facebook.com/tr, hotjar, fullstory, mixpanel, segment, amplitude, sentry, datadog, intercom, usercentrics, hooks.slack.com, etc.) auto-pass-through. Live test on a real session showed ~50% of captures were tracker noise pre-fix.
+- **`proxy_get_traffic` filters + `mode: "summary" | "detail"`** (`mcp/handlers/proxy.rs`). Previously a `limit: 5` could blow >30 KB of response (YouTube telemetry, GraphQL mutations). Now: `host`, `method`, `mime`, `status_min`/`max`, `exclude_static`, `exclude_third_party` + `primary_host`, plus a summary mode that returns metadata only (~30× smaller).
+- **`send_to_intruder` JSON body recursive descent + GraphQL awareness** (`mcp/handlers/proxy.rs`). Previously only marked top-level object keys — nested `{ variables: { settingsId, targets } }` got a single `§variables§` marker that replaced the whole sub-object with a string, breaking JSON shape upstream (400 every probe). Now: descend through nested objects and arrays, mark only scalar leaves with JSON-pointer paths (`variables.settingsId`, `variables.targets[3]`), and for GraphQL bodies (`query` + `variables` shape) skip the structural `query` field and descend only into `variables`. Hard cap at 40 leaves so a 50-element array doesn't explode the config.
+- **Intruder real concurrency** (`intruder.rs`). The runner was a single sequential `for` loop ignoring `config.threads` — the documented multi-thread feature was a lie. Now: bounded concurrency via `tokio::Semaphore` so `threads` is honored (defaults to 10 if 0), `throttle_ms` still drip-feeds dispatch, pause/stop checks survive in-flight.
+
+### Added — MCP coverage gaps closed
+
+- **Intruder driver tools** (5 new): `intruder_start`, `intruder_status`, `intruder_results`, `intruder_stop`, `intruder_list`. Agent can now fire + observe + cancel Intruder attacks — previously it could only call `send_to_intruder` and had nowhere to send the resulting config.
+- **OAST coverage** (4 new): `oast_start_http_server`, `oast_poll_interactions`, `oast_status`, `oast_clear`. The missing `oast_poll_interactions` was the workflow-blocker — agent fired blind payloads but had no MCP-accessible way to see callbacks. Poll model is offset-based (pass `since_offset`, get `next_offset`).
+- **`js_library_audit`** — detect frontend libraries + versions (jQuery, AngularJS, Vue, React, Bootstrap, lodash, moment, axios, PDF.js, CKEditor, Handlebars, Knockout, Backbone, Ember, MooTools, Prototype, Dojo, EJS, Select2, DataTables, marked, DOMPurify, three.js, d3, chart.js, plotly, MathJax, Next.js, Nuxt, Gatsby, Polymer, Alpine.js, htmx, Stimulus, Swiper, Highcharts, Popper.js, fontawesome, WordPress, Drupal, Joomla, Magento, Shopify, and ~20 more — 62 libraries total). **Detection only — NO bundled CVE / vulnerability data**, by design. The AI agent does CVE research separately (web search + own knowledge). Keeps the detection layer evergreen and the vulnerability assessment fresh. Input modes: `url`, `html`, `js`, or `traffic_id`; optional `follow_scripts` fetches each external script src to catch minified libs whose URL is generic.
+- **AI skill workflow update** (`.claude/skills/wondersuite.md`): new "Library Inventory → Outdated → CVE Hunt" workflow. Tool count bumped from 90 to 100.
+
+### Persistence
+
+- **`globalScope` (in-scope rules) persisted to `ws_global_scope_v1`** — restart no longer loses your scope.
+- **Repeater tabs persisted to `ws_replay_tabs_v1`** — N drafted tabs survive app restart. Transient fields (response, statusCode, isLoading) get reset on rehydrate.
+
+### Internal
+
+- New `src-tauri/src/jslib/` module — compile-time-embedded fingerprint DB (`resources/jslib/fingerprints.json`) + lazy regex compilation.
+- New `src-tauri/src/mcp/handlers/intruder.rs` — agent-side wrappers around the Tauri Intruder engine.
+- `intruder::create_intruder_state` now also seeds a global `OnceLock` so MCP handlers can drive the engine without Tauri State<>.
+- `scanner_start_active` now takes an AppHandle so it can emit `scanner-finding` events.
+- `proxy_commands::proxy_get_capabilities` reports dynamic counts from a single source of truth.
+
 ## [0.3.9] — 2026-05-17
 
 ### Fixed — Proxy upstream-request reliability (wreq path)
