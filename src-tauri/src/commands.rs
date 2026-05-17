@@ -2,6 +2,34 @@ use crate::mcp::McpState;
 use serde::Serialize;
 use std::time::Instant;
 
+/// v0.3.12: GitHub releases proxy for the Changelog tab. The webview's CSP
+/// blocks cross-origin fetch() to api.github.com, so we relay the request
+/// through reqwest on the Rust side and pass the raw JSON string back.
+///
+/// 10-second timeout, unauthenticated (60 req/h per IP is plenty for a per-
+/// user changelog refresh). Returns the body verbatim — the frontend parses.
+#[tauri::command]
+pub async fn fetch_github_releases() -> Result<String, String> {
+    let url = "https://api.github.com/repos/sfr-development/WonderSuite-Ai-Bug-Bounty/releases?per_page=20";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("WonderSuite-Changelog/0.3.13")
+        .build()
+        .map_err(|e| format!("client: {}", e))?;
+    let resp = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("fetch: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("read body: {}", e))?;
+    if !status.is_success() {
+        return Err(format!("GitHub API {}: {}", status, text.chars().take(200).collect::<String>()));
+    }
+    Ok(text)
+}
+
 #[derive(Serialize)]
 pub struct HttpResponse {
     pub status: u16,

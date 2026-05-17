@@ -69,6 +69,7 @@ pub fn run() {
         .manage(portscan_state)
         .invoke_handler(tauri::generate_handler![
             commands::send_http_request,
+            commands::fetch_github_releases,
             commands::mcp_start,
             commands::mcp_stop,
             commands::mcp_status,

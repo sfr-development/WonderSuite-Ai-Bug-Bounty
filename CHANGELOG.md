@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.13] — 2026-05-17
+
+### Fixed — Changelog tab (v0.3.12 follow-up)
+- **`GitHub fetch failed: Failed to fetch`** in the new What's New tab is gone.
+  The webview's default CSP blocked direct cross-origin `fetch()` calls to
+  `api.github.com`, so the GitHub releases data never loaded — only the
+  offline-bundled changelog rendered with an error banner. The fetch now
+  routes through a new `fetch_github_releases` Tauri command (Rust-side
+  reqwest, 10 s timeout, no CORS), and the frontend `invoke()`s it. Online
+  data + offline fallback both work as designed now.
+- **Decorative Sparkles icon removed** from the hero card — the page reads
+  cleaner without it. The sidebar tab still uses the icon (it needs *one*).
+
+### Changed — Changelog tab modernized
+- **Bigger hero**: dropped the icon box, restored the eyebrow / title /
+  subtitle hierarchy (RELEASE NOTES → "What's new" → version + just-updated
+  pill). Title is 32 px Inter 800 instead of cramped 17 px.
+- **Cards have spines** instead of a busy header gradient — a thin 3 px
+  vertical bar on the left side that lights up orange on the latest
+  release and on hover. Cleaner, more Linear / Vercel-style.
+- **Hover state**: cards lift 1 px and pick up a soft drop-shadow.
+- **H3 sub-section headers inside release bodies** get a small orange dot
+  prefix so dense changelogs (like v0.3.10's seven-cluster sweep) are
+  easier to skim.
+- **Tag system** simplified: "NEW" → "Latest", "INSTALLED" stays, GitHub
+  link is now a tag-shaped chip with consistent treatment.
+- **Just-updated indicator** moved from a separate banner to an inline
+  orange-pulse pill in the subtitle ("You're on v0.3.13 · ● just updated").
+  Less visual noise.
+
+### Internal
+- `commands::fetch_github_releases` — new Tauri command that proxies the
+  GitHub releases API through reqwest, returns raw JSON.
+- `lib.rs` registers it in `invoke_handler!`.
+- Frontend `Changelog.tsx` uses `@tauri-apps/api/core::invoke` instead of
+  `fetch()` — no more browser-side CSP concerns.
+
 ## [0.3.12] — 2026-05-17
 
 ### Added — In-app changelog tab
