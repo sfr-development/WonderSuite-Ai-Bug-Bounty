@@ -48,9 +48,9 @@ The platform ships with **91 purpose-built security tools** accessible via JSON-
 
 <div align="center">
 
-<video src="https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/raw/main/docs/preview.mp4" controls muted width="900" poster="docs/screenshots/dashboard.png">
-  Your browser/viewer can't render embedded MP4. <a href="docs/preview.mp4">Download the clip</a> instead.
-</video>
+[![▶ Watch the demo — Claude Opus 4.7 driving WonderSuite end-to-end (click to play)](docs/screenshots/dashboard.png)](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/blob/main/docs/preview.mp4)
+
+**[▶ Click here or on the image above to play the demo](https://github.com/sfr-development/WonderSuite-Ai-Bug-Bounty/blob/main/docs/preview.mp4)** · [Direct download (14 MB MP4)](docs/preview.mp4)
 
 *Claude Opus 4.7 driving WonderSuite end-to-end: opens WonderBrowser, walks through a registration form on its own (fills email + password fields, presses Sign up), and watches the resulting traffic stream through the proxy live — auth POST captured, JWT/CSRF surfaced, ready to fuzz. Zero scripted steps, the agent picks the tool sequence itself (`browser_open` → `browser_snapshot` → `browser_fill_form` → `browser_click` → `proxy_get_traffic` → `analyze_jwt`).*
 
