@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.12] — 2026-05-17
+
+### Added — In-app changelog tab
+- **New sidebar tab "What's New"** (with `Sparkles` icon, bottom of the
+  sidebar between Documentation and Settings) renders the full per-release
+  changelog inside the app — no need to leave WonderSuite or open a browser
+  to see what changed.
+- **Live data**: fetches the GitHub releases API on open for the freshest
+  release notes (rich markdown bodies, per-release URLs, publish times) and
+  falls back to the offline-bundled `CHANGELOG.md` when offline or rate-
+  limited. The two sources are merged by version so nothing's missing
+  either way.
+- **"1" notification badge** on the sidebar appears whenever the installed
+  version is newer than the version the user last opened the Changelog tab
+  for. Driven by a `ws_last_seen_changelog_version_v1` localStorage key
+  (in the expanded sidebar a pill-shaped "1" appears next to the label; in
+  the collapsed sidebar a pulsing orange dot in the corner of the icon).
+  Opening the tab clears the badge.
+- **"You just updated"** banner highlights the new release at the top of
+  the list for 14 days after publication when the installed version matches
+  the latest GitHub release.
+- **Search field** filters releases by version number or body content.
+- Each release card shows a version chip, publish date + relative time
+  ("3d ago"), a `NEW` badge on the latest, an `INSTALLED` badge on the one
+  the user is running, and a direct link to the release page on GitHub.
+- Markdown rendered through the existing react-markdown + remark-gfm stack,
+  styled to match the rest of the app (dark mode, accent color, JetBrains
+  Mono for code, dashed-underline links).
+
+### Internal
+- New `src/stores/changelogStore.ts` — Zustand store wrapping
+  `localStorage` for the "last seen version" tracking + a single
+  `hasUnseenChangelog` selector the sidebar subscribes to.
+- New module under `src/modules/changelog/` (TSX + CSS).
+- `src/types/index.ts` adds `'changelog'` to the `ModuleId` union.
+- `src/components/layout/moduleMap.tsx` and `Sidebar.tsx` register the new
+  tab + badge.
+- `CHANGELOG.md` is bundled into the binary at build time via Vite's
+  `?raw` import suffix, so the offline fallback ships with every release.
+
 ## [0.3.11] — 2026-05-17
 
 Three roll-ups in one tag: a self-audit pass over the v0.3.10 changes (perf

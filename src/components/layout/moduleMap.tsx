@@ -25,6 +25,7 @@ export const moduleMap: Record<string, React.LazyExoticComponent<React.Component
   discovery:  lazy(() => import('../../modules/discovery/Discovery').then(m => ({ default: m.Discovery }))),
   osint:      lazy(() => import('../../modules/osint/Osint').then(m => ({ default: m.Osint }))),
   docs:       lazy(() => import('../../modules/docs/Docs').then(m => ({ default: m.Docs }))),
+  changelog:  lazy(() => import('../../modules/changelog/Changelog').then(m => ({ default: m.Changelog }))),
   settings:   lazy(() => import('../../modules/settings/Settings').then(m => ({ default: m.Settings }))),
 };
 
@@ -36,7 +37,7 @@ export const moduleLabels: Record<string, string> = {
   organizer: 'Organizer', agent: 'Agent', templates: 'Templates',
   payloads: 'Payloads', session: 'Session', websocket: 'WebSocket',
   oast: 'OAST', discovery: 'Discovery', osint: 'OSINT',
-  docs: 'Documentation', settings: 'Settings',
+  docs: 'Documentation', changelog: "What's New", settings: 'Settings',
 };
 
 export function ModuleSkeleton() {

@@ -22,6 +22,7 @@ export type ModuleId =
   | 'osint'
   | 'discovery'
   | 'docs'
+  | 'changelog'
   | 'settings';
 
 export interface HttpMessage {

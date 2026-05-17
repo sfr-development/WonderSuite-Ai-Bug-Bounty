@@ -289,6 +289,43 @@
   box-shadow: 0 0 0 1px var(--bg-1), 0 0 6px var(--accent);
 }
 
+/* ─── Changelog "1" badge ────────────────────────────────────── */
+.sidebar-changelog-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+  letter-spacing: 0;
+  color: var(--bg-0);
+  background: var(--accent);
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px var(--bg-1), 0 0 10px rgba(232, 161, 69, 0.55);
+  animation: sidebar-changelog-pulse 2.4s ease-in-out infinite;
+}
+
+.sidebar-changelog-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--bg-1), 0 0 8px var(--accent);
+  animation: sidebar-changelog-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes sidebar-changelog-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.75; transform: scale(0.92); }
+}
+
 /* ─── Pop-out context menu ───────────────────────────────────── */
 .sidebar-popmenu {
   position: fixed;

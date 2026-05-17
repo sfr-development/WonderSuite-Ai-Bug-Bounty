@@ -25,6 +25,7 @@ import {
   FolderSearch,
   Fingerprint,
   BookText,
+  Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
   ChevronRight,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import { useDetachedStore } from '../../stores/detachedStore';
+import { useChangelogStore } from '../../stores/changelogStore';
 import type { ModuleId } from '../../types';
 import './Sidebar.css';
 
@@ -94,6 +96,7 @@ const navGroups: NavGroup[] = [
 export function Sidebar() {
   const { activeModule, setActiveModule } = useAppStore();
   const { detached, detach, redock, focus } = useDetachedStore();
+  const hasUnseenChangelog = useChangelogStore((s) => s.hasUnseenChangelog);
   const [expanded, setExpanded] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [popMenu, setPopMenu] = useState<{ x: number; y: number; moduleId: ModuleId } | null>(null);
@@ -199,7 +202,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Docs + Settings at bottom */}
+      {/* Docs + Changelog + Settings at bottom */}
       <div className="sidebar-bottom">
         <button
           className={`sidebar-item ${activeModule === 'docs' ? 'active' : ''} ${detached.has('docs') ? 'is-detached' : ''}`}
@@ -212,6 +215,20 @@ export function Sidebar() {
           {expanded && <span className="sidebar-label">Documentation</span>}
           {expanded && detached.has('docs') && <span className="sidebar-detached-pill">window</span>}
           {!expanded && detached.has('docs') && <span className="sidebar-detached-dot" />}
+        </button>
+        <button
+          className={`sidebar-item ${activeModule === 'changelog' ? 'active' : ''} ${detached.has('changelog') ? 'is-detached' : ''}`}
+          onClick={() => handleItemClick('changelog')}
+          onContextMenu={(e) => handleContextMenu(e, 'changelog')}
+          data-tooltip={!expanded ? `What's new${hasUnseenChangelog ? '  ●' : ''}` : undefined}
+          title={expanded ? "What's new" : undefined}
+        >
+          <Sparkles size={16} strokeWidth={1.8} />
+          {expanded && <span className="sidebar-label">What's New</span>}
+          {expanded && hasUnseenChangelog && <span className="sidebar-changelog-badge">1</span>}
+          {!expanded && hasUnseenChangelog && <span className="sidebar-changelog-dot" />}
+          {expanded && detached.has('changelog') && <span className="sidebar-detached-pill">window</span>}
+          {!expanded && detached.has('changelog') && <span className="sidebar-detached-dot" />}
         </button>
         <button
           className={`sidebar-item ${activeModule === 'settings' ? 'active' : ''} ${detached.has('settings') ? 'is-detached' : ''}`}
