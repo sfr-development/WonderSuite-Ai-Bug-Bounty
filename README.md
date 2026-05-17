@@ -38,7 +38,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 
 **WonderSuite** is a desktop-native offensive security engine that combines Burp Suite-class tooling with autonomous AI agent capabilities. It provides a fully integrated environment for web application security testing, network reconnaissance, and exploit development — all orchestrated through an MCP-compatible AI interface.
 
-The platform ships with **85 purpose-built security tools** accessible via JSON-RPC, a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
+The platform ships with **91 purpose-built security tools** accessible via JSON-RPC (trimmed from 100 in v0.3.11 — the standalone OAST tools were folded into `active_scan(with_oast: true)` to keep the AI's context budget lean), a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
 
 <div align="center">
 <img src="docs/screenshots/dashboard.png" alt="WonderSuite Dashboard" width="900" />
@@ -231,7 +231,7 @@ Native Model Context Protocol server enabling AI agents (Claude, Cursor, Windsur
 | Port Scanner (5) | **`port_scan`** (host + presets + 15 in-process probes) · **`port_scan_range`** (CIDR/range/list, `exclude_cdn`) · **`service_detect`** (probe a known-open port) · **`banner_grab`** (raw bytes, custom payload) · **`port_scan_results`** (paginated drill-down) |
 | OSINT | `whois_lookup` · `asn_lookup` · `crtsh_search` · `wayback_lookup` · `hackertarget_lookup` · `ip_geolocation` · `tech_detect` · `favicon_hash` · `reverse_ip_lookup` · `graphql_introspect` |
 | Codec | `encode` · `decode` · `hash` · `smart_decode` · **`analyze_jwt`** (alg=none, kid SQLi/traversal, jku/x5u SSRF, HS/RS confusion) |
-| OAST | `oast_verify` (auto-bind HTTP listener, self-test, get_interactions) · `oast_start_dns_server` · `oast_start_smtp_server` · `oast_generate_payload` (auto-bind + path-correlated `callback_url` per payload) |
+| OAST | Embedded in-process listeners (HTTP / DNS / SMTP) with path-correlated callbacks; drive from `active_scan(with_oast: true)` (recommended for AI agents) or the OAST UI panel. Standalone `oast_*` MCP tools are not in the agent surface as of v0.3.11 — un-comment in `src-tauri/src/mcp/handlers/mod.rs` if you need raw payload control. |
 | Exploit | `race_request` · `raw_tcp_send` · `websocket_connect` · `analyze_cdn_waf` (with CDN bypass strategies) |
 | Reporting | `generate_report` (markdown / JSON / summary) · `bambda_filter` · `payload_manager` · `get_traffic_log` |
 
@@ -511,7 +511,7 @@ WonderSuite ships a project-level Claude skill that turns your AI client into a 
 - The pre-flight sequence (proxy check + recon basics) the AI should run on every new engagement
 - Workflows: recon→crawl→triage, manual browser testing, OAST blind-vuln hunt, JWT analysis, SQLi/XSS hunting, race conditions, HTTP smuggling
 - A decision tree for `browser_open` vs `browser_attach` vs `browser_attach({auto_launch, use_real_profile})`
-- Tool-by-tool reference for all 85 MCP tools (parameters, when to use, killer-feature notes)
+- Tool-by-tool reference for all 91 MCP tools (parameters, when to use, killer-feature notes)
 - Error-code recovery table (`PROXY_DOWN`, `STALE_REF`, `CDP_LOST`, `PROFILE_LOCKED` …)
 - Anti-patterns and ask-vs-act guidance
 
@@ -557,7 +557,7 @@ wondersuite/
 │   │   └── wondersuite-extension/ # Bundled MV3 stealth extension
 │   └── src/
 │       ├── mcp/                  # MCP server engine
-│       │   ├── browser/          # Human-native browser MCP (24 tools, CDP-Input, Shadow-DOM cursor)
+│       │   ├── browser/          # Human-native browser MCP (23 tools, CDP-Input, top-frame cursor overlay)
 │       │   │   ├── session.rs    #   CDP WS lifecycle + event dispatch
 │       │   │   ├── snapshot.rs   #   a11y tree + ref=eN + forms + security
 │       │   │   ├── network.rs    #   request capture ring buffer

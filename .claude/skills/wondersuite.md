@@ -1,6 +1,6 @@
 ---
 name: wondersuite
-description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (100 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (91 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
 ---
 
 # WonderSuite Pentest Operating Manual
@@ -26,7 +26,7 @@ The behaviour is controlled by the **stealth_profile** session setting (Settings
 | `human` (default) | Almost everything | ~300-600ms per click | Indistinguishable on ~95% of real sites |
 | `paranoid` | Banking, sophisticated bot mgmt (Akamai BMP) | ~600-1200ms per click | Maximum stealth + overshoot |
 
-After switching the profile, run **`browser_stealth_check`** — it loads an in-memory test page, drives a click + type, and reports back how many events arrived as `isTrusted:true`, whether `navigator.webdriver` is exposed, whether the cursor overlay leaked into page DOM, plus an overall `stealth_score` and verdict (`indistinguishable` / `good` / `partially-detectable` / `detectable`).
+After switching the profile, ask the user to run the **WonderBrowser stealth self-check** from the UI (it moved out of MCP in v0.3.11 to keep the agent's tool list lean). The check loads an in-memory test page, drives a click + type, and reports back how many events arrived as `isTrusted:true`, whether `navigator.webdriver` is exposed, whether the cursor overlay leaked into page DOM, plus an overall `stealth_score` and verdict (`indistinguishable` / `good` / `partially-detectable` / `detectable`).
 
 ## Three Rules You Don't Get to Break
 
@@ -188,18 +188,15 @@ browser_resource_hints      # robots.txt + sitemap.xml + .well-known/* + script 
 
 ### OAST Blind-Vuln Hunt
 
-WonderSuite's OAST runs entirely in-process — no external server like Burp Collaborator needed. Path-correlated callbacks mean each payload knows which request triggered it.
+WonderSuite's OAST listeners (DNS / HTTP / SMTP) run in-process — no external server like Burp Collaborator needed. As of v0.3.11 the standalone `oast_*` MCP tools are **no longer exposed to the agent** (they were dropping ~8 entries into the tool list and most agents lost the workflow in the noise). The functionality is intact and available two ways:
 
-```
-oast_start_server                              # auto-started by oast_generate_payload too
-oast_self_test                                 # callback-chain sanity check (do this once per session)
-oast_generate_payload({purpose: "rce"})        # returns {payload, callback_url, path}
-# inject `payload` into params via fuzz_request or browser actions
-oast_verify({path})                            # poll for hits; returns matching interactions
+1. **Through `active_scan({with_oast: true})`** — the recommended path. The scanner generates correlation IDs, fires blind_cmdi / blind_ssrf / blind_sqli_dns / log4shell payloads, and reports OAST callbacks back in the findings list. One tool call covers the whole blind-vuln chain:
+   ```
+   active_scan({target, with_oast: true})       # blind probes + scanner findings, all in one
+   ```
+2. **Through the OAST UI panel** — start listeners, view live interactions, generate one-off payloads. Useful when you want to inject manually via `browser_*` or `send_request`. Ask the user to drive the UI; the agent observes results via `proxy_get_traffic` (since blind payloads injected by you go through the local proxy).
 
-# Or just enable OAST mode on the active scan:
-active_scan({target, with_oast: true})         # blind_cmdi + blind_ssrf + log4shell + blind_sqli_dns probes
-```
+If you need the raw OAST MCP surface back (single payloads, manual polling), it's still in the Rust source — un-comment the dispatch + tool_definitions entries in `mcp/handlers/mod.rs` and `mcp/mod.rs`. The v0.3.11 cut was a context-budget decision, not a deprecation.
 
 ### Auth + JWT Analysis
 
@@ -254,7 +251,7 @@ generate_report({format: "markdown" | "json", scan_id?})
 
 ---
 
-## Tool Reference (100 tools)
+## Tool Reference (91 tools)
 
 ### HTTP / Send Request (the workhorses)
 
@@ -325,10 +322,9 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - `browser_wait_for({action, selector|text|url, timeout_ms})` — synchronisation.
 - `browser_replay_to_proxy({request_id})` — push a CDP-captured request into the proxy's Repeater.
 
-**Diagnostic:**
-- `browser_stealth_check` — loads an in-memory test page, drives a click + type, reports `isTrusted` counts per event type, `navigator.webdriver` state, whether the AI cursor leaked into page DOM, and an overall `stealth_score` + verdict. Run after switching `stealth_profile`.
+**Diagnostic (UI-only as of v0.3.11):** the stealth-self-test moved out of the MCP surface — open the WonderBrowser settings panel and click "Run stealth check". It reports `isTrusted` counts per event type, `navigator.webdriver` state, cursor-overlay leakage check, and an overall score.
 
-**AI cursor lives in a closed Shadow DOM** — visible to the user, completely invisible to page-JS (can't be queried, mutated, or detected). Updates by listening to native mousemove/click/keydown events fired by the CDP input pipeline. Self-heals via MutationObserver + 1.5s polling.
+**AI cursor (v0.3.11 fix):** lives on `documentElement`, **only in the top frame** (sub-frames like auth-widget iframes no longer spawn ghost cursors). Updates via CDP-driven `__ws_cursor_animate` calls; back-to-back animations cancel each other via a generation token. Self-heals via MutationObserver + 1.5 s polling.
 
 ### Scanner (active + passive)
 
@@ -338,11 +334,9 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - **`payload_manager`** — manage wordlists from SecLists / PayloadsAllTheThings.
 - **`generate_report({format})`** — final report from accumulated findings.
 
-### OAST (4 tools)
+### OAST (not in MCP surface as of v0.3.11)
 
-- **`oast_generate_payload({purpose})`** — returns `{payload, callback_url, path}`. Inject `payload` somewhere; poll with `oast_verify({path})`.
-- **`oast_verify({path})`** — poll for hits.
-- **`oast_start_dns_server` / `oast_start_smtp_server`** — start the DNS / SMTP callback channels for protocols that don't do HTTP.
+The 8 `oast_*` tools were removed from the agent's tool list in v0.3.11 to trim the context budget. OAST functionality is still 100% available — drive it via `active_scan({with_oast: true})` (recommended; the scanner generates correlation IDs and reports callbacks back in its findings list) or ask the user to operate the OAST UI panel and observe results via `proxy_get_traffic`.
 
 ### Recon / OSINT
 
@@ -490,6 +484,6 @@ Severity scale: `critical | high | medium | low | info`. Use `info` for things l
 
 ## One-Liner You Can Steal
 
-> "I'm wired into a local WonderSuite MCP server (100 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+> "I'm wired into a local WonderSuite MCP server (91 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
 
 That's the right opening line for any new engagement.

@@ -74,8 +74,10 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "browser_resource_hints" => crate::mcp::browser::handlers::resource_hints(params).await,
         "browser_wait_for" => crate::mcp::browser::handlers::wait_for(params).await,
         "browser_tabs" => crate::mcp::browser::handlers::tabs(params).await,
-        "browser_stealth_check" => crate::mcp::browser::stealth_check::run(params).await,
-
+        // v0.3.11: `browser_stealth_check` removed from MCP surface — niche
+        // visibility check, the actual stealth implementation lives in the
+        // bundled extension and runs automatically. Tool is still callable
+        // from the UI for manual verification.
         "websocket_connect" => websocket::handle_websocket_connect(params).await,
 
         "crawl_target" => recon::handle_crawl_target(params).await,
@@ -93,14 +95,13 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "banner_grab" => portscan::handle_banner_grab(params).await,
         "port_scan_results" => portscan::handle_port_scan_results(params).await,
 
-        "oast_generate_payload" => oast::handle_oast_generate_payload(params).await,
-        "oast_start_dns_server" => oast::handle_oast_start_dns_server(params).await,
-        "oast_start_smtp_server" => oast::handle_oast_start_smtp_server(params).await,
-        "oast_start_http_server" => oast::handle_oast_start_http_server(params).await,
-        "oast_poll_interactions" => oast::handle_oast_poll_interactions(params).await,
-        "oast_status" => oast::handle_oast_status(params).await,
-        "oast_clear" => oast::handle_oast_clear(params).await,
-        "oast_verify" => oast::handle_oast_verify(params).await,
+        // v0.3.11: OAST tool group (8 tools) removed from MCP surface to
+        // trim agent context. The underlying listeners (DNS/HTTP/SMTP) still
+        // run on the Rust side and are driven from the OAST UI panel; AI
+        // agents can still observe callbacks indirectly via
+        // `proxy_get_traffic` if they route blind-vuln payloads through the
+        // local proxy. Re-add via dispatch + tool_definitions if you want
+        // the AI to drive OAST end-to-end.
 
         // v0.3.10: Intruder driver — previously the agent could only QUEUE
         // attacks via send_to_intruder but had no way to fire/observe them.

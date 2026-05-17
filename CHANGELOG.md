@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.11] — 2026-05-17
+
+Three roll-ups in one tag: a self-audit pass over the v0.3.10 changes (perf
++ robustness), the AI-cursor duplication bug, and an MCP tool-list trim
+that reduces context-window pressure for agents.
+
+### MCP tool surface — 100 → 91 (context-budget cut)
+The agent's tool list crossed 100 entries with v0.3.10's new exposures and
+started crowding out the conversation window for most AI clients (Claude
+4.5 / 4.6 / 4.7 included). Trimmed the niche surface area — functionality
+stays, just no longer in the AI's primary tool catalogue.
+
+- **8 OAST tools removed**: `oast_generate_payload`, `oast_start_dns_server`,
+  `oast_start_smtp_server`, `oast_start_http_server`, `oast_poll_interactions`,
+  `oast_verify`, `oast_status`, `oast_clear`. The OAST listeners themselves
+  (DNS, HTTP, SMTP) still run in-process. AI agents drive the blind-vuln
+  chain via `active_scan({with_oast: true})` (which generates correlation
+  IDs, fires blind probes, and reports callbacks back as findings — one
+  tool call instead of six). The UI's OAST panel still exposes the raw
+  payload + listener controls for manual operation. Un-comment the
+  dispatch + tool_definitions blocks in `mcp/handlers/mod.rs` and
+  `mcp/mod.rs` to bring them back per-deployment.
+- **1 browser tool removed**: `browser_stealth_check`. The actual stealth
+  implementation runs automatically inside the bundled WonderBrowser
+  extension; the self-test moved to the UI as a manual "Run stealth check"
+  button. Niche diagnostic, not a workflow primitive.
+
+### Fixed — performance regressions
+- **`InterceptionRuleType::UrlRegex` was recompiled per request** (`proxy/state.rs::rule_matches`). The new v0.3.10 default `skip-trackers` rule is an 80-host alternation regex — at 500 req/s × N rules that's thousands of regex compilations per second on the proxy hot path. Fixed with a process-wide `RwLock<HashMap<String, Regex>>` compile-once cache.
+- **`apply_replacement` for match-and-replace rules** had the same per-request `Regex::new` cost. Now also uses the shared cache.
+- **`jslib` static `<script src>` / inline-`<script>` regexes** were rebuilt on every `detect_in_html` call. Moved to `Lazy<Regex>` statics.
+
+### Fixed — startup robustness
+- **`jslib::FINGERPRINTS` panicked via `.expect()`** if the compile-time-embedded `fingerprints.json` was malformed. Now logs the error to stderr and returns an empty fingerprint list — `js_library_audit` degrades gracefully instead of poisoning the MCP tool surface.
+
+### Fixed — AI cursor duplication bug (user report)
+The visible AI cursor overlay sometimes appeared twice in the browser — one at the top-left default position, one tracking the actual action — and the duplicate disappeared when the parent context unloaded. Root cause: `Page.addScriptToEvaluateOnNewDocument` fires in **every frame** of the page, including auth-widget iframes (Circle, Stripe, Auth0, …). Each frame installed its own cursor element, and since CDP mouse events are in top-frame viewport coordinates, the sub-frame cursors sat on their own (default 80, 80) position and were visible as ghosts.
+
+Fix in `mcp::browser::session::ai_cursor_overlay`:
+- **`if (window.top !== window.self) return;`** — the IIFE no-ops in sub-frames.
+- **Defensive dedup** at install time — `querySelectorAll('#__ws_ai_cursor')` removes stragglers from previous sessions (`document.write` / `documentElement` swaps).
+- **Single MutationObserver per frame** — the reconnect path re-evaluated the IIFE each time, leaking observers; now `window.__ws_mo.disconnect()` before installing a new one.
+- **`__ws_cursor_animate` generation token** — back-to-back move-then-click triggered two concurrent rAF loops both setting `transform` on the same element, looking jittery. New animations bump `__ws_cursor_anim_gen` and previous loops self-cancel on next frame.
+
+### Note
+v0.3.10 was tagged but its release pipeline was superseded by this tag — the audit-fix-driven gap between commit + release made v0.3.10 effectively pre-release. The published v0.3.11 contains everything from the v0.3.10 changelog plus the above.
+
 ## [0.3.10] — 2026-05-17
 
 ### Security — fixed via full code + workflow audit (35 findings, agent + live-run cross-verified)

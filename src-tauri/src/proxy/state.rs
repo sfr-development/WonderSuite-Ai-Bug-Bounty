@@ -4,6 +4,27 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
+// v0.3.10: compile-once cache for `InterceptionRuleType::UrlRegex` and
+// `apply_replacement` regex rules. See `compiled_url_regex` below.
+static REGEX_CACHE: once_cell::sync::Lazy<std::sync::RwLock<HashMap<String, regex::Regex>>> =
+    once_cell::sync::Lazy::new(|| std::sync::RwLock::new(HashMap::new()));
+
+/// Compile `pattern` once and reuse it on subsequent calls. Returns `None`
+/// (caller treats as no-match) when the pattern is invalid — failure here
+/// must NOT crash a proxy request.
+fn compiled_url_regex(pattern: &str) -> Option<regex::Regex> {
+    if let Ok(guard) = REGEX_CACHE.read() {
+        if let Some(r) = guard.get(pattern) {
+            return Some(r.clone());
+        }
+    }
+    let re = regex::Regex::new(pattern).ok()?;
+    if let Ok(mut guard) = REGEX_CACHE.write() {
+        guard.insert(pattern.to_string(), re.clone());
+    }
+    Some(re)
+}
+
 /// A captured HTTP request/response pair for the traffic log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficEntry {
@@ -437,7 +458,14 @@ impl ProxyState {
         match rule_type {
             InterceptionRuleType::UrlContains { pattern } => url.contains(pattern.as_str()),
             InterceptionRuleType::UrlRegex { pattern } => {
-                regex::Regex::new(pattern).map(|r| r.is_match(url)).unwrap_or(false)
+                // v0.3.10: compile-once cache. Previously every request
+                // through the proxy would `regex::Regex::new(pattern)` for
+                // every URL-regex rule — 5 rules at 500 req/s = 2500
+                // recompilations/s. The new default `skip-trackers` rule is
+                // an 80-host alternation that's expensive to compile, so
+                // this matters even more. Cache is keyed by the pattern
+                // string so multiple distinct rules each cache their own.
+                compiled_url_regex(pattern).map(|r| r.is_match(url)).unwrap_or(false)
             }
             InterceptionRuleType::HostEquals { host: h } => host.eq_ignore_ascii_case(h),
             InterceptionRuleType::MethodEquals { method: m } => method.eq_ignore_ascii_case(m),
@@ -577,9 +605,10 @@ impl ProxyState {
 
     fn apply_replacement(&self, input: &str, pattern: &str, replacement: &str, is_regex: bool) -> String {
         if is_regex {
-            match regex::Regex::new(pattern) {
-                Ok(re) => re.replace_all(input, replacement).to_string(),
-                Err(_) => input.to_string(),
+            // v0.3.10: cached compile — see compiled_url_regex above.
+            match compiled_url_regex(pattern) {
+                Some(re) => re.replace_all(input, replacement).to_string(),
+                None => input.to_string(),
             }
         } else {
             input.replace(pattern, replacement)

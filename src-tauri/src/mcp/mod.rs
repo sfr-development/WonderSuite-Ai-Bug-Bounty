@@ -516,11 +516,8 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                 }
             }),
         },
-        ToolDef {
-            name: "browser_stealth_check".into(),
-            description: "[diagnostic] Self-test for the human-emulation stack. Loads a tiny in-memory test page, drives a click + type via the CDP-native input path, then reports back what the page saw: how many events arrived as isTrusted=true vs not, whether navigator.webdriver is exposed, whether the AI cursor overlay leaked into page DOM, plus an overall stealth_score and verdict. Run after switching `stealth_profile` to confirm what bot detectors will see.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
-        },
+        // v0.3.11: `browser_stealth_check` removed from MCP surface — niche
+        // self-test, still callable from UI for manual verification.
         ToolDef {
             name: "websocket_connect".into(),
             description: "Raw WebSocket operations: connect, send, receive, close, list. Use for WS-based testing, socket hijacking, real-time protocol analysis.".into(),
@@ -680,71 +677,12 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                 "required": ["scan_id"]
             }),
         },
-        ToolDef {
-            name: "oast_generate_payload".into(),
-            description: "Generate OAST callback payloads for blind-vuln detection (auto-starts the HTTP listener on `port` so the returned URLs are immediately reachable; set WS_OAST_HOST env var to expose externally). Supports blind_sqli, blind_ssrf, blind_xxe, blind_cmdi, blind_xss, blind_ssti. After firing the payload, poll `oast_verify action=get_interactions` for callbacks.".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "description": { "type": "string" },
-                    "vuln_type": { "type": "string", "enum": ["generic", "blind_sqli", "blind_ssrf", "blind_xxe", "blind_cmdi", "blind_xss", "blind_ssti"], "default": "generic" },
-                    "port": { "type": "integer", "default": 8888 }
-                }
-            }),
-        },
-        ToolDef {
-            name: "oast_start_dns_server".into(),
-            description: "Start OAST DNS callback server for detecting blind DNS exfiltration.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "port": { "type": "integer", "default": 8853 } } }),
-        },
-        ToolDef {
-            name: "oast_start_smtp_server".into(),
-            description: "Start OAST SMTP callback server for detecting blind email-based exfiltration.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "port": { "type": "integer", "default": 2525 } } }),
-        },
-        ToolDef {
-            name: "oast_verify".into(),
-            description: "OAST server management: start_server, self_test (verify callback chain), get_interactions, clear.".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "action": { "type": "string", "enum": ["start_server", "self_test", "get_interactions", "clear"], "default": "self_test" },
-                    "port": { "type": "integer", "default": 8888 },
-                    "correlation_id": { "type": "string" }
-                }
-            }),
-        },
-        ToolDef {
-            name: "oast_start_http_server".into(),
-            description: "Explicitly bring up the OAST HTTP callback listener (v0.3.10). By default oast_generate_payload also starts it lazily — use this if you want the listener ready before generating multiple payloads. Bind address respects WS_OAST_BIND / WS_OAST_HOST (loopback by default, 0.0.0.0 only when user opts in via a non-loopback WS_OAST_HOST or explicit WS_OAST_BIND).".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": { "port": { "type": "integer", "default": 8888 } }
-            }),
-        },
-        ToolDef {
-            name: "oast_poll_interactions".into(),
-            description: "Poll the OAST interaction log for callbacks. The MISSING piece in the blind-vuln chain (v0.3.10) — previously the agent could fire blind payloads but had no way to observe callbacks. Use `since_offset` to incrementally tail new callbacks across polls (response includes `next_offset`). Filter by `correlation_id` (from oast_generate_payload) and/or `kind` (\"http\" | \"dns\" | \"smtp\").".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "since_offset": { "type": "integer", "default": 0, "description": "Number of entries already seen; only entries beyond this are returned." },
-                    "correlation_id": { "type": "string", "description": "Filter to callbacks for a specific OAST payload" },
-                    "kind": { "type": "string", "enum": ["http", "dns", "smtp"], "description": "Filter by listener type" },
-                    "limit": { "type": "integer", "default": 200 }
-                }
-            }),
-        },
-        ToolDef {
-            name: "oast_status".into(),
-            description: "Snapshot of OAST listener state — running ports, callback host, bind address, total interactions in log.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
-        },
-        ToolDef {
-            name: "oast_clear".into(),
-            description: "Clear the OAST interaction log. Useful before a fresh OAST campaign.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
-        },
+        // v0.3.11: OAST tool group (8 tools — generate_payload, start_dns,
+        // start_smtp, start_http, poll_interactions, status, clear, verify)
+        // removed from MCP surface. The OAST listeners themselves still run
+        // on the Rust side and are driven from the OAST UI panel; agents
+        // can observe callbacks indirectly via the proxy traffic log when
+        // they route blind-vuln payloads through the local proxy.
         ToolDef {
             name: "intruder_start".into(),
             description: "Fire an Intruder attack (v0.3.10). Accepts either the `intruder_config` blob returned by send_to_intruder (fastest path) or explicit `request_template` + `payload_sets` + `grep_rules`. Honors `threads` (concurrency, default 10), `throttle_ms`, `follow_redirects`. Attack types: sniper, battering_ram, pitchfork, cluster_bomb. Returns `attack_id` to poll with intruder_status / intruder_results.".into(),

@@ -60,18 +60,41 @@ pub struct Detection {
 }
 
 /// Compiled fingerprint DB, parsed + regex-compiled once at first use.
-static FINGERPRINTS: Lazy<Vec<CompiledFingerprint>> = Lazy::new(|| {
-    let raw: RawDb =
-        serde_json::from_str(FINGERPRINTS_JSON).expect("fingerprints.json: parse failed at startup");
-    raw.libraries
-        .into_iter()
-        .map(|f| CompiledFingerprint {
-            name: f.name,
-            url_patterns: compile_all(&f.url_patterns),
-            comment_patterns: compile_all(&f.comment_patterns),
-            html_patterns: compile_all(&f.html_patterns),
-        })
-        .collect()
+///
+/// v0.3.10: graceful degradation if the embedded JSON is malformed (typo in
+/// the file would have crashed `js_library_audit` for everyone otherwise).
+/// We log the parse error to stderr and return an empty list — the tool
+/// still works, it just produces zero detections until the file is fixed.
+static FINGERPRINTS: Lazy<Vec<CompiledFingerprint>> =
+    Lazy::new(|| match serde_json::from_str::<RawDb>(FINGERPRINTS_JSON) {
+        Ok(raw) => raw
+            .libraries
+            .into_iter()
+            .map(|f| CompiledFingerprint {
+                name: f.name,
+                url_patterns: compile_all(&f.url_patterns),
+                comment_patterns: compile_all(&f.comment_patterns),
+                html_patterns: compile_all(&f.html_patterns),
+            })
+            .collect(),
+        Err(e) => {
+            eprintln!(
+            "[jslib] FATAL fingerprints.json parse error — js_library_audit will return zero detections. {}",
+            e
+        );
+            Vec::new()
+        }
+    });
+
+// v0.3.10: <script> tag regexes are static and cheap, but compiling them on
+// every `detect_in_html` call is still wasted work. Cache once via Lazy.
+static SCRIPT_SRC_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<script[^>]+src=["']([^"']+)["'][^>]*>"#)
+        .expect("script-src regex is a literal constant")
+});
+static INLINE_SCRIPT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<script(?:\s[^>]*)?>(.*?)</script>"#)
+        .expect("inline-script regex is a literal constant")
 });
 
 fn compile_all(patterns: &[String]) -> Vec<Regex> {
@@ -96,14 +119,12 @@ pub fn detect_in_html(html: &str) -> Vec<Detection> {
     let mut seen: std::collections::HashSet<(String, Option<String>)> = std::collections::HashSet::new();
 
     // Cheap script-tag scraping. We don't need a full HTML parser; the regex
-    // covers attribute-quote variants and is bounded to the tag.
-    let script_src_re = Regex::new(r#"(?is)<script[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
-    let inline_re = Regex::new(r#"(?is)<script(?:\s[^>]*)?>(.*?)</script>"#).unwrap();
-
+    // covers attribute-quote variants and is bounded to the tag. Regexes are
+    // compile-once (see SCRIPT_SRC_RE / INLINE_SCRIPT_RE above).
     let src_urls: Vec<String> =
-        script_src_re.captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect();
+        SCRIPT_SRC_RE.captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect();
 
-    let inline_bodies: Vec<String> = inline_re
+    let inline_bodies: Vec<String> = INLINE_SCRIPT_RE
         .captures_iter(html)
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
         .filter(|s| !s.trim().is_empty())
@@ -244,8 +265,7 @@ pub fn detect_in_js(js: &str, source_url: Option<&str>) -> Vec<Detection> {
 /// optionally follow each external script and scan its body for inline
 /// version comments (useful for minified libs whose headers survived).
 pub fn extract_script_srcs(html: &str) -> Vec<String> {
-    let re = Regex::new(r#"(?is)<script[^>]+src=["']([^"']+)["'][^>]*>"#).unwrap();
-    re.captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect()
+    SCRIPT_SRC_RE.captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect()
 }
 
 /// Total number of libraries this module knows how to recognize. Useful for

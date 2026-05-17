@@ -680,7 +680,28 @@ fn csp_violation_hook() -> &'static str {
 pub(crate) fn ai_cursor_overlay() -> &'static str {
     r##"
 (function() {
-  // AI cursor overlay v3.1 — DOM-attached, event-driven.
+  // v0.3.11: bail in sub-frames. `Page.addScriptToEvaluateOnNewDocument`
+  // fires for EVERY frame of the page — including auth-widget iframes
+  // (Circle/Stripe/Auth0 etc.). Each frame installs its own cursor element,
+  // and since CDP mouse events are in TOP-frame viewport coordinates,
+  // only the top-frame cursor is meaningful — sub-frame cursors sit on
+  // their own (default 80, 80) position and look like duplicates floating
+  // in the top-left, disappearing the moment the iframe navigates or
+  // unloads. Skip the install entirely outside the top frame.
+  try { if (window.top !== window.self) return; } catch (_) { return; }
+
+  // Defensive: if a stale cursor lingers from a previous session (e.g. the
+  // page used document.write or replaced documentElement, leaving an old
+  // element pinned to the new tree), remove any duplicates we find before
+  // installing the canonical one.
+  try {
+    const stragglers = document.querySelectorAll('#__ws_ai_cursor');
+    if (stragglers.length > 1) {
+      for (let i = 1; i < stragglers.length; i++) stragglers[i].remove();
+    }
+  } catch (_) {}
+
+  // AI cursor overlay v3.2 — DOM-attached, event-driven.
   //
   // Earlier 0.3.3-alpha used a closed Shadow DOM but the cursor visibility
   // regressed (some pages / CSP configs made the shadow root host invisible
@@ -879,9 +900,16 @@ pub(crate) fn ai_cursor_overlay() -> &'static str {
   // mouse position stay synchronised throughout the move.
   window.__ws_cursor_animate = function(path) {
     if (!Array.isArray(path) || path.length === 0) return;
+    // v0.3.11: cancel any in-flight animation. Back-to-back AI actions
+    // (move-then-click) called animate() twice, which left two rAF loops
+    // setting transform on the same element — looked jittery / glitch-y.
+    // Now we abort the previous loop by bumping a generation token.
+    const gen = (window.__ws_cursor_anim_gen || 0) + 1;
+    window.__ws_cursor_anim_gen = gen;
     const t0 = performance.now();
     let i = 0;
     function step(now) {
+      if (window.__ws_cursor_anim_gen !== gen) return; // newer animation took over
       const t = now - t0;
       while (i < path.length && path[i][2] <= t) {
         moveTo(path[i][0], path[i][1]);
@@ -919,12 +947,21 @@ pub(crate) fn ai_cursor_overlay() -> &'static str {
 
   function watch() {
     if (!document.documentElement) return;
+    // v0.3.11: each `enable_domains` reconnect re-evaluates this IIFE in the
+    // current document. Without this guard we'd create a fresh
+    // MutationObserver on every reconnect — they stack indefinitely and
+    // every DOM mutation fires N observers, each calling ensure(). The
+    // setInterval was already gated; do the same for the MO.
+    if (window.__ws_mo) {
+      try { window.__ws_mo.disconnect(); } catch (_) {}
+    }
     try {
       const mo = new MutationObserver(() => {
         if (!document.getElementById(CUR_ID)) ensure();
       });
       mo.observe(document.documentElement, { childList: true, subtree: false });
       if (document.body) mo.observe(document.body, { childList: true, subtree: false });
+      window.__ws_mo = mo;
     } catch (_) {}
     if (!window.__ws_poll) {
       window.__ws_poll = setInterval(() => {
