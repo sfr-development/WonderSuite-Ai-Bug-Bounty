@@ -1462,15 +1462,14 @@ function SettingsNavSearch({ tab, setTab }: { tab: SettingsTab; setTab: (t: Sett
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match]);
   return (
-    <div style={{ position: 'relative', margin: '0 4px 8px 4px' }}>
-      <Search size={11} style={{ position: 'absolute', left: 6, top: 6, color: 'var(--text-3)' }} />
+    <div className="settings-nav-search">
+      <Search size={11} />
       <input
         className="settings-input"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search settings…"
         aria-label="Search settings"
-        style={{ width: '100%', height: 24, paddingLeft: 22, fontSize: 11 }}
       />
     </div>
   );

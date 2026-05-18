@@ -129,6 +129,73 @@
 
 .settings-toggle.on::after { transform: translateX(16px); }
 
+/* v0.3.19: settings-btn was used throughout v0.3.16/v0.3.17 (Reset,
+   Refresh, Clear, Open, Reveal, Delete) but the class never existed in
+   the stylesheet — buttons rendered as unstyled grey-on-grey, nearly
+   invisible against the dark theme. */
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  white-space: nowrap;
+}
+
+.settings-btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--accent-border, var(--border-1));
+}
+
+.settings-btn:active:not(:disabled) {
+  background: var(--bg-4);
+}
+
+.settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Compact variant for per-row action buttons (icon-only). */
+.settings-btn:has(svg:only-child) {
+  padding: 0 6px;
+  min-width: 24px;
+  justify-content: center;
+}
+
+/* v0.3.19: nav search input lives in the 180px-wide sidebar but
+   .settings-input has min-width: 200px globally — the input forced
+   itself to 200px+, overflowing the nav and visually covering the
+   first ~2 chars of every heading in the content panel. Scope a
+   wrapper class that pins the input to the nav width. */
+.settings-nav-search {
+  position: relative;
+  margin: 0 4px 8px 4px;
+}
+
+.settings-nav-search > input.settings-input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding-left: 22px;
+  font-size: 11px;
+}
+
+.settings-nav-search > svg {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
 .mcp-status {
   display: flex;
   align-items: center;

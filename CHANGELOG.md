@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.19] — 2026-05-18
+
+### Fixed — Settings: nav search overflowing and unstyled buttons everywhere
+Two stylesheet bugs introduced in v0.3.16/v0.3.17:
+
+- **`.settings-btn` class never existed.** Reset, Refresh, Clear
+  screenshots, Open (storage root), and the per-row Reveal / Delete
+  buttons in the new Outputs tab were all marked with `className=
+  "settings-btn"` but the rule was missing from `Settings.css`.
+  They rendered as the browser's default unstyled `<button>` —
+  light-grey-on-light-grey, nearly invisible against the dark theme.
+  Fix: real definition with bg-2 / border-1 / hover / active /
+  disabled states, plus a `:has(svg:only-child)` selector that
+  auto-compacts icon-only variants.
+- **Nav search overflowed the sidebar.** `.settings-input` has a
+  global `min-width: 200px`. The v0.3.16 "Search settings…" input
+  sat inside the 180px-wide nav with `width: 100%`, but `min-width`
+  always wins so the input was forced to 200px+ and rendered ~20px
+  past the right edge of the nav, covering the first ~2 characters
+  of every heading in the adjacent content panel ("oose
+  WonderSuite…", "es the AI agent writes…"). Fix: scoped
+  `.settings-nav-search` wrapper class with `min-width: 0` override
+  on the nested input and inline-icon positioning that no longer
+  depends on inline styles.
+
+### Internal
+- `src/modules/settings/Settings.css` — `.settings-btn`,
+  `.settings-nav-search`, `.settings-nav-search > input.settings-input`
+- `src/modules/settings/Settings.tsx` — `SettingsNavSearch` now uses
+  the wrapper class instead of inline styles
+
 ## [0.3.18] — 2026-05-18
 
 ### Fixed — Phantom v0.3.16 entry in the in-app Changelog tab
