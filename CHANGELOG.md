@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.18] — 2026-05-18
+
+### Fixed — Phantom v0.3.16 entry in the in-app Changelog tab
+The In-App "What's new" tab merges the bundled CHANGELOG.md with the
+list of GitHub Releases. Since v0.3.16's CI run failed at the
+`cargo check --locked` gate before `tauri-action` ran, no GitHub
+Release object was ever created — but the bundled CHANGELOG.md still
+listed v0.3.16 as a dated release. The merge logic falls back to the
+bundled body when GitHub has no match, so v0.3.16 appeared in the tab
+as if it had shipped (no `View on GitHub` link, no download). This
+release replaces the v0.3.16 section in the bundled CHANGELOG with a
+tombstone explaining what happened. The v0.3.17 entry already contains
+the full set of changes since v0.3.15; nothing is lost.
+
+### Internal
+- `CHANGELOG.md` — v0.3.16 section reduced to a tombstone
+
 ## [0.3.17] — 2026-05-18
 
 ### Fixed — AI agent could not see buttons inside iframes
@@ -77,7 +94,19 @@ keywords like "screenshot", "delete", "storage" → jumps to this tab.
 - `src/components/layout/ProjectLauncher.tsx` — new `ProjectFolderView`
   with right-click context menu
 
-## [0.3.16] — 2026-05-18
+## [0.3.16] — never released
+
+CI failed at the `cargo check --locked` gate (Cargo.lock drift after the
+version bump) before `tauri-action` ran, so no GitHub Release was ever
+created for v0.3.16. The git tag exists on the remote but is orphan —
+checking out `v0.3.16` reproduces the broken state. **Every change
+intended for v0.3.16 was re-shipped as part of v0.3.17 above**, which
+also includes the Cargo.lock fix that makes the pipeline pass. There is
+nothing to install for v0.3.16; users upgrading from v0.3.15 jump
+straight to v0.3.17.
+
+<details>
+<summary>Original v0.3.16 plan (for archeology — actually shipped in v0.3.17)</summary>
 
 ### Big Overhaul — driven by a deep audit of every module
 A full-codebase pass found dozens of dead toggles, silent error swallows,
@@ -246,6 +275,8 @@ working.
 - `src/components/layout/ProjectLauncher.tsx`,
   `src/components/layout/Shell.tsx`, eight module files — toast wiring,
   scope guards, empty states, aria-labels on icon-only buttons
+
+</details>
 
 ## [0.3.15] — 2026-05-18
 
