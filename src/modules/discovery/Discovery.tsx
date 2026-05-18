@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Search, Globe, FolderSearch, Loader2, Copy, Radar } from 'lucide-react';
 import { useAppStore } from '../../stores';
+import { notifyError } from '../../utils/notify';
 import './Discovery.css';
 
 interface DiscoveredItem {
@@ -34,7 +35,21 @@ export function Discovery() {
   const [paramMethod, setParamMethod] = useState('GET');
 
   const [selectedItem, setSelectedItem] = useState<DiscoveredItem | null>(null);
-  const { openContextMenu } = useAppStore();
+  const { openContextMenu, isInScope, globalScope, addToast } = useAppStore();
+
+  // v0.3.16: shared scope guard — every Discovery action operates on `target`
+  // so we centralize the check.
+  const scopeGuard = useCallback((): boolean => {
+    if (globalScope.length > 0 && !isInScope(target)) {
+      addToast({
+        title: 'Target out of scope',
+        message: `${target} is outside the active project's scope. Add it in Settings → General or change the target.`,
+        type: 'error',
+      });
+      return false;
+    }
+    return true;
+  }, [target, isInScope, globalScope, addToast]);
   const handleContentCtx = (e: React.MouseEvent, item: DiscoveredItem) => {
     e.preventDefault();
     const fullUrl = target.replace(/\/$/, '') + item.path;
@@ -63,6 +78,7 @@ export function Discovery() {
 
   const startContentDiscovery = useCallback(async () => {
     if (!target || contentRunning) return;
+    if (!scopeGuard()) return;
     setContentRunning(true); setContentResults([]); setContentProgress('Starting...');
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -119,6 +135,7 @@ export function Discovery() {
 
   const startSubdomainScan = useCallback(async () => {
     if (!target || subRunning) return;
+    if (!scopeGuard()) return;
     setSubRunning(true); setSubdomains([]);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -156,12 +173,13 @@ export function Discovery() {
         }
       }
       setSubdomains(found);
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Subdomain discovery failed', err); }
     setSubRunning(false);
   }, [target, subRunning]);
 
   const startParamDiscovery = useCallback(async () => {
     if (!target || paramRunning) return;
+    if (!scopeGuard()) return;
     setParamRunning(true); setParamResults([]);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -195,7 +213,7 @@ export function Discovery() {
         } catch { /* ignore */ }
       }
       setParamResults(found);
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Param discovery failed', err); }
     setParamRunning(false);
   }, [target, paramRunning]);
 

@@ -8,8 +8,19 @@ use tokio::sync::Mutex;
 
 pub type ScannerState = Arc<Mutex<ScannerManager>>;
 
+// v0.3.16: global accessor mirroring intruder.rs so non-State callers
+// (e.g. get_memory_stats) can read the live scan count without plumbing
+// Tauri State<'_, ScannerState> through every consumer.
+static GLOBAL_SCANNER_STATE: std::sync::OnceLock<ScannerState> = std::sync::OnceLock::new();
+
 pub fn create_scanner_state() -> ScannerState {
-    Arc::new(Mutex::new(ScannerManager::new()))
+    let s: ScannerState = Arc::new(Mutex::new(ScannerManager::new()));
+    let _ = GLOBAL_SCANNER_STATE.set(s.clone());
+    s
+}
+
+pub fn scanner_state() -> Option<ScannerState> {
+    GLOBAL_SCANNER_STATE.get().cloned()
 }
 
 pub struct ScannerManager {

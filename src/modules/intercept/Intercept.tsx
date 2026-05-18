@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import { Pause, Play, ArrowRight, X, Shield, Zap, Globe, Eye, Code, FileText, Hash, ToggleLeft, ToggleRight, Copy, RefreshCw, Crosshair, Wifi, AlertTriangle, Server, KeyRound, Layers, Search, Unlink, UserX, ChevronDown, ChevronRight, Scan, CheckCircle, XCircle, Minus } from 'lucide-react';
 import { useAppStore } from '../../stores';
+import { notifyError } from '../../utils/notify';
 import './Intercept.css';
 
 interface QueuedRequest {
@@ -1384,11 +1385,24 @@ export function Intercept() {
 
 
   const startProxy = useCallback(async () => {
-    try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('proxy_start', { port: 8080 }); setProxyRunning(true); } catch (e) { console.error(e); alert(e); }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('proxy_start', { port: 8080 });
+      setProxyRunning(true);
+    } catch (e) {
+      notifyError('Proxy start failed', e);
+    }
   }, []);
 
   const stopProxy = useCallback(async () => {
-    try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('proxy_stop'); setProxyRunning(false); setInterceptOn(false); } catch (e) { console.error(e); }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('proxy_stop');
+      setProxyRunning(false);
+      setInterceptOn(false);
+    } catch (e) {
+      notifyError('Proxy stop failed', e);
+    }
   }, []);
 
   const toggleIntercept = useCallback(async () => {
@@ -1415,7 +1429,9 @@ export function Intercept() {
           addToast({ title: 'Intercept off', message: 'Queue was empty.', type: 'info' });
         }
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      notifyError('Intercept toggle failed', e);
+    }
   }, [interceptOn, proxyRunning, startProxy, addToast]);
 
   const toggleResponseIntercept = useCallback(async () => {
@@ -1424,7 +1440,9 @@ export function Intercept() {
       const next = !responseInterceptOn;
       await invoke('proxy_toggle_response_intercept', { enabled: next });
       setResponseInterceptOn(next);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      notifyError('Response intercept toggle failed', e);
+    }
   }, [responseInterceptOn]);
 
   const forward = useCallback(async () => {
@@ -1443,12 +1461,20 @@ export function Intercept() {
       }
       setLastForwarded(forwarded);
       setCurrent(null);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      notifyError('Forward failed', e);
+    }
   }, [current, editedRaw]);
 
   const drop = useCallback(async () => {
     if (!current) return;
-    try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('proxy_intercept_drop', { id: current.id }); setCurrent(null); } catch (e) { console.error(e); }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('proxy_intercept_drop', { id: current.id });
+      setCurrent(null);
+    } catch (e) {
+      notifyError('Drop failed', e);
+    }
   }, [current]);
 
   const forwardAll = useCallback(async () => {
@@ -1768,7 +1794,13 @@ export function Intercept() {
         <div className="intercept-queue">
           <div className="intercept-queue-header">Queue ({queue.length})</div>
           <div className="intercept-queue-list">
-            {queue.map((req) => (
+            {queue.length === 0 ? (
+              <div style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--text-3)', fontSize: 11, lineHeight: 1.5 }}>
+                {interceptOn
+                  ? 'Queue is empty. Trigger a request in the browser — it will appear here for editing.'
+                  : 'Intercept is off. Toggle it on to capture requests for editing.'}
+              </div>
+            ) : queue.map((req) => (
               <div key={req.id}
                 className={`intercept-queue-item ${current?.id === req.id ? 'active' : ''}`}
                 onClick={() => selectItem(req)}

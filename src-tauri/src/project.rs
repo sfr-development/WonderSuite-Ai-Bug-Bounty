@@ -274,6 +274,33 @@ pub async fn project_save_state(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// v0.3.16: per-project UI state blob (Repeater tabs, port-scan config,
+/// scope) shuttled between frontend and disk. Atomic write via tmp+rename.
+/// Empty / missing blob is fine — caller treats as "fresh project".
+#[tauri::command]
+pub async fn project_save_state_blob(id: String, blob: String) -> Result<(), String> {
+    let project_dir = projects_dir().join(&id);
+    if !project_dir.exists() {
+        return Ok(());
+    }
+    let tmp = project_dir.join("ui_state.json.tmp");
+    fs::write(&tmp, blob).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, project_dir.join("ui_state.json")).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn project_load_state_blob(id: String) -> Result<Option<String>, String> {
+    let path = projects_dir().join(&id).join("ui_state.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    match fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s)),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Restore proxy traffic from the project directory's traffic.json.
 /// Replaces the in-memory traffic Vec with the persisted entries. If the
 /// file is missing or malformed we leave memory untouched and return Ok —
@@ -351,25 +378,40 @@ pub struct MemoryStats {
 pub async fn get_memory_stats() -> Result<MemoryStats, String> {
     let rss_mb = get_process_memory_mb();
 
-    let (traffic_entries, traffic_ram) = match crate::proxy_commands::get_global_proxy_state() {
+    let (traffic_entries, traffic_ram, ws_messages) = match crate::proxy_commands::get_global_proxy_state() {
         Some(state) => {
             let traffic = state.traffic.lock().await;
             let count = traffic.len();
             let ram_mb = (count * 2048) as f64 / (1024.0 * 1024.0);
-            (count, ram_mb)
+            drop(traffic);
+            let ws = state.websocket_messages.lock().await.len();
+            (count, ram_mb, ws)
         }
-        None => (0, 0.0),
+        None => (0, 0.0, 0),
     };
+
+    let scanner_count = match crate::scanner_commands::scanner_state() {
+        Some(s) => s.lock().await.scans.len(),
+        None => 0,
+    };
+    let intruder_count = match crate::intruder::intruder_state() {
+        Some(s) => s.lock().await.attacks.len(),
+        None => 0,
+    };
+    let cert_cache_size = crate::proxy_commands::get_global_ca().map(|c| c.cache_size()).unwrap_or(0);
+    let mcp_activity_count =
+        crate::mcp::activity::get_activity_stats().get("total").and_then(|v| v.as_u64()).unwrap_or(0)
+            as usize;
 
     Ok(MemoryStats {
         process_rss_mb: rss_mb,
         traffic_entries,
         traffic_ram_mb: traffic_ram,
-        scanner_count: 0,  // TODO: get from scanner state
-        intruder_count: 0, // TODO: get from intruder state
-        cert_cache_size: 0,
-        ws_messages: 0,
-        mcp_activity_count: 0,
+        scanner_count,
+        intruder_count,
+        cert_cache_size,
+        ws_messages,
+        mcp_activity_count,
     })
 }
 

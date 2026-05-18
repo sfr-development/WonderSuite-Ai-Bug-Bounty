@@ -234,7 +234,6 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
     <div className="launcher">
       <div className="titlebar" data-tauri-drag-region>
         <div className="titlebar-drag" data-tauri-drag-region>
-          <img src="/wondersuite_logo.png" alt="WS" style={{ width: 16, height: 16, objectFit: 'contain' }} className="titlebar-icon" />
           <span className="titlebar-title">WonderSuite – Project Launcher</span>
         </div>
       </div>

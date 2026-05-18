@@ -4,6 +4,7 @@ import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { useAppStore } from '../../stores';
+import { useAppSettings } from '../../stores/appSettingsStore';
 import { notificationsEnabled, setNotificationsEnabled } from '../../lib/desktopNotify';
 import './Settings.css';
 
@@ -246,6 +247,10 @@ export function Settings() {
     <div className="settings">
       <div className="settings-nav">
         <div className="settings-nav-title">Settings</div>
+        {/* v0.3.16: nav search — types a query, the first nav item whose
+            keyword list matches gets auto-selected so the user finds where
+            a setting lives without scrolling 1000+ lines of UI. */}
+        <SettingsNavSearch tab={tab} setTab={setTab} />
         <button className={`settings-nav-item ${tab === 'general' ? 'active' : ''}`} onClick={() => setTab('general')}>
           <Wrench size={14} /> General
         </button>
@@ -366,38 +371,9 @@ export function Settings() {
         {tab === 'general' && (
           <>
           <GeneralSystemInfo />
-          <div className="settings-section">
-            <h2>General</h2>
-            <p>Core application settings</p>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Max traffic entries
-                <span>Maximum stored HTTP messages</span>
-              </div>
-              <input className="settings-input" defaultValue="10000" style={{ minWidth: 80 }} />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Response size limit
-                <span>Max response body size to store (MB)</span>
-              </div>
-              <input className="settings-input" defaultValue="10" style={{ minWidth: 80 }} />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Follow redirects
-                <span>Automatically follow HTTP redirects</span>
-              </div>
-              <button className="settings-toggle on" onClick={() => {}} />
-            </div>
-
-            <DesktopNotificationsToggle />
-
-            <GlobalScopeSettings />
-          </div>
+          <GeneralSettingsPanel />
+          <DesktopNotificationsToggle />
+          <GlobalScopeSettings />
           </>
         )}
 
@@ -1304,6 +1280,193 @@ function GeneralSystemInfo() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// v0.3.16: indexed keyword search across all settings panels — types
+// "timeout" or "scope" and jumps the user to the right tab.
+const NAV_KEYWORDS: { tab: SettingsTab; words: string[] }[] = [
+  { tab: 'general', words: ['general', 'autosave', 'timeout', 'request', 'cookie', 'ttl', 'response', 'size', 'redirect', 'notification', 'desktop', 'scope', 'in-scope', 'highlight', 'search', 'throttle', 'rate limit', 'debug', 'verbosity', 'reset', 'defaults'] },
+  { tab: 'mcp', words: ['mcp', 'tool', 'ai', 'claude', 'cursor', 'windsurf', 'ide', 'port', 'integration'] },
+  { tab: 'proxy', words: ['proxy', 'tls', 'ssl', 'ca', 'cert', 'certificate', 'upstream', 'socks', 'intercept', 'match', 'replace', 'rule', 'listener', 'port'] },
+  { tab: 'appearance', words: ['theme', 'color', 'accent', 'dark', 'light', 'font', 'scale', 'compact'] },
+  { tab: 'browser', words: ['browser', 'chrome', 'chromium', 'download', 'install', 'launch'] },
+  { tab: 'skill', words: ['skill', 'claude', 'plugin', 'agent'] },
+];
+
+function SettingsNavSearch({ tab, setTab }: { tab: SettingsTab; setTab: (t: SettingsTab) => void }) {
+  const [q, setQ] = useState('');
+  const match = q.trim().toLowerCase();
+  useEffect(() => {
+    if (!match) return;
+    const hit = NAV_KEYWORDS.find((g) => g.words.some((w) => w.includes(match) || match.includes(w)));
+    if (hit && hit.tab !== tab) setTab(hit.tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match]);
+  return (
+    <div style={{ position: 'relative', margin: '0 4px 8px 4px' }}>
+      <Search size={11} style={{ position: 'absolute', left: 6, top: 6, color: 'var(--text-3)' }} />
+      <input
+        className="settings-input"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search settings…"
+        aria-label="Search settings"
+        style={{ width: '100%', height: 24, paddingLeft: 22, fontSize: 11 }}
+      />
+    </div>
+  );
+}
+
+// v0.3.16: real General settings panel — replaces the placeholder inputs
+// that had no onChange handlers. Backed by useAppSettings → localStorage.
+function GeneralSettingsPanel() {
+  const s = useAppSettings();
+  return (
+    <div className="settings-section">
+      <h2>General</h2>
+      <p>Core application settings — saved across launches</p>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Autosave interval
+          <span>How often to snapshot project state to disk (seconds)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={5} max={3600}
+          value={s.autosaveIntervalSec}
+          onChange={(e) => s.set('autosaveIntervalSec', Math.max(5, Math.min(3600, Number(e.target.value) || 30)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Request timeout
+          <span>Default outbound HTTP request timeout (seconds)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={1} max={300}
+          value={s.requestTimeoutSec}
+          onChange={(e) => s.set('requestTimeoutSec', Math.max(1, Math.min(300, Number(e.target.value) || 30)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Cookie jar TTL
+          <span>How long persistent cookies live in the session jar (days, 0 = session-only)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={0} max={3650}
+          value={s.cookieJarTtlDays}
+          onChange={(e) => s.set('cookieJarTtlDays', Math.max(0, Math.min(3650, Number(e.target.value) || 0)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Response size limit
+          <span>Max response body size to store (MB)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={1} max={1024}
+          value={s.responseSizeLimitMb}
+          onChange={(e) => s.set('responseSizeLimitMb', Math.max(1, Math.min(1024, Number(e.target.value) || 10)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Follow redirects
+          <span>Automatically follow HTTP redirects on outbound requests</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.followRedirects ? 'on' : ''}`}
+          onClick={() => s.set('followRedirects', !s.followRedirects)}
+          aria-label="Follow redirects"
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Highlight search matches
+          <span>Visually highlight matches in Traffic / Logger search results</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.highlightSearchMatches ? 'on' : ''}`}
+          onClick={() => s.set('highlightSearchMatches', !s.highlightSearchMatches)}
+          aria-label="Highlight search matches"
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Outbound request throttle
+          <span>Rate-limit outbound requests (Repeater / Scanner / Discovery)</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.enableThrottling ? 'on' : ''}`}
+          onClick={() => s.set('enableThrottling', !s.enableThrottling)}
+          aria-label="Enable throttling"
+        />
+      </div>
+
+      {s.enableThrottling && (
+        <div className="settings-row">
+          <div className="settings-label">
+            Throttle rate
+            <span>Maximum outbound requests per second</span>
+          </div>
+          <input
+            className="settings-input"
+            type="number" min={1} max={10000}
+            value={s.throttleRequestsPerSec}
+            onChange={(e) => s.set('throttleRequestsPerSec', Math.max(1, Math.min(10000, Number(e.target.value) || 50)))}
+            style={{ minWidth: 80 }}
+          />
+        </div>
+      )}
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Debug verbosity
+          <span>How much detail to write to the developer console</span>
+        </div>
+        <select
+          className="settings-input"
+          value={s.debugVerbosity}
+          onChange={(e) => s.set('debugVerbosity', e.target.value as any)}
+          style={{ minWidth: 100 }}
+        >
+          <option value="silent">Silent</option>
+          <option value="error">Error</option>
+          <option value="warn">Warn</option>
+          <option value="info">Info</option>
+          <option value="debug">Debug</option>
+        </select>
+      </div>
+
+      <div className="settings-row" style={{ borderTop: '1px solid var(--border-0)', paddingTop: 10 }}>
+        <div className="settings-label">
+          Reset to defaults
+          <span>Restore every general setting on this page to its factory default</span>
+        </div>
+        <button
+          className="settings-btn"
+          onClick={() => { if (confirm('Reset all general settings to defaults?')) s.resetDefaults(); }}
+        >
+          Reset
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ProjectInfo, ProjectConfig, CreateProjectOpts, MemoryStats } from '../types';
 import { useAppStore, useReplayStore } from './index';
+import { gatherProjectState, applyProjectState, parseProjectStateBlob } from '../utils/projectState';
 
 const LAST_PROJECT_KEY = 'ws_last_active_project_id';
 const EXPLICIT_CLOSE_KEY = 'ws_project_explicitly_closed';
@@ -39,6 +40,17 @@ async function applyProjectConfig(config: ProjectConfig | null) {
       try {
         localStorage.setItem('ws_global_scope_v1', JSON.stringify(config.initial_scope));
       } catch {}
+    }
+
+    // 1a. v0.3.16: push the project's traffic-buffer cap into the live
+    // ProxyState ring. Previously the wizard wrote this to config.json
+    // and nothing ever read it.
+    if (typeof config.max_traffic_entries === 'number') {
+      try {
+        await invoke('proxy_set_max_traffic_entries', { max: config.max_traffic_entries });
+      } catch (e) {
+        console.warn('[project] proxy_set_max_traffic_entries failed:', e);
+      }
     }
 
     // 2. Auto-start proxy on the project's configured port.
@@ -110,14 +122,30 @@ let autoSaveTimer: ReturnType<typeof setInterval> | null = null;
 
 function startAutoSave(projectId: string) {
   stopAutoSave();
+  // v0.3.16: read the user-configurable autosave interval from the
+  // app-settings store (default 30 s). Lazy import to avoid a cycle.
+  let intervalMs = 30000;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { useAppSettings } = require('./appSettingsStore');
+    intervalMs = Math.max(5, Math.min(3600, useAppSettings.getState().autosaveIntervalSec)) * 1000;
+  } catch {}
   autoSaveTimer = setInterval(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('project_save_state', { id: projectId }).catch((e: unknown) => {
         console.warn('[project] auto-save failed:', e);
       });
+      // v0.3.16: also snapshot the UI state (Repeater tabs, port-scan config,
+      // scope) so a crash doesn't lose tab drafts.
+      try {
+        const blob = JSON.stringify(gatherProjectState());
+        await invoke('project_save_state_blob', { id: projectId, blob });
+      } catch (e) {
+        console.warn('[project] ui-state auto-save failed:', e);
+      }
     } catch {}
-  }, 30000);
+  }, intervalMs);
 }
 
 function stopAutoSave() {
@@ -170,6 +198,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         console.debug('[project] project_load_state unavailable:', e);
       }
 
+      // v0.3.16: restore per-project UI state (Repeater tabs, port-scan
+      // config, scope). MUST happen before set() so the modules don't
+      // briefly render the previous project's tabs.
+      try {
+        const blob = await invoke<string | null>('project_load_state_blob', { id });
+        applyProjectState(parseProjectStateBlob(blob));
+      } catch (e) {
+        console.debug('[project] ui-state load skipped:', e);
+      }
+
       set({ activeProject: project, projectConfig: config, configCorrupted: corrupted });
 
       // Remember which project to resume on next launch.
@@ -201,6 +239,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('project_save_state', { id: current.id }).catch(() => {});
+        // v0.3.16: also snapshot the UI state blob so Repeater tabs survive
+        // the close → reopen round-trip.
+        try {
+          const blob = JSON.stringify(gatherProjectState());
+          await invoke('project_save_state_blob', { id: current.id, blob });
+        } catch {}
       } catch {}
     }
 

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Activity, Trash2, Download, Lock, Filter, ArrowUpDown } from 'lucide-react';
+import { Search, Activity, Trash2, Download, Lock, Filter, ArrowUpDown, FileJson } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
+import { downloadHar } from '../../utils/harExport';
 import './Traffic.css';
 
 interface TrafficEntry {
@@ -248,8 +249,16 @@ export function Traffic() {
         <button className="traffic-toolbar-btn" onClick={clearTraffic} title="Clear traffic">
           <Trash2 size={13} />
         </button>
-        <button className="traffic-toolbar-btn" onClick={exportTraffic} title="Export as JSON">
+        <button className="traffic-toolbar-btn" onClick={exportTraffic} title="Export as JSON" aria-label="Export as JSON">
           <Download size={13} />
+        </button>
+        <button
+          className="traffic-toolbar-btn"
+          onClick={() => downloadHar(filtered.length > 0 ? filtered : entries)}
+          title={`Export ${filtered.length > 0 ? 'filtered' : 'all'} as HAR (HTTP Archive)`}
+          aria-label="Export as HAR"
+        >
+          <FileJson size={13} />
         </button>
         <div className="traffic-search">
           <Search size={14} className="traffic-search-icon" />

@@ -55,10 +55,21 @@ export function Scan() {
   const [detailTab, setDetailTab] = useState<'detail'|'request'|'response'>('detail');
   const [findingSearch, setFindingSearch] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { sendTo, openContextMenu, addToast } = useAppStore();
+  const { sendTo, openContextMenu, addToast, isInScope, globalScope } = useAppStore();
 
   const startScan = useCallback(async () => {
     if (!target || target.length < 8) return;
+    // v0.3.16: scope guard — refuse to scan an out-of-scope target so the
+    // user doesn't accidentally hit a host their engagement doesn't cover.
+    // Empty scope means "no enforcement", same convention as Traffic uses.
+    if (globalScope.length > 0 && !isInScope(target)) {
+      addToast({
+        title: 'Target out of scope',
+        message: `${target} is not covered by the active project's scope. Add it to scope (Settings → General) or change the target.`,
+        type: 'error',
+      });
+      return;
+    }
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const config: Record<string, unknown> = {
@@ -75,7 +86,7 @@ export function Scan() {
       startPolling(scanId);
       addToast({ title: 'Scan Started', message: `Scanning ${target}...`, type: 'info' });
     } catch (err: any) { addToast({ title: 'Scan Failed', message: String(err), type: 'error' }); }
-  }, [target, scanType, checks, maxRequests, maxDepth, followRedirects, concurrency]);
+  }, [target, scanType, checks, maxRequests, maxDepth, followRedirects, concurrency, isInScope, globalScope, addToast]);
 
   const startPolling = (scanId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);

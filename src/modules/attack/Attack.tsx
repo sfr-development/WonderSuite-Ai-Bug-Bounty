@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Crosshair, Play, Square, Pause, Download, Plus, Trash2, Zap, Target, Hash, Key, ListPlus, Timer } from 'lucide-react';
 import { useAppStore } from '../../stores';
+import { notifyError } from '../../utils/notify';
 import './Attack.css';
 
 interface PayloadProcessor { processor_type: string; value?: string; replace_with?: string; }
@@ -83,7 +84,7 @@ export function Attack() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { pendingSendTo, clearSendTo } = useAppStore();
+  const { pendingSendTo, clearSendTo, isInScope, globalScope, addToast } = useAppStore();
 
 
   useEffect(() => {
@@ -136,6 +137,22 @@ export function Attack() {
   };
 
   const startAttack = async () => {
+    // v0.3.16: scope guard — parse the Host header from the request template
+    // and refuse to attack a host outside the project's scope.
+    if (globalScope.length > 0) {
+      const hostLine = requestTemplate.split(/\r?\n/).find((l) => /^host\s*:/i.test(l));
+      const host = hostLine?.split(':').slice(1).join(':').trim() ?? '';
+      const guessUrl = host ? `https://${host}` : '';
+      if (guessUrl && !isInScope(guessUrl)) {
+        addToast({
+          title: 'Target out of scope',
+          message: `${host} is outside the active project's scope. Add it in Settings → General or change the Host header.`,
+          type: 'error',
+        });
+        return;
+      }
+    }
+
     const sets = [...payloadSets];
     if (sets[activePayloadIdx]) {
       sets[activePayloadIdx] = { ...sets[activePayloadIdx], values: payloadText.split('\n').filter(l => l.trim()) };
@@ -161,7 +178,7 @@ export function Attack() {
       setTab('results');
       startPolling(id);
     } catch (err) {
-      console.error('Attack start failed:', err);
+      notifyError('Attack start failed', err);
     }
   };
 
@@ -281,7 +298,7 @@ export function Attack() {
         setTurboSummary(data);
       }
     } catch (err: any) {
-      console.error('Turbo failed:', err);
+      notifyError('Turbo attack failed', err);
       setTurboSummary({ error: err?.toString() });
     } finally {
       setTurboRunning(false);

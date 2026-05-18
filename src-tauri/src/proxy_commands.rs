@@ -415,6 +415,19 @@ pub async fn proxy_set_tls_impersonate(
     Ok(enabled)
 }
 
+/// v0.3.16: project-config -> live proxy state. Called by openProject() so
+/// the wizard's "Max traffic entries" setting actually shapes the in-memory
+/// ring buffer. 0 is treated as "unlimited" -> capped at u64::MAX.
+#[tauri::command]
+pub async fn proxy_set_max_traffic_entries(
+    max: u64,
+    state: tauri::State<'_, ProxyAppState>,
+) -> Result<u64, String> {
+    let v = if max == 0 { u64::MAX } else { max };
+    state.proxy_state.max_traffic_entries.store(v, std::sync::atomic::Ordering::SeqCst);
+    Ok(v)
+}
+
 #[tauri::command]
 pub async fn proxy_get_tls_impersonate(state: tauri::State<'_, ProxyAppState>) -> Result<bool, String> {
     Ok(state.proxy_state.tls_impersonate.load(std::sync::atomic::Ordering::SeqCst))

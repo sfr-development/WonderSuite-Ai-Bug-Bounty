@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Cookie, ListChecks, Play, Plus, Trash2, Download, Upload, RefreshCcw, Check, X, ToggleLeft, ToggleRight, Zap, Link2, Link2Off } from 'lucide-react';
 import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
+import { notifyError } from '../../utils/notify';
 import './Session.css';
 
 type SessionTab = 'cookies' | 'macros' | 'rules';
@@ -87,7 +88,7 @@ export function Session() {
         samesite: editCookie.samesite || null,
       });
       setEditCookie(null); loadCookies();
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Save cookie failed', err); }
   };
 
   const deleteCookie = async (name: string, domain: string) => {
@@ -95,7 +96,7 @@ export function Session() {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('session_remove_cookie', { name, domain });
       loadCookies();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Delete cookie failed', err); }
   };
 
   const clearAllCookies = async () => {
@@ -103,7 +104,7 @@ export function Session() {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('session_clear_cookies');
       loadCookies();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Clear cookies failed', err); }
   };
 
   const exportCookies = async () => {
@@ -113,7 +114,7 @@ export function Session() {
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = 'cookies.json'; a.click();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Export cookies failed', err); }
   };
 
   const importCookies = async () => {
@@ -126,7 +127,7 @@ export function Session() {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('session_import_cookies', { json: text });
         loadCookies();
-      } catch (err) { console.error(err); }
+      } catch (err) { notifyError('Import cookies failed', err); }
     };
     input.click();
   };
@@ -141,7 +142,7 @@ export function Session() {
         steps: editingMacro.steps,
       });
       setEditingMacro(null); loadMacros();
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Create macro failed', err); }
   };
 
   const runMacro = async (macroId: string) => {
@@ -149,7 +150,7 @@ export function Session() {
       const { invoke } = await import('@tauri-apps/api/core');
       const result: { extracted_values: Record<string, string> } = await invoke('session_run_macro', { macroId });
       setMacroResult(result.extracted_values);
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Run macro failed', err); }
   };
 
   const deleteMacro = async (macroId: string) => {
@@ -158,7 +159,7 @@ export function Session() {
       await invoke('session_delete_macro', { macroId });
       if (selectedMacro === macroId) setSelectedMacro(null);
       loadMacros();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Delete macro failed', err); }
   };
 
   const toggleRule = async (ruleId: string, enabled: boolean) => {
@@ -166,7 +167,7 @@ export function Session() {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('session_toggle_rule', { ruleId, enabled });
       loadRules();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Toggle rule failed', err); }
   };
 
   const deleteRule = async (ruleId: string) => {
@@ -174,7 +175,7 @@ export function Session() {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('session_delete_rule', { ruleId });
       loadRules();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Delete rule failed', err); }
   };
 
   const addMacroStep = () => {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Trash2, Send, X, RefreshCcw, Wifi, ArrowUp, ArrowDown, ChevronRight, Cable, Play, Square, Variable, Copy, Download, Upload } from 'lucide-react';
+import { notifyError } from '../../utils/notify';
 import './WebSocket.css';
 
 interface WsConnection { id: string; url: string; status: string; message_count: number; connected_at: string; }
@@ -286,7 +287,7 @@ export function WebSocket() {
       setSelectedConn(connId);
       setTab('messages');
       setTimeout(loadConnections, 500);
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('WebSocket connect failed', err); }
   };
 
   const sendFrame = async () => {
@@ -296,7 +297,7 @@ export function WebSocket() {
       await invoke('ws_send_frame', { connectionId: selectedConn, message: sendMsg, msgType: null });
       setSendMsg('');
       setTimeout(() => loadMessages(selectedConn), 200);
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('WebSocket send failed', err); }
   };
 
   const closeConnection = async (connId: string) => {
@@ -305,7 +306,7 @@ export function WebSocket() {
       await invoke('ws_close_connection', { connectionId: connId });
       if (selectedConn === connId) setSelectedConn(null);
       loadConnections();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('WebSocket close failed', err); }
   };
 
   const addRule = async () => {
@@ -319,7 +320,7 @@ export function WebSocket() {
       });
       setNewRuleName(''); setNewRuleMatch(''); setNewRuleReplace('');
       loadRules();
-    } catch (err) { console.error(err); }
+    } catch (err) { notifyError('Add WS rule failed', err); }
   };
 
   const removeRule = async (ruleId: string) => {
@@ -327,7 +328,7 @@ export function WebSocket() {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('ws_remove_match_replace', { ruleId });
       loadRules();
-    } catch { /* ignore */ }
+    } catch (err) { notifyError('Remove WS rule failed', err); }
   };
 
   const selectedConnData = connections.find(c => c.id === selectedConn);

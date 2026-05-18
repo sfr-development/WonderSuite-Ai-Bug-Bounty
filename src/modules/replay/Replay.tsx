@@ -320,8 +320,23 @@ export function Replay() {
 
   const copyCurl = () => {
     if (!tab) return;
-    const curl = `curl -X ${tab.method} '${tab.url}'`;
-    navigator.clipboard.writeText(curl);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToCurl } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToCurl({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
+  };
+
+  // v0.3.16: copy current request as Python (requests) / Node (fetch).
+  const copyPython = () => {
+    if (!tab) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToPython } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToPython({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
+  };
+  const copyNode = () => {
+    if (!tab) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToNode } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToNode({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
   };
 
   const startRename = (id: string, name: string) => {
@@ -419,8 +434,10 @@ export function Replay() {
 
             <div className="replay-toolbar-divider" />
 
-            <button className="replay-action-btn" onClick={duplicateTab} title="Duplicate tab"><Copy size={12} /></button>
-            <button className="replay-action-btn" onClick={copyCurl} title="Copy as cURL"><Code size={12} /></button>
+            <button className="replay-action-btn" onClick={duplicateTab} title="Duplicate tab" aria-label="Duplicate tab"><Copy size={12} /></button>
+            <button className="replay-action-btn" onClick={copyCurl} title="Copy as cURL" aria-label="Copy as cURL"><Code size={12} /></button>
+            <button className="replay-action-btn" onClick={copyPython} title="Copy as Python (requests)" aria-label="Copy as Python">PY</button>
+            <button className="replay-action-btn" onClick={copyNode} title="Copy as Node (fetch)" aria-label="Copy as Node">JS</button>
             <button className={`replay-action-btn ${showImport ? 'active' : ''}`} onClick={() => setShowImport(s => !s)} title="Import raw HTTP / cURL / fetch">
               <ClipboardPaste size={12} />
             </button>

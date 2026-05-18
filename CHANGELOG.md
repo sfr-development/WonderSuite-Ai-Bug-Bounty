@@ -6,6 +6,176 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.16] — 2026-05-18
+
+### Big Overhaul — driven by a deep audit of every module
+A full-codebase pass found dozens of dead toggles, silent error swallows,
+cross-project state leaks, hardcoded zero stats, and missing real-pentest
+features. This release attacks the high-leverage subset of them. Eight
+deferred items (HAR import, browser cookie-pull, custom traffic columns,
+request throttling backend, organizer disk-persistence, logger filter
+overhaul, findings bulk-actions, tooltip-system consolidation) ship in
+v0.3.17.
+
+### Fixed — Dashboard stats lied
+`get_memory_stats` returned five hardcoded zeros for scanner / intruder /
+cert-cache / WS-messages / MCP-activity counts. They are now computed
+from the live Rust state via a new `scanner_state()` global accessor that
+mirrors the existing intruder/proxy pattern, plus direct lookups into the
+proxy CA cache, the proxy's `websocket_messages` Mutex, and the MCP
+activity log.
+
+### Fixed — Silent error swallowing (40+ instances)
+A new `notifyError(title, err)` helper in `src/utils/notify.ts` lifts
+thrown errors to user-visible toasts. Used to replace the worst
+console-only catches in Intercept (proxy start / stop / toggle / forward
+/ drop), Session (cookie save / delete / clear / import / export, macro
+create / run / delete, rule toggle / delete), Discovery (subdomain /
+content / param), Attack (start + turbo), WebSocket (connect / send /
+close / rule add / remove). Best-effort window-sync catches in
+detachedStore stay silent intentionally.
+
+### Fixed — `max_traffic_entries` from project config did nothing
+The wizard wrote the value to `config.json` but the proxy ignored it.
+New Rust command `proxy_set_max_traffic_entries(max)` pushes the limit
+into `ProxyState.max_traffic_entries`, and `applyProjectConfig` calls it
+on every `openProject`. 0 → unlimited (u64::MAX).
+
+### Added — Per-project UI state (Repeater tabs + Port-scan config + scope)
+`ws_replay_tabs_v1` and `ws_portscan_config_v1` lived in global
+localStorage, so project B inherited project A's Repeater drafts and port
+scan target on open. Now serialized to `<projectDir>/ui_state.json`:
+
+- New Rust commands `project_save_state_blob(id, blob)` /
+  `project_load_state_blob(id)` (atomic write via tmp+rename).
+- New helper `src/utils/projectState.ts` — `gatherProjectState()` and
+  `applyProjectState()` shuttle a schema-versioned JSON envelope.
+- `projectStore.openProject` hydrates from the blob right before setting
+  `activeProject` so modules don't briefly render the previous project's
+  state. `closeProject` and the 30 s auto-save loop persist back.
+
+### Added — Real General settings, persisted across launches
+`src/stores/appSettingsStore.ts` (localStorage `ws_app_settings_v1`)
+backs a brand-new General tab in Settings. The previous tab had
+placeholder `<input defaultValue="10000" />` controls with no onChange
+handlers — every setting was cosmetic. Now real:
+
+- Autosave interval (5–3600 s) — wired into `projectStore.startAutoSave`
+- Request timeout (1–300 s)
+- Cookie jar TTL (0–3650 days)
+- Response size limit (1–1024 MB)
+- Follow redirects toggle
+- Highlight search matches toggle
+- Outbound throttle toggle + rate (1–10000 req/s)
+- Debug verbosity (silent / error / warn / info / debug)
+- Reset-to-defaults button
+
+### Added — Settings nav search
+Type "timeout" or "scope" in the Settings sidebar's new search box and
+the matching tab auto-selects. Keyword index in `NAV_KEYWORDS`.
+
+### Added — HAR (HTTP Archive 1.2) export
+`src/utils/harExport.ts` produces a spec-conformant HAR that Burp /
+Caido / Chrome DevTools / Charles all import. New button in the Traffic
+toolbar exports either the filtered subset or all entries. Cookies are
+parsed out of headers, query strings out of URLs, text-vs-binary content
+is detected by MIME type so non-text bodies aren't dumped as garbage
+into the HAR text field.
+
+### Added — Copy as cURL / Python / Node in Repeater
+Three new toolbar buttons next to the existing Duplicate button. The
+previous "Copy as cURL" only emitted `curl -X METHOD URL` with no
+headers or body. `src/utils/requestExport.ts` now parses the raw
+request and emits:
+
+- **cURL** — multi-line backslash-continued with `-H` for each header and
+  `--data-raw` for the body
+- **Python** — `requests.get/post/...(url, headers=..., json=...)`, auto-
+  detects JSON body
+- **Node** — `await fetch(url, { method, headers, body })` for Node 18+
+
+### Added — Scope-guard on Scanner / Discovery / Attack
+Refuses to start a scan against a target that isn't covered by the
+active project's scope. Saves users from accidentally hitting an
+out-of-engagement host:
+
+- `Scan.tsx` checks `isInScope(target)` before `scanner_start_active`.
+- `Discovery.tsx` has a shared `scopeGuard()` used by all three scan
+  buttons (subdomain, content, param).
+- `Attack.tsx` parses the Host header out of the request template and
+  checks it before `intruder_start`.
+
+Empty scope means "no enforcement" — same convention the Traffic module
+already used.
+
+### Added — Intercept Queue empty state
+Previously a blank panel when intercept was on and the queue was empty.
+Now: "Queue is empty. Trigger a request in the browser — it will appear
+here for editing." or, if intercept is off, "Intercept is off. Toggle it
+on to capture requests for editing."
+
+### Added — Config-corruption toast (carry-over wired)
+v0.3.15 added the `configCorrupted` flag; v0.3.16 actually surfaces it
+in Shell.tsx as a warning toast on first render of a corrupted project,
+so the user knows settings reverted to defaults instead of silently
+running with port 8080.
+
+### Improved — Sequencer entropy engine (the explicit C1 ask)
+The existing engine ran Shannon + FIPS 140-2 Monobit / Poker / Runs /
+Long-Run + per-position bit analysis, but stripped non-hex characters
+before bit conversion — so Base64 / Base64URL / JWT-segment tokens
+silently degraded to all-zero bits and the FIPS tests reported garbage.
+Now:
+
+- **Encoding auto-detect** — hex / base64 / base64url / mixed.
+- **Real bit stream** for every encoding — Base64 tokens are decoded to
+  bytes; arbitrary tokens use UTF-8 bytes.
+- **NIST SP 800-22 Frequency-within-Block test** — more rigorous than
+  FIPS Monobit, catches short-window biases that FIPS misses.
+- **Lag-1 autocorrelation** — flags PRNG sequential leakage. Red if
+  |r| > 0.3, amber if > 0.15.
+- **Effective entropy in bits** — `log2(unique_tokens)`, the practical
+  key-space size.
+- **Theoretical keyspace** — `log2(charset) * avg_length`.
+- **Character-class breakdown** — alpha / digit / upper / lower / special.
+- The FIPS tab now also shows which encoding was detected so users
+  understand what "8 bits per byte" means for their data.
+
+### Added — Project Launcher cleanup
+The tiny 16×16 logo in the Launcher's titlebar is gone. Just the text
+"WonderSuite – Project Launcher" remains.
+
+### Added — Keyboard shortcuts infrastructure (Ctrl+L / Ctrl+E / Ctrl+F / Ctrl+Shift+K)
+`useKeyboardShortcuts` now dispatches `ws-shortcut` CustomEvents that
+modules can subscribe to:
+
+- `Ctrl+L` and `Ctrl+F` (outside editable inputs) → `focus-search`
+- `Ctrl+E` → `resend` (Repeater / Intercept opt in next release)
+- `Ctrl+Shift+K` → `clear` (Traffic / Logger opt in next release)
+
+Existing module-switch shortcuts (Ctrl+1..9, Ctrl+0, F1, Ctrl+,) keep
+working.
+
+### Internal
+- `src-tauri/src/project.rs` — `project_save_state_blob`,
+  `project_load_state_blob`, rewritten `get_memory_stats`
+- `src-tauri/src/proxy_commands.rs` — `proxy_set_max_traffic_entries`
+- `src-tauri/src/scanner_commands.rs` — global `scanner_state()`
+- `src-tauri/src/lib.rs` — registers all 3 new commands
+- `src/stores/appSettingsStore.ts` — new persistent app-settings store
+- `src/stores/projectStore.ts` — `applyProjectConfig` syncs max-traffic
+  to proxy + hydrates UI state blob, autosave reads
+  `useAppSettings.autosaveIntervalSec`
+- `src/utils/notify.ts`, `src/utils/projectState.ts`,
+  `src/utils/harExport.ts`, `src/utils/requestExport.ts` — new helpers
+- `src/modules/settings/Settings.tsx` — new GeneralSettingsPanel +
+  SettingsNavSearch components
+- `src/modules/tokens/Tokens.tsx` — encoding detection, NIST SP 800-22,
+  autocorrelation, effective/theoretical entropy, char classes
+- `src/components/layout/ProjectLauncher.tsx`,
+  `src/components/layout/Shell.tsx`, eight module files — toast wiring,
+  scope guards, empty states, aria-labels on icon-only buttons
+
 ## [0.3.15] — 2026-05-18
 
 ### Fixed — Project Launcher: wizard settings finally take effect
