@@ -122,7 +122,7 @@ libc = "0.2"
 # pcap stack. No `windivert` / `windivert-sys` crate dep — those force a
 # static link that breaks app startup on stock Windows.
 libloading = "0.8"
-windows = { version = "0.58", features = [
+windows = { version = "0.61", features = [
     "Win32_System_Services",
     "Win32_System_Registry",
     "Win32_Security",
