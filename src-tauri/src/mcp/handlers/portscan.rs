@@ -88,6 +88,8 @@ pub async fn handle_port_scan(params: &serde_json::Value) -> HandlerResult {
         adaptive: true,
         idle_mode: false,
         max_hosts: None,
+        // MCP callers historically saw all states — keep that contract.
+        emit_closed_filtered: true,
     };
     // Build a dummy AppHandle? We need one for emit. Workaround: pass via
     // the state's emitter. For MCP we can skip emitter — the orchestrator
@@ -138,6 +140,8 @@ pub async fn handle_port_scan_range(params: &serde_json::Value) -> HandlerResult
         adaptive: true,
         idle_mode: false,
         max_hosts,
+        // MCP callers historically saw all states — keep that contract.
+        emit_closed_filtered: true,
     };
     let reply = orchestrator::start_scan_no_emit(st.clone(), req).await?;
     let summary = wait_for_summary(st, &reply.scan_id, max_wait_ms).await?;

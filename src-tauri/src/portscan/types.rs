@@ -77,6 +77,13 @@ pub struct ScanRequest {
     pub idle_mode: bool,
     #[serde(default)]
     pub max_hosts: Option<usize>,
+    // v0.3.20: when false the orchestrator drops Closed / Filtered /
+    // OpenFiltered results before persisting + emitting. Frontend wires
+    // this to the "Show closed/filtered" toggle so the user can opt out
+    // of the noise at-source instead of just hiding it in the UI.
+    // Default true keeps backward compat with older callers / MCP clients.
+    #[serde(default = "default_true")]
+    pub emit_closed_filtered: bool,
 }
 
 fn default_true() -> bool {

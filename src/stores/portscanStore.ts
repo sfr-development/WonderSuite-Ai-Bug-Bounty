@@ -67,6 +67,12 @@ export interface ScanRequest {
   adaptive: boolean;
   idle_mode: boolean;
   max_hosts: number | null;
+  // v0.3.20: source-level filter for Closed / Filtered / OpenFiltered.
+  // When false the orchestrator drops them before storing/emitting,
+  // saving RAM and event-bus bandwidth on big scans. Default true
+  // keeps backward compat. Frontend binds this to the "Show
+  // closed/filtered" toggle at scan-start time.
+  emit_closed_filtered: boolean;
 }
 
 interface ConfigPanelState {
@@ -103,7 +109,7 @@ interface PortsState extends ConfigPanelState {
   setExcludeCdn: (v: boolean) => void;
 
   // lifecycle
-  start: () => Promise<void>;
+  start: (opts?: { emitClosedFiltered?: boolean }) => Promise<void>;
   stop: () => Promise<void>;
   reset: () => void;
   exportAs: (format: 'jsonl' | 'csv' | 'xml' | 'gnmap' | 'plain') => Promise<string>;
@@ -111,6 +117,49 @@ interface PortsState extends ConfigPanelState {
 
 let listenersAttached = false;
 let unlistens: UnlistenFn[] = [];
+
+// v0.3.20: results buffer + smart cap so massive scans (65535 ports across
+// multiple hosts with "Show closed/filtered" on) don't pin the renderer.
+// We batch new ScanResult events for 50 ms before pushing to the store —
+// turns 65535 individual setState calls (O(N²) array realloc + 65535
+// React commits) into ~20 batched setStates.
+// When the merged list exceeds FRONTEND_CAP, we evict the oldest non-Open
+// entries first (Closed → Filtered → OpenFiltered), only dropping Open as
+// a last resort. Scanning never stops; we just lose the cheapest history.
+const FRONTEND_CAP = 20_000;
+const FLUSH_INTERVAL_MS = 50;
+let resultsBuffer: ScanResult[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function smartCapMerge(prev: ScanResult[], add: ScanResult[]): ScanResult[] {
+  const merged = prev.concat(add);
+  if (merged.length <= FRONTEND_CAP) return merged;
+  let toDrop = merged.length - FRONTEND_CAP;
+  // First pass: drop oldest non-Open. retain ordering by walking front-to-back.
+  const kept: ScanResult[] = new Array(merged.length);
+  let k = 0;
+  for (const r of merged) {
+    if (toDrop > 0 && r.state !== 'open') { toDrop--; continue; }
+    kept[k++] = r;
+  }
+  kept.length = k;
+  // If we are still over (all-Open surplus), drain oldest of those too.
+  if (kept.length > FRONTEND_CAP) {
+    return kept.slice(kept.length - FRONTEND_CAP);
+  }
+  return kept;
+}
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    if (resultsBuffer.length === 0) return;
+    const batch = resultsBuffer;
+    resultsBuffer = [];
+    usePortscanStore.setState((s) => ({ results: smartCapMerge(s.results, batch) }));
+  }, FLUSH_INTERVAL_MS);
+}
 
 async function attachListeners() {
   if (listenersAttached) return;
@@ -120,7 +169,8 @@ async function attachListeners() {
     await listen<[string, ScanResult]>('portscan:result', (e) => {
       const [sid, r] = e.payload;
       if (sid !== usePortscanStore.getState().scanId) return;
-      usePortscanStore.setState((s) => ({ results: [...s.results, r] }));
+      resultsBuffer.push(r);
+      scheduleFlush();
     }),
   );
 
@@ -141,6 +191,15 @@ async function attachListeners() {
     await listen<[string, number]>('portscan:done', (e) => {
       const [sid, elapsedMs] = e.payload;
       if (sid !== usePortscanStore.getState().scanId) return;
+      // v0.3.20: drain the result buffer synchronously so the
+      // "complete" toast reflects the actual final count instead of
+      // racing the next 50 ms flush tick.
+      if (resultsBuffer.length > 0) {
+        const batch = resultsBuffer;
+        resultsBuffer = [];
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+        usePortscanStore.setState((s) => ({ results: smartCapMerge(s.results, batch) }));
+      }
       const s = usePortscanStore.getState();
       const open = s.results.filter((r) => r.state === 'open').length;
       usePortscanStore.setState({ running: false, finishedAt: Date.now() });
@@ -220,12 +279,17 @@ export const usePortscanStore = create<PortsState>((set, get) => ({
   setIdleMode: (v) => { set({ idleMode: v }); _persist(get); },
   setExcludeCdn: (v) => { set({ excludeCdn: v }); _persist(get); },
 
-  start: async () => {
+  start: async (opts) => {
     await attachListeners();
     const s = get();
     if (s.running) return;
     const targets = s.targetInput.split(/[\s,]+/).map((t) => t.trim()).filter(Boolean);
     if (targets.length === 0) throw new Error('No targets');
+
+    // v0.3.20: clear any leftover buffered results from a previous scan
+    // so they don't bleed into the new scan's state.
+    resultsBuffer = [];
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
 
     set({
       results: [],
@@ -249,6 +313,9 @@ export const usePortscanStore = create<PortsState>((set, get) => ({
       adaptive: s.adaptive,
       idle_mode: s.idleMode,
       max_hosts: null,
+      // Default true keeps the previous behavior; UI passes false when
+      // the "Show closed/filtered" checkbox is unticked at scan start.
+      emit_closed_filtered: opts?.emitClosedFiltered ?? true,
     };
     const reply = await invoke<ScanStartReply>('portscan_start', { req });
     set({ scanId: reply.scan_id, startReply: reply });

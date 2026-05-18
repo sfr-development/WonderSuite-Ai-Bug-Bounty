@@ -64,9 +64,14 @@ export function Ports() {
 
   const startScan = useCallback(async () => {
     if (running) return;
+    // v0.3.20: pass the "Show closed/filtered" checkbox state down so the
+    // backend drops noise at-source instead of storing 65535 entries per
+    // host. The toggle still works as a display filter for the current
+    // scan; it just also controls whether the data even arrives.
+    const startOpts = { emitClosedFiltered: showAllStates };
     if (mode === 'connect' || mode === 'udp') {
       // No admin needed for connect or basic UDP — start immediately.
-      try { await start(); }
+      try { await start(startOpts); }
       catch (e) { addToast({ type: 'error', title: 'Scan failed', message: String(e) }); }
       return;
     }
@@ -75,13 +80,13 @@ export function Ports() {
     // TCP connect engine until the raw SYN engine ships in v0.3.8, so the
     // scan does actually execute.
     setElevModal(mode);
-  }, [mode, running, start, addToast]);
+  }, [mode, running, start, addToast, showAllStates]);
 
   const proceedAfterElevation = useCallback(async () => {
     setElevModal(null);
-    try { await start(); }
+    try { await start({ emitClosedFiltered: showAllStates }); }
     catch (e) { addToast({ type: 'error', title: 'Scan failed', message: String(e) }); }
-  }, [start, addToast]);
+  }, [start, addToast, showAllStates]);
 
   const stopScan = useCallback(async () => {
     try { await stop(); }

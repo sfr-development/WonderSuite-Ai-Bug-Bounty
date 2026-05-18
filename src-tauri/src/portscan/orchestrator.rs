@@ -13,7 +13,44 @@ use super::engine::udp::run_udp_scan;
 use super::probes::probe_tls;
 use super::targets::{expand_all, parse_ports};
 use super::timing::AdaptiveTiming;
-use super::types::{ScanMode, ScanProgress, ScanRequest, ScanResult, ScanSummary};
+use super::types::{PortState, ScanMode, ScanProgress, ScanRequest, ScanResult, ScanSummary};
+
+// v0.3.20: smart cap on the per-scan results Vec so scanning massive
+// port-ranges with "Show closed/filtered" enabled doesn't blow up the
+// process. We never STOP scanning — we just FIFO-evict the cheapest
+// entries (Closed → Filtered → OpenFiltered → Open) when over cap.
+// Open results are preserved as long as possible because they're the
+// only actionable data; the rest is noise during reconnaissance.
+const RESULTS_HARD_CAP: usize = 100_000;
+// Overage-buffer so eviction doesn't run on every single push when we're
+// hovering at the cap. Amortizes the O(N) retain cost to O(1) per push.
+const RESULTS_EVICT_TRIGGER: usize = RESULTS_HARD_CAP + 1_000;
+
+/// Evict the oldest non-Open entries first, then oldest of remaining
+/// (which are Open) if we're still over the hard cap. Caller must hold
+/// the write lock; `vec` is mutated in place.
+fn evict_smart(vec: &mut Vec<ScanResult>) {
+    if vec.len() <= RESULTS_HARD_CAP {
+        return;
+    }
+    let mut to_drop = vec.len() - RESULTS_HARD_CAP;
+    // First pass: drop oldest non-Open entries in order (Closed > Filtered
+    // > OpenFiltered tier doesn't matter — they're all noise vs Open).
+    vec.retain(|entry| {
+        if to_drop > 0 && !matches!(entry.state, PortState::Open) {
+            to_drop -= 1;
+            false
+        } else {
+            true
+        }
+    });
+    // If we still have too many (entire surplus was Open results), drain
+    // the oldest of those too — better to lose ancient evidence than OOM.
+    if vec.len() > RESULTS_HARD_CAP {
+        let drain_n = vec.len() - RESULTS_HARD_CAP;
+        vec.drain(0..drain_n);
+    }
+}
 
 pub type PortScanState = Arc<PortScanManager>;
 
@@ -174,8 +211,16 @@ async fn start_scan_inner(
     let app_inner = app.clone();
     let results_inner = results.clone();
     let active_for_followup = active.clone();
+    let emit_closed_filtered = req.emit_closed_filtered;
     tokio::spawn(async move {
         while let Some(mut r) = rx.recv().await {
+            // v0.3.20: source-level filter. If user disabled "Show closed
+            // /filtered" before starting the scan, drop those results at
+            // the orchestrator before they enter the Vec or the event bus.
+            // Open is always kept.
+            if !emit_closed_filtered && !matches!(r.state, PortState::Open) {
+                continue;
+            }
             // For 443/8443, run a TLS probe if we don't already have one
             if matches!(r.port, 443 | 8443 | 9443 | 465 | 993 | 995 | 636 | 5671)
                 && r.service.as_ref().map(|s| !s.tls).unwrap_or(true)
@@ -184,7 +229,16 @@ async fn start_scan_inner(
                     r.service = Some(tls_svc);
                 }
             }
-            results_inner.write().await.push(r.clone());
+            // v0.3.20: bounded push with smart eviction. We only call the
+            // evict path when over a buffer above the cap so the common
+            // case (under-cap) stays O(1).
+            {
+                let mut w = results_inner.write().await;
+                w.push(r.clone());
+                if w.len() >= RESULTS_EVICT_TRIGGER {
+                    evict_smart(&mut w);
+                }
+            }
             if let Some(app) = &app_inner {
                 let _ = app.emit("portscan:result", (scan_id_inner.clone(), r));
             }

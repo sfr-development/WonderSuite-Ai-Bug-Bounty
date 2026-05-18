@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.20] — 2026-05-18
+
+### Fixed — Port Scanner RAM unbounded with "Show closed/filtered" on
+A user audit caught that the Ports module had no upper bound anywhere in
+its result pipeline. With "Show closed/filtered" toggled on, scanning
+65k ports across multiple hosts (a common recon pattern) would push
+~325k ScanResult entries into both the Rust `RwLock<Vec<ScanResult>>` in
+the orchestrator AND the zustand `results: ScanResult[]` in the
+frontend. Engine kept emitting, every push was an O(N) array realloc on
+the React side, and `portscan:result` Tauri events fanned out one
+cross-process message per port. v0.3.20 fixes this with three layered
+guards — scanning never stops; we just FIFO-evict the cheapest entries
+when capacity is reached.
+
+**Layer 1 — Orchestrator hard cap.** New
+`RESULTS_HARD_CAP = 100_000` in `orchestrator.rs`. The result fan-out
+task watches the Vec; when it crosses `cap + 1_000` (overage buffer to
+amortize eviction cost), `evict_smart()` runs:
+
+1. First pass — `retain` drops the oldest non-Open entries (Closed →
+   Filtered → OpenFiltered) until back under the cap. Open results
+   are preserved because they're the only actionable data.
+2. Last-resort pass — if the surplus is entirely Open results,
+   `drain(0..overage)` removes the oldest of those too. Better to
+   lose ancient evidence than OOM the process.
+
+**Layer 2 — Frontend buffer + smart cap.** `portscanStore.ts` now
+batches incoming `portscan:result` events into a buffer that flushes
+every 50 ms via a single `setState` instead of one per result. This
+turns 65k individual React commits with N² array reallocs into ~20
+batched commits. Final flush happens synchronously on `portscan:done`
+so the completion toast reflects the correct count, no race.
+`FRONTEND_CAP = 20_000` with the same smart-eviction logic
+(`smartCapMerge`) as the backend keeps the renderer's working set
+predictable.
+
+**Layer 3 — Engine source filter.** New `emit_closed_filtered: bool`
+field on `ScanRequest`. When the UI's "Show closed/filtered" checkbox
+is unchecked at scan-start time, the orchestrator drops Closed /
+Filtered / OpenFiltered results before storing or emitting them — the
+toggle is no longer just a display filter, it controls whether the
+noise even leaves the engine. Default is `true` for backward compat
+with MCP callers and older clients.
+
+Combined effect on a 65k-port × 5-host scan with the toggle off: ~325k
+results × ~150 bytes ≈ 50 MB Vec pressure is now exactly zero, plus
+325k Tauri events become however many open ports there actually are
+(usually <50). With the toggle on: still 325k entries flow in, but
+they're bounded at 100k backend / 20k frontend, batched into the React
+store, and old noise is dropped first so the actionable Open results
+survive.
+
+### Internal
+- `src-tauri/src/portscan/orchestrator.rs` — `RESULTS_HARD_CAP`,
+  `RESULTS_EVICT_TRIGGER`, `evict_smart()`, `emit_closed_filtered`
+  source filter in the fan-out loop
+- `src-tauri/src/portscan/types.rs` — `ScanRequest.emit_closed_filtered`
+- `src-tauri/src/mcp/handlers/portscan.rs` — explicit `true` to
+  preserve MCP contract
+- `src/stores/portscanStore.ts` — `resultsBuffer`, `FLUSH_INTERVAL_MS`,
+  `FRONTEND_CAP`, `smartCapMerge`, `scheduleFlush`, sync drain on
+  `portscan:done`, `start({ emitClosedFiltered })` opts
+- `src/modules/ports/Ports.tsx` — passes `showAllStates` down to
+  `start()` so the source filter follows the toggle
+
 ## [0.3.19] — 2026-05-18
 
 ### Fixed — Settings: nav search overflowing and unstyled buttons everywhere
