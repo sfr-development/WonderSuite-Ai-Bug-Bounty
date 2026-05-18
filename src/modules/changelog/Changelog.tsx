@@ -134,9 +134,40 @@ export function Changelog() {
   useEffect(() => { fetchGithub(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const releases = useMemo<ReleaseEntry[]>(() => {
+    // Merge strategy: pick the BEST body between bundled and GitHub for each
+    // version. GitHub gives us live metadata (URLs, publish times) but its
+    // body was historically the workflow's boilerplate ("This is an
+    // automated release for WonderSuite..."). We prefer bundled body when
+    // it's noticeably longer OR when GitHub body looks like the boilerplate.
+    // GitHub metadata (htmlUrl, publishedAt) is always kept.
+    const looksLikeBoilerplate = (s: string) =>
+      /this is an automated release/i.test(s) ||
+      /downloads available:/i.test(s) ||
+      s.trim().length < 80;
+
     const byVersion = new Map<string, ReleaseEntry>();
     for (const r of bundled) byVersion.set(normalizeVersion(r.version), r);
-    if (githubReleases) for (const r of githubReleases) byVersion.set(normalizeVersion(r.version), r);
+
+    if (githubReleases) {
+      for (const gh of githubReleases) {
+        const key = normalizeVersion(gh.version);
+        const local = byVersion.get(key);
+        if (!local) {
+          byVersion.set(key, gh);
+          continue;
+        }
+        // Merge: GitHub metadata wins (htmlUrl, publishedAt, date), but the
+        // body comes from whichever source has the richer content.
+        const ghBoiler = looksLikeBoilerplate(gh.body);
+        const preferBundled = ghBoiler || (local.body.length > gh.body.length + 200);
+        byVersion.set(key, {
+          ...gh,
+          body: preferBundled ? local.body : gh.body,
+          source: preferBundled ? 'bundled' : 'github',
+        });
+      }
+    }
+
     const arr = Array.from(byVersion.values());
     arr.sort((a, b) => compareVersions(b.version, a.version));
     if (arr.length > 0) arr[0].isLatest = true;

@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.14] — 2026-05-18
+
+### Fixed — Changelog tab showed boilerplate instead of real release notes
+- **Every release on the GitHub release page (and therefore in the in-app
+  Changelog tab fetched via the GitHub API) had the same generic
+  boilerplate body** — "This is an automated release for WonderSuite.
+  Downloads available: …" — because the workflow's `releaseBody:` was a
+  static literal. The actual rich CHANGELOG.md sections only existed in
+  the offline-bundled copy, but the frontend's merge logic preferred
+  GitHub-fetched data over bundled, so the boilerplate won.
+- **Backfilled all 19 existing GitHub releases** (v0.1.1 → v0.3.13) with
+  their real CHANGELOG.md sections via `gh release edit --notes-file`.
+  No frontend update needed for the user — refresh the Changelog tab and
+  rich content appears for every past release.
+- **Workflow updated** — new `Extract release notes from CHANGELOG` step
+  runs before `tauri-action`, awks the body between `## [<version>]` and
+  the next `## [` header, and feeds it as `releaseBody`. Future releases
+  automatically get the right content on GitHub and in the Changelog tab.
+- **Frontend defensive merge logic** — when the GitHub-fetched body
+  matches the legacy boilerplate (`"This is an automated release"` or
+  `"Downloads available:"`) OR is significantly shorter than the bundled
+  version, the bundled body wins. GitHub metadata (URL, publish time,
+  date) is always preferred. Future releases use GitHub's body directly
+  since it'll be the real content; this fallback covers any legacy /
+  manually-edited releases that still have boilerplate.
+
+### Internal
+- `.github/workflows/release.yml` — `Extract release notes from CHANGELOG`
+  step + `releaseBody: ${{ steps.notes.outputs.body }}`
+- `src/modules/changelog/Changelog.tsx` — `looksLikeBoilerplate()` helper
+  + merge by source-richer-wins
+- `scripts/backfill-release-notes.ps1` — one-shot script that backfilled
+  the 19 historical releases. Kept in repo for future use if needed.
+
 ## [0.3.13] — 2026-05-17
 
 ### Fixed — Changelog tab (v0.3.12 follow-up)

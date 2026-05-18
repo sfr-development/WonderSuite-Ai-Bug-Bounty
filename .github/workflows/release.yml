@@ -121,6 +121,38 @@ jobs:
         shell: bash
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --quiet || (echo "Lockfile drift — run 'cargo update' locally and commit Cargo.lock"; exit 1)
 
+      # Extract the body of the current release from CHANGELOG.md so the
+      # GitHub release page + the in-app Changelog tab show real content
+      # instead of the workflow's boilerplate. Falls back to a minimal
+      # banner if the version isn't found.
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -z "$VERSION" ]; then
+            echo "Falling back to tag without leading v"
+            VERSION="${{ steps.version.outputs.tag }}"
+            VERSION="${VERSION#v}"
+          fi
+          # Grab everything between `## [<version>]` and the next `## [` header.
+          BODY="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+            capture && /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md | sed -e '/^$/N;/^\n$/D')"
+          if [ -z "$BODY" ]; then
+            echo "::warning::No CHANGELOG section found for v$VERSION — using fallback body"
+            BODY="Automated release for WonderSuite v$VERSION. See CHANGELOG.md for details."
+          fi
+          # Multiline output via heredoc
+          {
+            echo "body<<__END_OF_NOTES__"
+            echo "$BODY"
+            echo "__END_OF_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -130,18 +162,7 @@ jobs:
         with:
           tagName: ${{ steps.version.outputs.tag }}
           releaseName: WonderSuite ${{ steps.version.outputs.tag }}
-          releaseBody: |
-            ## WonderSuite ${{ steps.version.outputs.tag }}
-
-            This is an automated release for WonderSuite.
-
-            ### Downloads available:
-            - **Windows**: `.msi` and `.exe` installers
-            - **macOS**: `.app` and `.dmg` (Apple Silicon & Intel)
-            - **Linux**: `.AppImage` and `.deb`
-
-            ### Auto-Update
-            Existing installs check `latest.json` on launch and prompt to update in-app — no manual download needed.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.settings.args }}

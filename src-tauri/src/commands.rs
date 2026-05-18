@@ -13,7 +13,7 @@ pub async fn fetch_github_releases() -> Result<String, String> {
     let url = "https://api.github.com/repos/sfr-development/WonderSuite-Ai-Bug-Bounty/releases?per_page=20";
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent("WonderSuite-Changelog/0.3.13")
+        .user_agent("WonderSuite-Changelog/0.3.14")
         .build()
         .map_err(|e| format!("client: {}", e))?;
     let resp = client
