@@ -14,8 +14,9 @@ import './Shell.css';
 
 export function Shell() {
   const [splashDone, setSplashDone] = useState(false);
-  const { activeProject, closeProject, setActiveProject } = useProjectStore();
-  const { activeModule, appearance, toasts, removeToast } = useAppStore();
+  const { activeProject, closeProject, openProject, setActiveProject } = useProjectStore();
+  const configCorrupted = useProjectStore(s => s.configCorrupted);
+  const { activeModule, appearance, toasts, removeToast, addToast } = useAppStore();
   const { detached, syncFromBackend, restoreLayout, onWindowEvent } = useDetachedStore();
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
   useKeyboardShortcuts();
@@ -27,6 +28,33 @@ export function Shell() {
     visitedRef.current.add(activeModule);
   }
 
+  // v0.3.15: clear the visited-module ref when the project changes so
+  // modules from project A don't immediately re-mount when project B opens.
+  // Module-level zustand stores still need explicit reset (handled in
+  // projectStore.closeProject) — this ref is just the secondary aggravator.
+  const lastProjectIdRef = useRef<string | null>(null);
+  if (activeProject?.id !== lastProjectIdRef.current) {
+    visitedRef.current = new Set();
+    lastProjectIdRef.current = activeProject?.id ?? null;
+  }
+
+  // v0.3.15: auto-resume the last opened project after the splash. If the
+  // user explicitly closed the project (sets a "closed" flag), don't resume.
+  useEffect(() => {
+    if (!splashDone || activeProject) return;
+    try {
+      const explicitlyClosed = sessionStorage.getItem('ws_project_explicitly_closed') === '1';
+      if (explicitlyClosed) return;
+      const lastId = localStorage.getItem('ws_last_active_project_id');
+      if (lastId) {
+        // Fire-and-forget — if the project no longer exists, openProject
+        // silently fails and the launcher renders normally.
+        void openProject(lastId);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splashDone]);
+
   // Bootstrap detached-window state: sync from backend (restart-safe) and
   // restore the persisted layout once a project is open.
   useEffect(() => {
@@ -36,6 +64,21 @@ export function Shell() {
     const unlistenP = onWindowEvent();
     return () => { unlistenP.then(u => u()); };
   }, [activeProject, syncFromBackend, restoreLayout, onWindowEvent]);
+
+  // v0.3.15: surface config.json corruption so the user knows the project
+  // opened with default settings (port 8080, no scope, etc.) instead of
+  // their saved ones.
+  const warnedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeProject || !configCorrupted) return;
+    if (warnedRef.current === activeProject.id) return;
+    warnedRef.current = activeProject.id;
+    addToast({
+      type: 'warning',
+      title: 'Project config could not be read',
+      message: 'Settings reverted to defaults. Check config.json in the project directory.',
+    });
+  }, [activeProject, configCorrupted, addToast]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -68,7 +111,15 @@ export function Shell() {
   if (!activeProject) {
     return (
       <ProjectLauncher
-        onOpen={(project) => setActiveProject(project)}
+        onOpen={(project) => {
+          // v0.3.15: go through projectStore.openProject so the project's
+          // config.json gets loaded AND the auto-start settings (proxy,
+          // browser, intercept, scope) actually take effect. Previously we
+          // called setActiveProject directly and skipped the entire config
+          // pipeline — every "auto_*" toggle in the wizard was dead config.
+          void openProject(project.id);
+          try { sessionStorage.removeItem('ws_project_explicitly_closed'); } catch {}
+        }}
         onTempProject={() => setActiveProject({
           id: `temp-${Date.now()}`,
           name: 'Quick Session',

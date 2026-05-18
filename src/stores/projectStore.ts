@@ -1,15 +1,21 @@
 import { create } from 'zustand';
 import type { ProjectInfo, ProjectConfig, CreateProjectOpts, MemoryStats } from '../types';
+import { useAppStore, useReplayStore } from './index';
+
+const LAST_PROJECT_KEY = 'ws_last_active_project_id';
+const EXPLICIT_CLOSE_KEY = 'ws_project_explicitly_closed';
 
 interface ProjectState {
   activeProject: ProjectInfo | null;
   projectConfig: ProjectConfig | null;
   projects: ProjectInfo[];
   memoryStats: MemoryStats | null;
+  /** Set when openProject fails to parse config.json — UI can show a banner. */
+  configCorrupted: boolean;
 
   loadProjects: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
-  closeProject: () => void;
+  closeProject: () => Promise<void>;
   createProject: (opts: CreateProjectOpts) => Promise<ProjectInfo>;
   createTempProject: (targetUrl: string) => Promise<ProjectInfo>;
   deleteProject: (id: string) => Promise<void>;
@@ -19,11 +25,114 @@ interface ProjectState {
   setActiveProject: (project: ProjectInfo | null) => void;
 }
 
+// ── Helpers to reset cross-project state on switch ────────────────────────
+// Without these, opening a fresh project shows the previous project's
+// Repeater tabs, scope rules, and proxy traffic (cross-project leak).
+async function applyProjectConfig(config: ProjectConfig | null) {
+  if (!config) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+
+    // 1. Scope — sync zustand globalScope from project config.
+    if (Array.isArray(config.initial_scope)) {
+      useAppStore.setState({ globalScope: [...config.initial_scope] });
+      try {
+        localStorage.setItem('ws_global_scope_v1', JSON.stringify(config.initial_scope));
+      } catch {}
+    }
+
+    // 2. Auto-start proxy on the project's configured port.
+    if (config.auto_start_proxy) {
+      try {
+        await invoke('proxy_start', { port: config.proxy_port || 8080 });
+      } catch (e) {
+        console.warn('[project] auto_start_proxy failed:', e);
+      }
+    }
+
+    // 3. Auto-enable intercept (only meaningful if the proxy is running —
+    // start proxy first, then toggle).
+    if (config.intercept_enabled) {
+      try {
+        await invoke('proxy_toggle_intercept', { enabled: true });
+      } catch (e) {
+        console.warn('[project] intercept_enabled failed:', e);
+      }
+    }
+
+    // 4. Auto-launch the bundled browser.
+    if (config.auto_launch_browser) {
+      try {
+        await invoke('browser_open', {});
+      } catch (e) {
+        console.warn('[project] auto_launch_browser failed:', e);
+      }
+    }
+  } catch (e) {
+    console.warn('[project] applyProjectConfig error:', e);
+  }
+}
+
+async function clearCrossProjectState() {
+  // Reset Repeater tabs to the default single-tab state.
+  try {
+    const defaultTab = {
+      id: 'tab-1', name: 'New Request', method: 'GET',
+      url: 'https://httpbin.org/get',
+      requestRaw: 'GET /get HTTP/1.1\nHost: httpbin.org\nAccept: */*\nUser-Agent: WonderSuite/0.1',
+      responseRaw: '', statusCode: null, responseTimeMs: null,
+      responseSize: null, isLoading: false,
+    };
+    useReplayStore.setState({ tabs: [defaultTab], activeTabId: 'tab-1' });
+    try {
+      localStorage.removeItem('ws_replay_tabs_v1');
+    } catch {}
+  } catch {}
+
+  // Reset the in-scope rules.
+  try {
+    useAppStore.setState({ globalScope: [] });
+    localStorage.removeItem('ws_global_scope_v1');
+  } catch {}
+
+  // Clear proxy traffic + intercept on the Rust side.
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('proxy_clear_traffic').catch(() => {});
+    await invoke('proxy_toggle_intercept', { enabled: false }).catch(() => {});
+  } catch {}
+}
+
+// ── Auto-save loop ─────────────────────────────────────────────────────────
+// Snapshots proxy traffic to <projectDir>/traffic.json every 30 s while a
+// non-temp project is active. Cancelled when the project closes.
+let autoSaveTimer: ReturnType<typeof setInterval> | null = null;
+
+function startAutoSave(projectId: string) {
+  stopAutoSave();
+  autoSaveTimer = setInterval(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('project_save_state', { id: projectId }).catch((e: unknown) => {
+        console.warn('[project] auto-save failed:', e);
+      });
+    } catch {}
+  }, 30000);
+}
+
+function stopAutoSave() {
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   activeProject: null,
   projectConfig: null,
   projects: [],
   memoryStats: null,
+  configCorrupted: false,
 
   setActiveProject: (project) => set({ activeProject: project }),
 
@@ -41,18 +150,74 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const project = await invoke<ProjectInfo>('open_project', { id });
+
+      // Try to load the project's config.json. Silent fallback to defaults
+      // hides corruption; we report it explicitly so the UI can warn.
       let config: ProjectConfig | null = null;
+      let corrupted = false;
       try {
         config = await invoke<ProjectConfig>('get_project_config', { id });
-      } catch { /* config may not exist for old projects */ }
-      set({ activeProject: project, projectConfig: config });
+      } catch (e) {
+        console.warn('[project] config.json missing or corrupted:', e);
+        corrupted = true;
+      }
+
+      // Restore disk-persisted traffic / findings if the backend supports it.
+      // Best-effort — older builds don't have the command.
+      try {
+        await invoke('project_load_state', { id });
+      } catch (e) {
+        console.debug('[project] project_load_state unavailable:', e);
+      }
+
+      set({ activeProject: project, projectConfig: config, configCorrupted: corrupted });
+
+      // Remember which project to resume on next launch.
+      try {
+        localStorage.setItem(LAST_PROJECT_KEY, id);
+        sessionStorage.removeItem(EXPLICIT_CLOSE_KEY);
+      } catch {}
+
+      // Apply auto-start settings (proxy port, intercept, browser, scope).
+      // Done after state is set so listening components see the new project
+      // before the proxy comes up.
+      void applyProjectConfig(config);
+
+      // Auto-save loop for non-temp projects.
+      if (!project.is_temporary) {
+        startAutoSave(id);
+      }
     } catch (err) {
       console.error('Failed to open project:', err);
     }
   },
 
-  closeProject: () => {
-    set({ activeProject: null, projectConfig: null });
+  closeProject: async () => {
+    const current = get().activeProject;
+
+    // Snapshot one last time before clearing, so the user's last 30 s aren't
+    // lost. Best-effort.
+    if (current && !current.is_temporary) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('project_save_state', { id: current.id }).catch(() => {});
+      } catch {}
+    }
+
+    stopAutoSave();
+
+    // Mark this close as explicit so the auto-resume on next launch is
+    // suppressed (user wanted to land on the launcher, not the project).
+    try {
+      sessionStorage.setItem(EXPLICIT_CLOSE_KEY, '1');
+      localStorage.removeItem(LAST_PROJECT_KEY);
+    } catch {}
+
+    set({ activeProject: null, projectConfig: null, configCorrupted: false });
+
+    // Clear cross-project state: Repeater tabs, scope, proxy traffic, intercept.
+    // Without this, project B inherits project A's residue.
+    void clearCrossProjectState();
   },
 
   createProject: async (opts: CreateProjectOpts) => {

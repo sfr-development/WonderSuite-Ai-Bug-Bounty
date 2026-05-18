@@ -6,6 +6,112 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.15] — 2026-05-18
+
+### Fixed — Project Launcher: wizard settings finally take effect
+After a deep audit of the project lifecycle, the wizard's "auto-start
+proxy", "auto-launch browser", "enable intercept", "initial scope",
+"proxy port", and "max traffic entries" toggles were all dead config —
+they were written to `config.json` at creation time but never read on
+open. Opening a project just set `activeProject` directly; the entire
+config pipeline was bypassed.
+
+- **`Shell.tsx`** now routes the launcher's "Open" button through
+  `useProjectStore.openProject(id)` instead of calling
+  `setActiveProject` directly. That triggers config loading, auto-start
+  proxy on the project's configured port, intercept-by-default, browser
+  auto-launch, and initial-scope sync into the global scope store.
+- **`projectStore.openProject`** now invokes `get_project_config`,
+  reports corruption explicitly (new `configCorrupted` flag — see
+  below), persists `ws_last_active_project_id` for next-launch resume,
+  calls `applyProjectConfig()`, and starts the 30 s auto-save loop for
+  non-temp projects.
+- **`applyProjectConfig()`** new helper — syncs `initial_scope` into
+  `useAppStore.globalScope` + writes `ws_global_scope_v1`, calls
+  `proxy_start({ port })` with the project's port if `auto_start_proxy`,
+  toggles intercept if `intercept_enabled`, opens the bundled browser
+  if `auto_launch_browser`.
+
+### Fixed — Cross-project state leak
+Opening project B used to inherit project A's Repeater tabs, scope
+rules, and proxy traffic because the zustand stores and the Rust proxy
+state were never reset between projects. Cookies-stored-in-localStorage
+literally bled across engagements.
+
+- **`projectStore.closeProject`** now async — snapshots one last time
+  via the new `project_save_state` Rust command, then calls
+  `clearCrossProjectState()` which resets Repeater tabs to a single
+  default, clears `globalScope` + the `ws_global_scope_v1` storage key,
+  and invokes `proxy_clear_traffic` + `proxy_toggle_intercept(false)`
+  on the Rust side.
+- **`Shell.tsx`** clears the `visitedRef` (set of mounted modules)
+  whenever `activeProject?.id` changes, so modules from project A do
+  not immediately re-mount when project B opens.
+
+### Added — Disk persistence + auto-save
+Traffic captured during a session was previously RAM-only. The Rust
+side already had a `<projectDir>/traffic.json` file from creation but
+nothing wrote to it after that. Closing the app dropped everything.
+
+- **Rust** — new `project_save_state(id)` command snapshots the global
+  proxy traffic Vec to `<projectDir>/traffic.json` (atomic via
+  `*.json.tmp` + rename). New `project_load_state(id)` reads it back
+  on open and replaces the in-memory traffic. Both are best-effort —
+  a missing or malformed file leaves memory untouched rather than
+  erroring.
+- **`projectStore`** — 30 s `setInterval` auto-save loop, started in
+  `openProject` for non-temp projects, stopped in `closeProject`.
+  Final snapshot is taken in `closeProject` before clearing state so
+  the user's last 30 s aren't lost.
+
+### Added — Last-active-project auto-resume
+After a splash boot, the launcher now opens the last active project
+automatically unless the user explicitly closed the previous session
+(in which case they land on the launcher).
+
+- `ws_last_active_project_id` localStorage key — written on every
+  successful `openProject`, removed on every `closeProject`.
+- `ws_project_explicitly_closed` sessionStorage flag — set on
+  `closeProject`, cleared on any subsequent `openProject`. Suppresses
+  the auto-resume exactly once.
+
+### Added — Wizard input validation
+The Create-Project wizard accepted nonsense: `proxy_port = -1`,
+`maxTraffic = -5`, `target_url = "not a url"`, 9999-character names.
+
+- Inline validation with `AlertCircle` icons under each field.
+- Per-step gating: the "Next" button is disabled on invalid input for
+  the current step; "Create Project" is disabled unless every step
+  validates.
+- Wizard step indicators (Basics → Proxy & Scope → Limits) are now
+  clickable to navigate back to any *previously-visited* step. Forward
+  jumps are blocked so users can't skip required validation.
+
+### Added — Config-corruption warning toast
+When `get_project_config` fails (missing file, malformed JSON), the
+launcher used to silently fall back to defaults, hiding the problem
+from the user.
+
+- `projectStore.configCorrupted` boolean — set when the config load
+  throws.
+- Shell renders a `warning` toast on the first open of a corrupted
+  project: "Project config could not be read. Settings reverted to
+  defaults. Check config.json in the project directory."
+
+### Internal
+- `src/stores/projectStore.ts` — rewritten with `applyProjectConfig`,
+  `clearCrossProjectState`, `startAutoSave/stopAutoSave`, async
+  `closeProject`
+- `src/components/layout/Shell.tsx` — calls `openProject` from launcher,
+  resets `visitedRef` on project change, auto-resume `useEffect`,
+  config-corruption toast
+- `src/components/layout/ProjectLauncher.tsx` — uses `useProjectStore`
+  for the project list / create / delete / duplicate (single source of
+  truth), inline wizard validation, clickable step indicators
+- `src-tauri/src/project.rs` — `project_save_state`, `project_load_state`
+  commands
+- `src-tauri/src/lib.rs` — registers the two new commands
+
 ## [0.3.14] — 2026-05-18
 
 ### Fixed — Changelog tab showed boilerplate instead of real release notes

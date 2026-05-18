@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   FolderPlus, FolderOpen, Clock, Trash2, ExternalLink, FileText,
   Zap, Shield, Search, Flag, Settings, ChevronRight, ChevronLeft,
-  Globe, Lock, Radio, Copy, ArrowRight,
+  Globe, Lock, Radio, Copy, ArrowRight, AlertCircle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ProjectInfo, ProjectType, CreateProjectOpts } from '../../types';
+import { useProjectStore } from '../../stores/projectStore';
 import './ProjectLauncher.css';
 
 interface Props {
@@ -22,10 +23,20 @@ const PROJECT_TYPES: { id: ProjectType; label: string; icon: React.ReactNode; de
 ];
 
 export function ProjectLauncher({ onOpen, onTempProject }: Props) {
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  // v0.3.15: single source of truth for the project list. Previously the
+  // launcher mirrored projects into local state and called invoke() directly,
+  // which meant the rest of the app (which reads useProjectStore.projects)
+  // saw a stale list until the next refresh.
+  const projects = useProjectStore(s => s.projects);
+  const loadProjects = useProjectStore(s => s.loadProjects);
+  const createProjectInStore = useProjectStore(s => s.createProject);
+  const deleteProjectInStore = useProjectStore(s => s.deleteProject);
+  const duplicateProjectInStore = useProjectStore(s => s.duplicateProject);
+
   const [selected, setSelected] = useState<ProjectInfo | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
+  const [maxVisitedStep, setMaxVisitedStep] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
 
   const [newName, setNewName] = useState('');
@@ -45,7 +56,15 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
   const [maxTraffic, setMaxTraffic] = useState(10000);
   const [appVersion, setAppVersion] = useState<string>('');
 
-  useEffect(() => { loadProjects(); }, []);
+  useEffect(() => {
+    void loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Seed selection from the store once projects are loaded.
+  useEffect(() => {
+    if (!selected && projects.length > 0) setSelected(projects[0]);
+  }, [projects, selected]);
 
   useEffect(() => {
     invoke<string>('current_version').then(setAppVersion).catch(() => {});
@@ -61,18 +80,9 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
     }
   }, [newTarget]);
 
-  const loadProjects = async () => {
-    try {
-      const list = await invoke<ProjectInfo[]>('list_projects');
-      setProjects(list);
-      if (list.length > 0 && !selected) setSelected(list[0]);
-    } catch {
-      setProjects([]);
-    }
-  };
-
   const resetWizard = () => {
     setWizardStep(0);
+    setMaxVisitedStep(0);
     setNewName(''); setNewDesc(''); setNewTarget('');
     setProjectType('pentest'); setIsTemporary(false); setTempTtl(4);
     setClientName(''); setTags('');
@@ -81,68 +91,97 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
     setMaxTraffic(10000);
   };
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
+  // ── Wizard input validation ─────────────────────────────────────────────
+  // Used both to render inline errors and to gate Next / Create.
+  const nameError = (() => {
+    const trimmed = newName.trim();
+    if (!trimmed) return 'Name is required';
+    if (trimmed.length > 80) return 'Name must be 80 chars or fewer';
+    return null;
+  })();
+
+  const targetError = (() => {
+    if (!newTarget.trim()) return null; // optional
     try {
-      const opts: CreateProjectOpts = {
-        name: newName,
-        description: newDesc,
-        target_url: newTarget,
-        project_type: projectType,
-        is_temporary: isTemporary,
-        temp_ttl_hours: isTemporary ? tempTtl : undefined,
-        proxy_port: proxyPort,
-        auto_start_proxy: autoStartProxy,
-        auto_launch_browser: autoLaunchBrowser,
-        initial_scope: scopeEntries,
-        intercept_enabled: interceptEnabled,
-        client_name: clientName,
-        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
-        max_traffic_entries: maxTraffic,
-        notes_template: '',
-      };
-      const project = await invoke<ProjectInfo>('create_project', {
-        name: opts.name,
-        description: opts.description,
-        targetUrl: opts.target_url,
-        projectType: opts.project_type,
-        isTemporary: opts.is_temporary,
-        tempTtlHours: opts.temp_ttl_hours ?? null,
-        proxyPort: opts.proxy_port,
-        autoStartProxy: opts.auto_start_proxy,
-        autoLaunchBrowser: opts.auto_launch_browser,
-        initialScope: opts.initial_scope,
-        interceptEnabled: opts.intercept_enabled,
-        clientName: opts.client_name,
-        tags: opts.tags,
-        maxTrafficEntries: opts.max_traffic_entries,
-        notesTemplate: null,
-      });
+      const u = new URL(newTarget);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        return 'Use http:// or https://';
+      }
+      return null;
+    } catch {
+      return 'Invalid URL';
+    }
+  })();
+
+  const proxyPortError = (() => {
+    if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
+      return 'Port must be 1–65535';
+    }
+    return null;
+  })();
+
+  const maxTrafficError = (() => {
+    if (!Number.isInteger(maxTraffic) || maxTraffic < 0) {
+      return 'Must be 0 or positive';
+    }
+    return null;
+  })();
+
+  const step0Valid = !nameError && !targetError;
+  const step1Valid = !proxyPortError;
+  const step2Valid = !maxTrafficError;
+  const allValid = step0Valid && step1Valid && step2Valid;
+
+  const goToStep = (n: number) => {
+    if (n <= maxVisitedStep) setWizardStep(n);
+  };
+  const advanceStep = () => {
+    const next = wizardStep + 1;
+    setWizardStep(next);
+    if (next > maxVisitedStep) setMaxVisitedStep(next);
+  };
+
+  const handleCreate = async () => {
+    if (!allValid) return;
+    const opts: CreateProjectOpts = {
+      name: newName.trim(),
+      description: newDesc,
+      target_url: newTarget,
+      project_type: projectType,
+      is_temporary: isTemporary,
+      temp_ttl_hours: isTemporary ? tempTtl : undefined,
+      proxy_port: proxyPort,
+      auto_start_proxy: autoStartProxy,
+      auto_launch_browser: autoLaunchBrowser,
+      initial_scope: scopeEntries,
+      intercept_enabled: interceptEnabled,
+      client_name: clientName,
+      tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+      max_traffic_entries: maxTraffic,
+      notes_template: '',
+    };
+    try {
+      const project = await createProjectInStore(opts);
       setShowCreate(false);
       resetWizard();
-      await loadProjects();
       onOpen(project);
     } catch (e) {
       console.error('Create failed:', e);
     }
   };
 
-  const handleOpen = useCallback(async () => {
+  // Just hand the selected project up — Shell goes through
+  // projectStore.openProject() which loads config, applies auto-settings, etc.
+  const handleOpen = useCallback(() => {
     if (!selected) return;
-    try {
-      const project = await invoke<ProjectInfo>('open_project', { id: selected.id });
-      onOpen(project);
-    } catch (e) {
-      console.error('Open failed:', e);
-    }
+    onOpen(selected);
   }, [selected, onOpen]);
 
   const handleDelete = async () => {
     if (!selected) return;
     try {
-      await invoke('delete_project', { id: selected.id });
+      await deleteProjectInStore(selected.id);
       setSelected(null);
-      await loadProjects();
     } catch (e) {
       console.error('Delete failed:', e);
     }
@@ -151,8 +190,7 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
   const handleDuplicate = async () => {
     if (!selected) return;
     try {
-      await invoke<ProjectInfo>('duplicate_project', { id: selected.id });
-      await loadProjects();
+      await duplicateProjectInStore(selected.id);
     } catch (e) {
       console.error('Duplicate failed:', e);
     }
@@ -348,13 +386,27 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
             <div className="wizard-header">
               <h3>Create New Project</h3>
               <div className="wizard-steps">
-                {['Basics', 'Proxy & Scope', 'Limits'].map((label, i) => (
-                  <div key={label} className={`wizard-step-indicator ${wizardStep === i ? 'active' : ''} ${wizardStep > i ? 'done' : ''}`}>
-                    <span className="wizard-step-num">{i + 1}</span>
-                    <span className="wizard-step-label">{label}</span>
-                    {i < 2 && <ArrowRight size={12} className="wizard-step-arrow" />}
-                  </div>
-                ))}
+                {['Basics', 'Proxy & Scope', 'Limits'].map((label, i) => {
+                  const reachable = i <= maxVisitedStep;
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      disabled={!reachable}
+                      onClick={() => goToStep(i)}
+                      className={`wizard-step-indicator ${wizardStep === i ? 'active' : ''} ${wizardStep > i ? 'done' : ''}`}
+                      style={{
+                        background: 'transparent', border: 'none', padding: 0,
+                        cursor: reachable ? 'pointer' : 'default',
+                        opacity: reachable ? 1 : 0.5,
+                      }}
+                    >
+                      <span className="wizard-step-num">{i + 1}</span>
+                      <span className="wizard-step-label">{label}</span>
+                      {i < 2 && <ArrowRight size={12} className="wizard-step-arrow" />}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -363,11 +415,30 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
               <div className="wizard-body">
                 <div className="launcher-form-group">
                   <label className="launcher-form-label">Project Name *</label>
-                  <input className="launcher-form-input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My Target Pentest" autoFocus />
+                  <input
+                    className="launcher-form-input"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="My Target Pentest"
+                    autoFocus
+                    aria-invalid={!!nameError && newName.length > 0}
+                  />
+                  {nameError && newName.length > 0 && (
+                    <div className="wizard-field-error"><AlertCircle size={11} /> {nameError}</div>
+                  )}
                 </div>
                 <div className="launcher-form-group">
                   <label className="launcher-form-label">Target URL</label>
-                  <input className="launcher-form-input" value={newTarget} onChange={(e) => setNewTarget(e.target.value)} placeholder="https://example.com" />
+                  <input
+                    className="launcher-form-input"
+                    value={newTarget}
+                    onChange={(e) => setNewTarget(e.target.value)}
+                    placeholder="https://example.com"
+                    aria-invalid={!!targetError}
+                  />
+                  {targetError && (
+                    <div className="wizard-field-error"><AlertCircle size={11} /> {targetError}</div>
+                  )}
                 </div>
                 <div className="launcher-form-group">
                   <label className="launcher-form-label">Description</label>
@@ -426,7 +497,19 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
               <div className="wizard-body">
                 <div className="launcher-form-group">
                   <label className="launcher-form-label">Proxy Port</label>
-                  <input className="launcher-form-input" type="number" value={proxyPort} onChange={(e) => setProxyPort(Number(e.target.value))} style={{ width: 120 }} />
+                  <input
+                    className="launcher-form-input"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={proxyPort}
+                    onChange={(e) => setProxyPort(Number(e.target.value))}
+                    style={{ width: 120 }}
+                    aria-invalid={!!proxyPortError}
+                  />
+                  {proxyPortError && (
+                    <div className="wizard-field-error"><AlertCircle size={11} /> {proxyPortError}</div>
+                  )}
                 </div>
 
                 <div className="launcher-form-group wizard-checkbox-group">
@@ -476,8 +559,19 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
               <div className="wizard-body">
                 <div className="launcher-form-group">
                   <label className="launcher-form-label">Max Traffic Entries</label>
-                  <input className="launcher-form-input" type="number" value={maxTraffic} onChange={(e) => setMaxTraffic(Number(e.target.value))} style={{ width: 160 }} />
+                  <input
+                    className="launcher-form-input"
+                    type="number"
+                    min={0}
+                    value={maxTraffic}
+                    onChange={(e) => setMaxTraffic(Number(e.target.value))}
+                    style={{ width: 160 }}
+                    aria-invalid={!!maxTrafficError}
+                  />
                   <span className="wizard-hint">Oldest entries are evicted when limit is reached. 0 = unlimited.</span>
+                  {maxTrafficError && (
+                    <div className="wizard-field-error"><AlertCircle size={11} /> {maxTrafficError}</div>
+                  )}
                 </div>
 
                 <div className="wizard-summary">
@@ -508,11 +602,19 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
                 </button>
               )}
               {wizardStep < 2 ? (
-                <button className="launcher-detail-btn open" onClick={() => setWizardStep(s => s + 1)} disabled={!newName.trim()}>
+                <button
+                  className="launcher-detail-btn open"
+                  onClick={advanceStep}
+                  disabled={(wizardStep === 0 && !step0Valid) || (wizardStep === 1 && !step1Valid)}
+                >
                   Next <ChevronRight size={13} />
                 </button>
               ) : (
-                <button className="launcher-detail-btn open" onClick={handleCreate} disabled={!newName.trim()}>
+                <button
+                  className="launcher-detail-btn open"
+                  onClick={handleCreate}
+                  disabled={!allValid}
+                >
                   <FolderPlus size={13} /> Create Project
                 </button>
               )}

@@ -84,6 +84,8 @@ pub fn run() {
             project::get_project_config,
             project::update_project_config,
             project::duplicate_project,
+            project::project_save_state,
+            project::project_load_state,
             project::get_memory_stats,
             proxy_commands::proxy_start,
             proxy_commands::proxy_stop,

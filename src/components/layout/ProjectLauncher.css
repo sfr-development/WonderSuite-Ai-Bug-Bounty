@@ -660,6 +660,19 @@
   display: block;
 }
 
+.wizard-field-error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--danger, #f87171);
+  margin-top: 4px;
+}
+
+.launcher-form-input[aria-invalid="true"] {
+  border-color: var(--danger, #f87171) !important;
+}
+
 /* Summary Panel */
 .wizard-summary {
   margin-top: 16px;

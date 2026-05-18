@@ -254,6 +254,51 @@ pub async fn update_project_config(id: String, config: ProjectConfig) -> Result<
     Ok(())
 }
 
+/// Snapshot proxy traffic to the project directory. Best-effort — silently
+/// returns Ok if the proxy state is not initialized, since this is called
+/// every 30 s by the auto-save loop and we don't want noisy errors when
+/// nothing is running yet.
+#[tauri::command]
+pub async fn project_save_state(id: String) -> Result<(), String> {
+    let project_dir = projects_dir().join(&id);
+    if !project_dir.exists() {
+        return Ok(());
+    }
+    if let Some(state) = crate::proxy_commands::get_global_proxy_state() {
+        let traffic = state.traffic.lock().await;
+        let data = serde_json::to_string(&*traffic).map_err(|e| e.to_string())?;
+        let tmp = project_dir.join("traffic.json.tmp");
+        fs::write(&tmp, data).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, project_dir.join("traffic.json")).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Restore proxy traffic from the project directory's traffic.json.
+/// Replaces the in-memory traffic Vec with the persisted entries. If the
+/// file is missing or malformed we leave memory untouched and return Ok —
+/// a fresh project just has nothing to load.
+#[tauri::command]
+pub async fn project_load_state(id: String) -> Result<(), String> {
+    let traffic_path = projects_dir().join(&id).join("traffic.json");
+    if !traffic_path.exists() {
+        return Ok(());
+    }
+    let data = match fs::read_to_string(&traffic_path) {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+    let entries: Vec<crate::proxy::state::TrafficEntry> = match serde_json::from_str(&data) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    if let Some(state) = crate::proxy_commands::get_global_proxy_state() {
+        let mut traffic = state.traffic.lock().await;
+        *traffic = entries;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn duplicate_project(id: String) -> Result<ProjectInfo, String> {
     let registry = load_registry();
