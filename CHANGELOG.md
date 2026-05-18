@@ -6,6 +6,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.17] — 2026-05-18
+
+### Fixed — AI agent could not see buttons inside iframes
+`Accessibility.getFullAXTree({})` only returns the main frame's tree, so
+buttons inside an auth iframe (Stripe Checkout, hCaptcha, OAuth pop-up,
+embedded admin panels) were invisible to `browser_snapshot` — every
+`browser_click` against such a button returned `STALE_REF`. Now:
+
+- `snapshot.rs::capture` walks `Page.getFrameTree`, collects every
+  child frame id, and issues one `getFullAXTree({ frameId })` per frame.
+- Each frame's subtree is appended to the snapshot under an
+  `--- iframe <id> ---` banner so the agent sees which subtree came
+  from which frame.
+- `SnapStats::merge` aggregates interactive / form / iframe / link
+  counts across all frames.
+- The existing ref system works unchanged because `backendNodeId` is
+  globally unique across a page; click coordinates are page-level.
+
+### Fixed — Pipeline cargo-lock drift on v0.3.16
+v0.3.16 shipped with Cargo.toml at 0.3.17 but Cargo.lock still at 0.3.15
+(the lock file wasn't refreshed after the version bump). The CI's
+`cargo check --locked` failed on all four platforms in 90 s. v0.3.17
+fixes this — Cargo.lock now reflects 0.3.17 (verified with
+`cargo check --locked`).
+
+### Added — Project Launcher: per-project folder view
+The project detail panel now lists every file inside the project
+directory (config.json, traffic.json, findings.json, sitemap.json,
+ui_state.json, notes.md, plus anything the agent has dropped). Each
+row shows kind tag / filename / size / modified time. Actions:
+
+- **Double-click** a file → reveal in OS file manager (Explorer on
+  Windows, Finder on macOS, xdg-open on Linux).
+- **Right-click** → context menu: Show in file manager / Open project
+  folder / Copy path.
+- **Open Folder** button — opens `<projectDir>` directly.
+- **Refresh** button — re-reads the directory.
+
+Two new Rust commands back this: `list_project_files(id)` and
+`reveal_in_file_manager(path, select)`.
+
+### Added — Settings → Outputs tab
+A new dedicated tab in the Settings nav showing every file the AI agent
+has written to disk (currently `~/.wondersuite/screenshots/*.jpg`).
+Each entry shows kind / filename / size / modified time. Actions:
+
+- **Reveal in file manager** per file.
+- **Delete** per file (with confirmation, path is canonicalised + must
+  start with `~/.wondersuite/` so a malicious tool result can't trick
+  us into deleting outside the sandbox).
+- **Clear screenshots** — wipes the whole `screenshots/` subdir.
+- **Open** button next to the storage root path — reveals
+  `~/.wondersuite/` in the file manager.
+- Filter input narrows the list by name or kind.
+
+Backed by three new Rust commands: `list_mcp_outputs`,
+`delete_mcp_output`, `clear_mcp_outputs`. The nav search picks up
+keywords like "screenshot", "delete", "storage" → jumps to this tab.
+
+### Internal
+- `src-tauri/src/mcp/browser/snapshot.rs` — multi-frame AX tree
+  enumeration via `Page.getFrameTree`
+- `src-tauri/src/project.rs` — `list_project_files`,
+  `reveal_in_file_manager`, `list_mcp_outputs`, `delete_mcp_output`,
+  `clear_mcp_outputs` + `McpOutputEntry` / `ProjectFileEntry` structs
+- `src-tauri/src/lib.rs` — registers the five new commands
+- `src/modules/settings/Settings.tsx` — new `McpOutputsPanel`, new
+  `outputs` tab + nav keywords
+- `src/components/layout/ProjectLauncher.tsx` — new `ProjectFolderView`
+  with right-click context menu
+
 ## [0.3.16] — 2026-05-18
 
 ### Big Overhaul — driven by a deep audit of every module

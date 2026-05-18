@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink } from 'lucide-react';
+import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink, Trash2 } from 'lucide-react';
 import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
@@ -87,7 +87,7 @@ function IdeIconComponent({ type, size = 20 }: { type: string; size?: number }) 
   }
 }
 
-type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance' | 'browser' | 'skill';
+type SettingsTab = 'general' | 'mcp' | 'outputs' | 'proxy' | 'appearance' | 'browser' | 'skill';
 
 
 interface McpToolEntry {
@@ -257,6 +257,9 @@ export function Settings() {
         <button className={`settings-nav-item ${tab === 'mcp' ? 'active' : ''}`} onClick={() => setTab('mcp')}>
           <Plug size={14} /> MCP Server
         </button>
+        <button className={`settings-nav-item ${tab === 'outputs' ? 'active' : ''}`} onClick={() => setTab('outputs')}>
+          <FolderOpen size={14} /> Outputs
+        </button>
         <button className={`settings-nav-item ${tab === 'proxy' ? 'active' : ''}`} onClick={() => setTab('proxy')}>
           <Shield size={14} /> Proxy
         </button>
@@ -376,6 +379,8 @@ export function Settings() {
           <GlobalScopeSettings />
           </>
         )}
+
+        {tab === 'outputs' && <McpOutputsPanel />}
 
         {tab === 'proxy' && (
           <ProxySettings proxyPort={proxyPort} onPortChange={setProxyPort} />
@@ -1284,11 +1289,163 @@ function GeneralSystemInfo() {
   );
 }
 
+// v0.3.17: MCP-output viewer — lists screenshots / saved files under
+// ~/.wondersuite/, shows the root path, lets the user delete individual
+// files or clear by kind, and reveals the folder in the OS file manager.
+interface McpOutputEntry {
+  kind: string;
+  path: string;
+  name: string;
+  size_bytes: number;
+  modified_unix: number;
+}
+interface McpOutputsListing {
+  root: string;
+  entries: McpOutputEntry[];
+  total_size_bytes: number;
+}
+
+function McpOutputsPanel() {
+  const [listing, setListing] = useState<McpOutputsListing | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState('');
+
+  const load = async () => {
+    setBusy(true);
+    try {
+      const r = await invoke<McpOutputsListing>('list_mcp_outputs');
+      setListing(r);
+    } catch (e) {
+      console.error('list_mcp_outputs failed', e);
+    }
+    setBusy(false);
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const deleteOne = async (path: string) => {
+    if (!confirm(`Delete this file?\n${path}`)) return;
+    try {
+      await invoke('delete_mcp_output', { path });
+      await load();
+    } catch (e) { alert(`Delete failed: ${e}`); }
+  };
+
+  const clearKind = async (kind: string) => {
+    if (!confirm(`Delete every ${kind} on disk? This cannot be undone.`)) return;
+    try {
+      const n = await invoke<number>('clear_mcp_outputs', { kind });
+      await load();
+      alert(`${n} file${n === 1 ? '' : 's'} removed.`);
+    } catch (e) { alert(`Clear failed: ${e}`); }
+  };
+
+  const reveal = async (path: string) => {
+    try { await invoke('reveal_in_file_manager', { path, select: true }); }
+    catch (e) { alert(`Open failed: ${e}`); }
+  };
+
+  const filtered = listing?.entries.filter(e =>
+    !filter || e.name.toLowerCase().includes(filter.toLowerCase()) || e.kind.includes(filter.toLowerCase())
+  ) || [];
+
+  const fmt = (b: number) =>
+    b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
+  const fmtDate = (u: number) => u ? new Date(u * 1000).toLocaleString() : '—';
+
+  const totalMb = listing ? listing.total_size_bytes / 1024 / 1024 : 0;
+
+  return (
+    <div className="settings-section">
+      <h2>MCP Outputs</h2>
+      <p>Files the AI agent writes to disk — screenshots, saved attachments. Listed per file with full path so you know exactly what to clear.</p>
+
+      {listing && (
+        <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+          <div className="settings-label">
+            Storage root
+            <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{listing.root}</span>
+          </div>
+          <button
+            className="settings-btn"
+            onClick={() => reveal(listing.root)}
+            title="Open this folder in your OS file manager"
+          >
+            <FolderOpen size={11} /> Open
+          </button>
+        </div>
+      )}
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Total on disk
+          <span>{listing ? `${filtered.length} of ${listing.entries.length} files shown · ${totalMb.toFixed(2)} MB total` : 'Loading...'}</span>
+        </div>
+        <button className="settings-btn" onClick={load} disabled={busy}>
+          <RefreshCw size={11} style={{ transform: busy ? 'rotate(180deg)' : undefined }} /> Refresh
+        </button>
+        <button className="settings-btn" onClick={() => clearKind('screenshot')} disabled={busy} title="Delete every screenshot">
+          <Trash2 size={11} /> Clear screenshots
+        </button>
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Filter
+          <span>Narrow the list by name or kind</span>
+        </div>
+        <input
+          className="settings-input"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="e.g. .jpg or screenshot"
+          style={{ minWidth: 180 }}
+        />
+      </div>
+
+      <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-0)', borderRadius: 6, marginTop: 8 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>
+            {listing ? 'No outputs found. They will appear here after the AI agent writes its first screenshot.' : 'Loading...'}
+          </div>
+        ) : filtered.map((e) => (
+          <div
+            key={e.path}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '60px 1fr 80px 120px 70px 70px',
+              gap: 8,
+              padding: '6px 10px',
+              borderBottom: '1px solid var(--border-0)',
+              fontSize: 11,
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ color: 'var(--text-3)', textTransform: 'uppercase', fontSize: 9 }}>{e.kind}</span>
+            <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.path}>
+              {e.name}
+            </span>
+            <span style={{ color: 'var(--text-3)' }}>{fmt(e.size_bytes)}</span>
+            <span style={{ color: 'var(--text-3)' }}>{fmtDate(e.modified_unix)}</span>
+            <button className="settings-btn" onClick={() => reveal(e.path)} title="Reveal in file manager">
+              <FolderOpen size={10} />
+            </button>
+            <button className="settings-btn" onClick={() => deleteOne(e.path)} title="Delete this file">
+              <Trash2 size={10} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // v0.3.16: indexed keyword search across all settings panels — types
 // "timeout" or "scope" and jumps the user to the right tab.
 const NAV_KEYWORDS: { tab: SettingsTab; words: string[] }[] = [
   { tab: 'general', words: ['general', 'autosave', 'timeout', 'request', 'cookie', 'ttl', 'response', 'size', 'redirect', 'notification', 'desktop', 'scope', 'in-scope', 'highlight', 'search', 'throttle', 'rate limit', 'debug', 'verbosity', 'reset', 'defaults'] },
   { tab: 'mcp', words: ['mcp', 'tool', 'ai', 'claude', 'cursor', 'windsurf', 'ide', 'port', 'integration'] },
+  { tab: 'outputs', words: ['outputs', 'screenshot', 'attachment', 'file', 'disk', 'storage', 'clear', 'delete', 'wondersuite folder', 'session output'] },
   { tab: 'proxy', words: ['proxy', 'tls', 'ssl', 'ca', 'cert', 'certificate', 'upstream', 'socks', 'intercept', 'match', 'replace', 'rule', 'listener', 'port'] },
   { tab: 'appearance', words: ['theme', 'color', 'accent', 'dark', 'light', 'font', 'scale', 'compact'] },
   { tab: 'browser', words: ['browser', 'chrome', 'chromium', 'download', 'install', 'launch'] },

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   FolderPlus, FolderOpen, Clock, Trash2, ExternalLink, FileText,
   Zap, Shield, Search, Flag, Settings, ChevronRight, ChevronLeft,
-  Globe, Lock, Radio, Copy, ArrowRight, AlertCircle,
+  Globe, Lock, Radio, Copy, ArrowRight, AlertCircle, RefreshCw,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ProjectInfo, ProjectType, CreateProjectOpts } from '../../types';
@@ -21,6 +21,148 @@ const PROJECT_TYPES: { id: ProjectType; label: string; icon: React.ReactNode; de
   { id: 'ctf', label: 'CTF', icon: <Flag size={16} />, desc: 'Capture the flag challenge' },
   { id: 'custom', label: 'Custom', icon: <Settings size={16} />, desc: 'Custom configuration' },
 ];
+
+// v0.3.17: per-project folder view. Lists the files inside
+// <projectDir> so the user knows what's on disk (config.json,
+// traffic.json, ui_state.json, notes.md, ...), can right-click to
+// reveal in their OS file manager, and refresh after closing the app.
+interface ProjectFileEntry {
+  name: string; path: string; size_bytes: number;
+  modified_unix: number; kind: string;
+}
+
+function ProjectFolderView({ projectId, projectPath }: { projectId: string; projectPath: string }) {
+  const [files, setFiles] = useState<ProjectFileEntry[]>([]);
+  const [menu, setMenu] = useState<{ x: number; y: number; file: ProjectFileEntry } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = await invoke<ProjectFileEntry[]>('list_project_files', { id: projectId });
+      setFiles(list);
+    } catch (e) {
+      console.warn('list_project_files failed:', e);
+      setFiles([]);
+    }
+    setLoading(false);
+  }, [projectId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const reveal = async (path: string, select: boolean = true) => {
+    try { await invoke('reveal_in_file_manager', { path, select }); }
+    catch (e) { console.warn('reveal failed:', e); }
+  };
+
+  const fmtSize = (b: number) =>
+    b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
+
+  const fmtDate = (u: number) => u ? new Date(u * 1000).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+
+  // Close right-click menu on any outside click.
+  useEffect(() => {
+    if (!menu) return;
+    const onClick = () => setMenu(null);
+    document.addEventListener('click', onClick, { once: true });
+    return () => document.removeEventListener('click', onClick);
+  }, [menu]);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+          Folder ({files.length} file{files.length === 1 ? '' : 's'})
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            className="launcher-detail-btn"
+            style={{ fontSize: 10, padding: '2px 6px' }}
+            onClick={() => reveal(projectPath, false)}
+            title="Open the project folder in your file manager"
+          >
+            <FolderOpen size={11} /> Open Folder
+          </button>
+          <button
+            className="launcher-detail-btn"
+            style={{ fontSize: 10, padding: '2px 6px' }}
+            onClick={() => void load()}
+            disabled={loading}
+            aria-label="Refresh file list"
+          >
+            <RefreshCw size={11} />
+          </button>
+        </div>
+      </div>
+      <div style={{ border: '1px solid var(--border-0)', borderRadius: 6, maxHeight: 200, overflowY: 'auto' }}>
+        {files.length === 0 ? (
+          <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 10 }}>
+            {loading ? 'Loading…' : 'No files yet — the project directory is fresh.'}
+          </div>
+        ) : files.map(f => (
+          <div
+            key={f.path}
+            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, file: f }); }}
+            onDoubleClick={() => reveal(f.path, true)}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '70px 1fr 70px 100px',
+              gap: 6,
+              padding: '4px 8px',
+              borderBottom: '1px solid var(--border-0)',
+              fontSize: 10,
+              cursor: 'context-menu',
+              alignItems: 'center',
+            }}
+            title={f.path}
+          >
+            <span style={{ color: 'var(--text-3)', textTransform: 'uppercase', fontSize: 8 }}>{f.kind}</span>
+            <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+            <span style={{ color: 'var(--text-3)', textAlign: 'right' }}>{fmtSize(f.size_bytes)}</span>
+            <span style={{ color: 'var(--text-3)' }}>{fmtDate(f.modified_unix)}</span>
+          </div>
+        ))}
+      </div>
+
+      {menu && (
+        <div
+          style={{
+            position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000,
+            background: 'var(--bg-1)', border: '1px solid var(--border-0)',
+            borderRadius: 6, minWidth: 200, padding: 4,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="launcher-detail-btn"
+            style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11, marginBottom: 2 }}
+            onClick={() => { void reveal(menu.file.path, true); setMenu(null); }}
+          >
+            <FolderOpen size={11} /> Show in file manager
+          </button>
+          <button
+            className="launcher-detail-btn"
+            style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11, marginBottom: 2 }}
+            onClick={() => { void reveal(projectPath, false); setMenu(null); }}
+          >
+            <FolderOpen size={11} /> Open project folder
+          </button>
+          <button
+            className="launcher-detail-btn"
+            style={{ width: '100%', justifyContent: 'flex-start', fontSize: 11 }}
+            onClick={() => {
+              navigator.clipboard.writeText(menu.file.path).catch(() => {});
+              setMenu(null);
+            }}
+          >
+            <Copy size={11} /> Copy path
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ProjectLauncher({ onOpen, onTempProject }: Props) {
   // v0.3.15: single source of truth for the project list. Previously the
@@ -359,6 +501,10 @@ export function ProjectLauncher({ onOpen, onTempProject }: Props) {
                     <div style={{ fontSize: 11, color: 'var(--text-1)', marginTop: 4 }}>{formatDate(selected.last_opened)}</div>
                   </div>
                 </div>
+
+                {!selected.is_temporary && selected.path && (
+                  <ProjectFolderView projectId={selected.id} projectPath={selected.path} />
+                )}
 
                 <div className="launcher-detail-actions">
                   <button className="launcher-detail-btn open" onClick={handleOpen}>
