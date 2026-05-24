@@ -1438,12 +1438,7 @@ pub async fn run_active_scan(
                 );
                 redirect_builder = redirect_builder.default_headers(default_headers);
 
-                if let Ok(resp) = redirect_builder
-                    .build()
-                    .unwrap_or_default()
-                    .get(&redirect_url)
-                    .send()
-                    .await
+                if let Ok(resp) = redirect_builder.build().unwrap_or_default().get(&redirect_url).send().await
                 {
                     bump_req!(live, total_requests, findings, all_request_logs, proxy_state);
                     let status = resp.status().as_u16();
