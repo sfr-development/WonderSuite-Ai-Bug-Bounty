@@ -1,23 +1,58 @@
-import { useState, useCallback, useEffect, useRef, Suspense } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { Titlebar } from './Titlebar';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { Splash } from './Splash';
 import { ProjectLauncher } from './ProjectLauncher';
 import { useAppStore } from '../../stores';
-import { useDetachedStore } from '../../stores/detachedStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { ContextMenu } from '../shared/ContextMenu';
-import { moduleMap, ModuleSkeleton } from './moduleMap';
+import { Loader2 } from 'lucide-react';
 import './Shell.css';
+
+const moduleMap: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
+  dashboard:  lazy(() => import('../../modules/dashboard/Dashboard').then(m => ({ default: m.Dashboard }))),
+  intercept:  lazy(() => import('../../modules/intercept/Intercept').then(m => ({ default: m.Intercept }))),
+  traffic:    lazy(() => import('../../modules/traffic/Traffic').then(m => ({ default: m.Traffic }))),
+  replay:     lazy(() => import('../../modules/replay/Replay').then(m => ({ default: m.Replay }))),
+  attack:     lazy(() => import('../../modules/attack/Attack').then(m => ({ default: m.Attack }))),
+  scan:       lazy(() => import('../../modules/scan/Scan').then(m => ({ default: m.Scan }))),
+  sitemap:    lazy(() => import('../../modules/sitemap/Sitemap').then(m => ({ default: m.Sitemap }))),
+  tokens:     lazy(() => import('../../modules/tokens/Tokens').then(m => ({ default: m.Tokens }))),
+  tools:      lazy(() => import('../../modules/tools/Tools').then(m => ({ default: m.Tools }))),
+  findings:   lazy(() => import('../../modules/findings/Findings').then(m => ({ default: m.Findings }))),
+  comparer:   lazy(() => import('../../modules/comparer/Comparer').then(m => ({ default: m.Comparer }))),
+  logger:     lazy(() => import('../../modules/logger/Logger').then(m => ({ default: m.Logger }))),
+  organizer:  lazy(() => import('../../modules/organizer/Organizer').then(m => ({ default: m.Organizer }))),
+  agent:      lazy(() => import('../../modules/agent/Agent').then(m => ({ default: m.Agent }))),
+  templates:  lazy(() => import('../../modules/templates/Templates').then(m => ({ default: m.Templates }))),
+  payloads:   lazy(() => import('../../modules/payloads/Payloads').then(m => ({ default: m.Payloads }))),
+  session:    lazy(() => import('../../modules/session/Session').then(m => ({ default: m.Session }))),
+  websocket:  lazy(() => import('../../modules/websocket/WebSocket').then(m => ({ default: m.WebSocket }))),
+  oast:       lazy(() => import('../../modules/oast/Oast').then(m => ({ default: m.Oast }))),
+  discovery:  lazy(() => import('../../modules/discovery/Discovery').then(m => ({ default: m.Discovery }))),
+  osint:      lazy(() => import('../../modules/osint/Osint').then(m => ({ default: m.Osint }))),
+  docs:       lazy(() => import('../../modules/docs/Docs').then(m => ({ default: m.Docs }))),
+  settings:   lazy(() => import('../../modules/settings/Settings').then(m => ({ default: m.Settings }))),
+};
+
+function ModuleSkeleton() {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flex: 1, color: 'var(--text-3)', gap: 8,
+    }}>
+      <Loader2 size={18} className="spin-animation" style={{ animation: 'spin 1s linear infinite' }} />
+      <span style={{ fontSize: 12 }}>Loading module…</span>
+    </div>
+  );
+}
 
 export function Shell() {
   const [splashDone, setSplashDone] = useState(false);
-  const { activeProject, closeProject, openProject, setActiveProject } = useProjectStore();
-  const configCorrupted = useProjectStore(s => s.configCorrupted);
-  const { activeModule, appearance, toasts, removeToast, addToast } = useAppStore();
-  const { detached, syncFromBackend, restoreLayout, onWindowEvent } = useDetachedStore();
+  const { activeProject, closeProject, setActiveProject } = useProjectStore();
+  const { activeModule, appearance, toasts, removeToast } = useAppStore();
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
   useKeyboardShortcuts();
   // IMPORTANT: this ref MUST be declared before any early returns below so the
@@ -27,58 +62,6 @@ export function Shell() {
   if (activeProject && !visitedRef.current.has(activeModule)) {
     visitedRef.current.add(activeModule);
   }
-
-  // v0.3.15: clear the visited-module ref when the project changes so
-  // modules from project A don't immediately re-mount when project B opens.
-  // Module-level zustand stores still need explicit reset (handled in
-  // projectStore.closeProject) — this ref is just the secondary aggravator.
-  const lastProjectIdRef = useRef<string | null>(null);
-  if (activeProject?.id !== lastProjectIdRef.current) {
-    visitedRef.current = new Set();
-    lastProjectIdRef.current = activeProject?.id ?? null;
-  }
-
-  // v0.3.15: auto-resume the last opened project after the splash. If the
-  // user explicitly closed the project (sets a "closed" flag), don't resume.
-  useEffect(() => {
-    if (!splashDone || activeProject) return;
-    try {
-      const explicitlyClosed = sessionStorage.getItem('ws_project_explicitly_closed') === '1';
-      if (explicitlyClosed) return;
-      const lastId = localStorage.getItem('ws_last_active_project_id');
-      if (lastId) {
-        // Fire-and-forget — if the project no longer exists, openProject
-        // silently fails and the launcher renders normally.
-        void openProject(lastId);
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [splashDone]);
-
-  // Bootstrap detached-window state: sync from backend (restart-safe) and
-  // restore the persisted layout once a project is open.
-  useEffect(() => {
-    if (!activeProject) return;
-    syncFromBackend();
-    restoreLayout();
-    const unlistenP = onWindowEvent();
-    return () => { unlistenP.then(u => u()); };
-  }, [activeProject, syncFromBackend, restoreLayout, onWindowEvent]);
-
-  // v0.3.15: surface config.json corruption so the user knows the project
-  // opened with default settings (port 8080, no scope, etc.) instead of
-  // their saved ones.
-  const warnedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!activeProject || !configCorrupted) return;
-    if (warnedRef.current === activeProject.id) return;
-    warnedRef.current = activeProject.id;
-    addToast({
-      type: 'warning',
-      title: 'Project config could not be read',
-      message: 'Settings reverted to defaults. Check config.json in the project directory.',
-    });
-  }, [activeProject, configCorrupted, addToast]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -111,15 +94,7 @@ export function Shell() {
   if (!activeProject) {
     return (
       <ProjectLauncher
-        onOpen={(project) => {
-          // v0.3.15: go through projectStore.openProject so the project's
-          // config.json gets loaded AND the auto-start settings (proxy,
-          // browser, intercept, scope) actually take effect. Previously we
-          // called setActiveProject directly and skipped the entire config
-          // pipeline — every "auto_*" toggle in the wizard was dead config.
-          void openProject(project.id);
-          try { sessionStorage.removeItem('ws_project_explicitly_closed'); } catch {}
-        }}
+        onOpen={(project) => setActiveProject(project)}
         onTempProject={() => setActiveProject({
           id: `temp-${Date.now()}`,
           name: 'Quick Session',
@@ -155,9 +130,6 @@ export function Shell() {
               {visited.map((modId) => {
                 const Mod = moduleMap[modId];
                 if (!Mod) return null;
-                // Detached modules render in their own window. Hide here so we
-                // don't double-mount and burn extra state-syncing cycles.
-                if (detached.has(modId)) return null;
                 const isActive = modId === activeModule;
                 return (
                   <div
@@ -176,29 +148,6 @@ export function Shell() {
                   </div>
                 );
               })}
-              {detached.has(activeModule) && (
-                <div className="shell-detached-placeholder">
-                  <div className="shell-detached-placeholder-inner">
-                    <div className="shell-detached-placeholder-title">
-                      This module is open in a separate window.
-                    </div>
-                    <div className="shell-detached-placeholder-actions">
-                      <button
-                        className="shell-detached-btn"
-                        onClick={() => useDetachedStore.getState().focus(activeModule)}
-                      >
-                        Focus window
-                      </button>
-                      <button
-                        className="shell-detached-btn accent"
-                        onClick={() => useDetachedStore.getState().redock(activeModule)}
-                      >
-                        Re-dock here
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
           <StatusBar

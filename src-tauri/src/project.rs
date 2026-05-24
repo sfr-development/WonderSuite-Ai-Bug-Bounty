@@ -254,78 +254,6 @@ pub async fn update_project_config(id: String, config: ProjectConfig) -> Result<
     Ok(())
 }
 
-/// Snapshot proxy traffic to the project directory. Best-effort — silently
-/// returns Ok if the proxy state is not initialized, since this is called
-/// every 30 s by the auto-save loop and we don't want noisy errors when
-/// nothing is running yet.
-#[tauri::command]
-pub async fn project_save_state(id: String) -> Result<(), String> {
-    let project_dir = projects_dir().join(&id);
-    if !project_dir.exists() {
-        return Ok(());
-    }
-    if let Some(state) = crate::proxy_commands::get_global_proxy_state() {
-        let traffic = state.traffic.lock().await;
-        let data = serde_json::to_string(&*traffic).map_err(|e| e.to_string())?;
-        let tmp = project_dir.join("traffic.json.tmp");
-        fs::write(&tmp, data).map_err(|e| e.to_string())?;
-        fs::rename(&tmp, project_dir.join("traffic.json")).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-/// v0.3.16: per-project UI state blob (Repeater tabs, port-scan config,
-/// scope) shuttled between frontend and disk. Atomic write via tmp+rename.
-/// Empty / missing blob is fine — caller treats as "fresh project".
-#[tauri::command]
-pub async fn project_save_state_blob(id: String, blob: String) -> Result<(), String> {
-    let project_dir = projects_dir().join(&id);
-    if !project_dir.exists() {
-        return Ok(());
-    }
-    let tmp = project_dir.join("ui_state.json.tmp");
-    fs::write(&tmp, blob).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, project_dir.join("ui_state.json")).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn project_load_state_blob(id: String) -> Result<Option<String>, String> {
-    let path = projects_dir().join(&id).join("ui_state.json");
-    if !path.exists() {
-        return Ok(None);
-    }
-    match fs::read_to_string(&path) {
-        Ok(s) => Ok(Some(s)),
-        Err(_) => Ok(None),
-    }
-}
-
-/// Restore proxy traffic from the project directory's traffic.json.
-/// Replaces the in-memory traffic Vec with the persisted entries. If the
-/// file is missing or malformed we leave memory untouched and return Ok —
-/// a fresh project just has nothing to load.
-#[tauri::command]
-pub async fn project_load_state(id: String) -> Result<(), String> {
-    let traffic_path = projects_dir().join(&id).join("traffic.json");
-    if !traffic_path.exists() {
-        return Ok(());
-    }
-    let data = match fs::read_to_string(&traffic_path) {
-        Ok(d) => d,
-        Err(_) => return Ok(()),
-    };
-    let entries: Vec<crate::proxy::state::TrafficEntry> = match serde_json::from_str(&data) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    if let Some(state) = crate::proxy_commands::get_global_proxy_state() {
-        let mut traffic = state.traffic.lock().await;
-        *traffic = entries;
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn duplicate_project(id: String) -> Result<ProjectInfo, String> {
     let registry = load_registry();
@@ -378,241 +306,26 @@ pub struct MemoryStats {
 pub async fn get_memory_stats() -> Result<MemoryStats, String> {
     let rss_mb = get_process_memory_mb();
 
-    let (traffic_entries, traffic_ram, ws_messages) = match crate::proxy_commands::get_global_proxy_state() {
+    let (traffic_entries, traffic_ram) = match crate::proxy_commands::get_global_proxy_state() {
         Some(state) => {
             let traffic = state.traffic.lock().await;
             let count = traffic.len();
             let ram_mb = (count * 2048) as f64 / (1024.0 * 1024.0);
-            drop(traffic);
-            let ws = state.websocket_messages.lock().await.len();
-            (count, ram_mb, ws)
+            (count, ram_mb)
         }
-        None => (0, 0.0, 0),
+        None => (0, 0.0),
     };
-
-    let scanner_count = match crate::scanner_commands::scanner_state() {
-        Some(s) => s.lock().await.scans.len(),
-        None => 0,
-    };
-    let intruder_count = match crate::intruder::intruder_state() {
-        Some(s) => s.lock().await.attacks.len(),
-        None => 0,
-    };
-    let cert_cache_size = crate::proxy_commands::get_global_ca().map(|c| c.cache_size()).unwrap_or(0);
-    let mcp_activity_count =
-        crate::mcp::activity::get_activity_stats().get("total").and_then(|v| v.as_u64()).unwrap_or(0)
-            as usize;
 
     Ok(MemoryStats {
         process_rss_mb: rss_mb,
         traffic_entries,
         traffic_ram_mb: traffic_ram,
-        scanner_count,
-        intruder_count,
-        cert_cache_size,
-        ws_messages,
-        mcp_activity_count,
+        scanner_count: 0,  // TODO: get from scanner state
+        intruder_count: 0, // TODO: get from intruder state
+        cert_cache_size: 0,
+        ws_messages: 0,
+        mcp_activity_count: 0,
     })
-}
-
-// v0.3.17: list the files inside a project directory for the launcher's
-// folder-view panel. Returns name, size, modified time, and a kind tag
-// so the UI can pick an icon / open handler without re-reading the disk.
-#[derive(Debug, Serialize)]
-pub struct ProjectFileEntry {
-    pub name: String,
-    pub path: String,
-    pub size_bytes: u64,
-    pub modified_unix: u64,
-    pub kind: String, // "config" | "traffic" | "findings" | "sitemap" | "notes" | "ui_state" | "other"
-}
-
-fn classify_project_file(name: &str) -> &'static str {
-    match name {
-        "config.json" => "config",
-        "traffic.json" => "traffic",
-        "findings.json" => "findings",
-        "sitemap.json" => "sitemap",
-        "notes.md" => "notes",
-        "ui_state.json" => "ui_state",
-        _ => "other",
-    }
-}
-
-#[tauri::command]
-pub async fn list_project_files(id: String) -> Result<Vec<ProjectFileEntry>, String> {
-    let dir = projects_dir().join(&id);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let read = fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    let mut out: Vec<ProjectFileEntry> = Vec::new();
-    for entry in read.flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
-        let name = entry.file_name().to_string_lossy().to_string();
-        // Hide our atomic-write tmp files so the user doesn't see flicker.
-        if name.ends_with(".tmp") {
-            continue;
-        }
-        let modified_unix = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        out.push(ProjectFileEntry {
-            path: entry.path().to_string_lossy().to_string(),
-            kind: classify_project_file(&name).to_string(),
-            size_bytes: meta.len(),
-            modified_unix,
-            name,
-        });
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(out)
-}
-
-/// Reveal a path in the OS file manager (Explorer / Finder / xdg-open).
-/// `select` controls whether the file itself is highlighted (Windows /
-/// macOS) or just the parent folder is opened.
-#[tauri::command]
-pub async fn reveal_in_file_manager(path: String, select: Option<bool>) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    if !p.exists() {
-        return Err(format!("Path does not exist: {}", path));
-    }
-    let select_file = select.unwrap_or(true);
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = std::process::Command::new("explorer");
-        if select_file && p.is_file() {
-            cmd.arg(format!("/select,{}", p.to_string_lossy()));
-        } else {
-            cmd.arg(p.as_os_str());
-        }
-        cmd.spawn().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut cmd = std::process::Command::new("open");
-        if select_file && p.is_file() {
-            cmd.arg("-R").arg(&p);
-        } else {
-            cmd.arg(&p);
-        }
-        cmd.spawn().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        let target = if select_file && p.is_file() { p.parent().unwrap_or(&p).to_path_buf() } else { p };
-        std::process::Command::new("xdg-open").arg(&target).spawn().map_err(|e| e.to_string())?;
-        Ok(())
-    }
-}
-
-// v0.3.17: enumerate user-visible MCP / browser outputs on disk so the
-// Settings panel can list them, show paths, and let the user delete.
-// Today this covers ~/.wondersuite/screenshots/. As we add more output
-// dirs (downloads, exported reports), append them to the SOURCES array.
-#[derive(Debug, Serialize)]
-pub struct McpOutputEntry {
-    pub kind: String, // "screenshot" | "download" | ...
-    pub path: String,
-    pub name: String,
-    pub size_bytes: u64,
-    pub modified_unix: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct McpOutputsListing {
-    pub root: String, // absolute path to .wondersuite for the user
-    pub entries: Vec<McpOutputEntry>,
-    pub total_size_bytes: u64,
-}
-
-fn wondersuite_root() -> PathBuf {
-    let home = dirs_next().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".wondersuite")
-}
-
-#[tauri::command]
-pub async fn list_mcp_outputs() -> Result<McpOutputsListing, String> {
-    let root = wondersuite_root();
-    let mut entries: Vec<McpOutputEntry> = Vec::new();
-    let mut total: u64 = 0;
-
-    const SOURCES: &[(&str, &str)] = &[("screenshots", "screenshot")];
-    for (subdir, kind) in SOURCES {
-        let dir = root.join(subdir);
-        let Ok(read) = fs::read_dir(&dir) else { continue };
-        for entry in read.flatten() {
-            let Ok(meta) = entry.metadata() else { continue };
-            if !meta.is_file() {
-                continue;
-            }
-            let modified_unix = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let size = meta.len();
-            total += size;
-            entries.push(McpOutputEntry {
-                kind: (*kind).to_string(),
-                path: entry.path().to_string_lossy().to_string(),
-                name: entry.file_name().to_string_lossy().to_string(),
-                size_bytes: size,
-                modified_unix,
-            });
-        }
-    }
-
-    // Newest first — matches what the user usually wants to see.
-    entries.sort_by(|a, b| b.modified_unix.cmp(&a.modified_unix));
-
-    Ok(McpOutputsListing { root: root.to_string_lossy().to_string(), entries, total_size_bytes: total })
-}
-
-/// Delete a single output file. Path must be inside ~/.wondersuite/ —
-/// we reject anything else to avoid the path-traversal risk of the
-/// frontend forwarding a maliciously crafted path.
-#[tauri::command]
-pub async fn delete_mcp_output(path: String) -> Result<(), String> {
-    let root = wondersuite_root();
-    let candidate = PathBuf::from(&path);
-    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
-    let canonical_target = candidate.canonicalize().map_err(|e| e.to_string())?;
-    if !canonical_target.starts_with(&canonical_root) {
-        return Err("Refused: path is outside ~/.wondersuite/".into());
-    }
-    fs::remove_file(&canonical_target).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Delete every file under a known output subdirectory. `kind` matches
-/// the keys exposed by `list_mcp_outputs` ("screenshot"). Subdir itself
-/// is kept so future writes don't have to recreate it.
-#[tauri::command]
-pub async fn clear_mcp_outputs(kind: String) -> Result<u32, String> {
-    let subdir = match kind.as_str() {
-        "screenshot" => "screenshots",
-        _ => return Err(format!("Unknown output kind: {}", kind)),
-    };
-    let dir = wondersuite_root().join(subdir);
-    let Ok(read) = fs::read_dir(&dir) else { return Ok(0) };
-    let mut deleted = 0u32;
-    for entry in read.flatten() {
-        if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
-            if fs::remove_file(entry.path()).is_ok() {
-                deleted += 1;
-            }
-        }
-    }
-    Ok(deleted)
 }
 
 #[cfg(target_os = "windows")]

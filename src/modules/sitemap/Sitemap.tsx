@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Globe, Folder, FileText, FileCode, Palette, 
 import { VisualMap } from './VisualMap';
 import { MermaidView } from './MermaidView';
 import { useAppStore } from '../../stores';
+import { HttpViewer } from '../../components/shared/HttpViewer';
 import './Sitemap.css';
 
 export interface TrafficEntryData {
@@ -65,36 +66,6 @@ function detectLang(mime?: string, path?: string): string {
   return '';
 }
 
-function highlightCode(code: string, lang: string): React.ReactElement[] {
-  return code.split('\n').map((line, i) => {
-    let el: React.ReactElement;
-    if (lang === 'js' || lang === 'json') {
-      el = <span dangerouslySetInnerHTML={{ __html: line
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/(\b(?:function|const|let|var|return|if|else|for|while|class|import|export|from|new|this|async|await|try|catch|throw|typeof|instanceof|switch|case|break|default|continue|do|in|of|yield|null|undefined|true|false|NaN|Infinity)\b)/g, '<span style="color:#c678dd">$1</span>')
-        .replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g, '<span style="color:#98c379">$1</span>')
-        .replace(/(\b\d+\.?\d*\b)/g, '<span style="color:#d19a66">$1</span>')
-        .replace(/(\/\/.*$)/gm, '<span style="color:#5c6370;font-style:italic">$1</span>')
-      }} />;
-    } else if (lang === 'css') {
-      el = <span dangerouslySetInnerHTML={{ __html: line
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/([.#]?[a-zA-Z_][\w-]*)(\s*\{)/g, '<span style="color:#e06c75">$1</span>$2')
-        .replace(/(\b(?:px|em|rem|%|vh|vw|fr|s|ms|deg)\b)/g, '<span style="color:#d19a66">$1</span>')
-        .replace(/(#[0-9a-fA-F]{3,8}\b)/g, '<span style="color:#98c379">$1</span>')
-      }} />;
-    } else if (lang === 'html' || lang === 'xml') {
-      el = <span dangerouslySetInnerHTML={{ __html: line
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/(&lt;\/?\w+)/g, '<span style="color:#e06c75">$1</span>')
-        .replace(/(\w+)=("[^"]*")/g, '<span style="color:#d19a66">$1</span>=<span style="color:#98c379">$2</span>')
-      }} />;
-    } else {
-      el = <span>{line}</span>;
-    }
-    return <div key={i} className="sitemap-code-line"><span className="sitemap-code-num">{i+1}</span>{el}</div>;
-  });
-}
 
 /* ─── Code Beautifier ─── */
 function beautifyCode(code: string, lang: string): string {
@@ -636,8 +607,8 @@ export function Sitemap() {
                           {copied?<Check size={11}/>:<Copy size={11}/>} <span>{copied?'Copied':'Copy'}</span>
                         </button>
                       </div>
-                      <div className="sitemap-code-scroll">
-                        {highlightCode(entry.request_headers+(entry.request_body?'\n\n'+entry.request_body:''), detectLang(entry.mime_type, selectedNode?.name))}
+                      <div className="sitemap-code-scroll" style={{ padding: 0 }}>
+                        <HttpViewer value={entry.request_headers + (entry.request_body ? `\n\n${entry.request_body}` : '')} mimeType={entry.mime_type} />
                       </div>
                     </div>
                   ) : <div style={{padding:20,textAlign:'center',color:'var(--text-3)',fontSize:11}}>No request data available</div>
@@ -679,14 +650,19 @@ export function Sitemap() {
                           })()} alt="Preview" style={{maxWidth:'100%',maxHeight:300,objectFit:'contain',borderRadius:4,background:'var(--bg-2)'}} onError={(e)=>{(e.target as HTMLElement).style.display='none';}}/>
                         </div>
                       )}
-                      <div className="sitemap-code-scroll">
+                      <div className="sitemap-code-scroll" style={{ padding: 0 }}>
                         {(() => {
                           const lang = detectLang(selectedNode?.mime_type, selectedNode?.name);
                           const hdrs = entry.response_headers || '';
                           let body = entry.response_body || '';
                           if (formatted && lang) body = beautifyCode(body, lang);
-                          const full = hdrs + (body ? '\n\n' + body : '');
-                          return highlightCode(full, lang);
+                          return (
+                            <HttpViewer 
+                              value={hdrs + (body ? '\n\n' + body : '')} 
+                              mimeType={selectedNode?.mime_type} 
+                              fileName={selectedNode?.name} 
+                            />
+                          );
                         })()}
                       </div>
                     </div>

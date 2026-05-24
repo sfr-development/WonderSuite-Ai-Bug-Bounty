@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Crosshair, Play, Square, Pause, Download, Plus, Trash2, Zap, Target, Hash, Key, ListPlus, Timer } from 'lucide-react';
 import { useAppStore } from '../../stores';
-import { notifyError } from '../../utils/notify';
+import { HttpViewer } from '../../components/shared/HttpViewer';
 import './Attack.css';
 
 interface PayloadProcessor { processor_type: string; value?: string; replace_with?: string; }
@@ -83,8 +83,45 @@ export function Attack() {
   const [sortKey, setSortKey] = useState<string>('id');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
+  const [splitWidth, setSplitWidth] = useState(60);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    const container = document.querySelector('.attack-results-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const percentage = ((e.clientX - rect.left) / rect.width) * 100;
+    if (percentage > 20 && percentage < 80) {
+      setSplitWidth(percentage);
+    }
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    } else {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { pendingSendTo, clearSendTo, isInScope, globalScope, addToast } = useAppStore();
+  const { pendingSendTo, clearSendTo } = useAppStore();
 
 
   useEffect(() => {
@@ -137,22 +174,6 @@ export function Attack() {
   };
 
   const startAttack = async () => {
-    // v0.3.16: scope guard — parse the Host header from the request template
-    // and refuse to attack a host outside the project's scope.
-    if (globalScope.length > 0) {
-      const hostLine = requestTemplate.split(/\r?\n/).find((l) => /^host\s*:/i.test(l));
-      const host = hostLine?.split(':').slice(1).join(':').trim() ?? '';
-      const guessUrl = host ? `https://${host}` : '';
-      if (guessUrl && !isInScope(guessUrl)) {
-        addToast({
-          title: 'Target out of scope',
-          message: `${host} is outside the active project's scope. Add it in Settings → General or change the Host header.`,
-          type: 'error',
-        });
-        return;
-      }
-    }
-
     const sets = [...payloadSets];
     if (sets[activePayloadIdx]) {
       sets[activePayloadIdx] = { ...sets[activePayloadIdx], values: payloadText.split('\n').filter(l => l.trim()) };
@@ -178,7 +199,7 @@ export function Attack() {
       setTab('results');
       startPolling(id);
     } catch (err) {
-      notifyError('Attack start failed', err);
+      console.error('Attack start failed:', err);
     }
   };
 
@@ -298,7 +319,7 @@ export function Attack() {
         setTurboSummary(data);
       }
     } catch (err: any) {
-      notifyError('Turbo attack failed', err);
+      console.error('Turbo failed:', err);
       setTurboSummary({ error: err?.toString() });
     } finally {
       setTurboRunning(false);
@@ -539,8 +560,8 @@ export function Attack() {
                 {results.length} results · {results.filter(r => r.grep_match).length} grep matches
               </span>
             </div>
-            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-              <div className="attack-results-table">
+            <div className="attack-results-container" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              <div className="attack-results-table" style={{ flex: `0 0 ${selectedResult ? splitWidth : 100}%` }}>
                 <table>
                   <thead>
                     <tr>
@@ -572,33 +593,43 @@ export function Attack() {
                 </table>
               </div>
               {selectedResult && (
-                <div className="attack-result-detail">
-                  <div className="attack-result-detail-header">
-                    <span>#{selectedResult.id} — <span className="attack-payload-cell">{selectedResult.payload}</span></span>
-                    <button className="attack-mark-btn" onClick={() => setSelectedResult(null)}>×</button>
-                  </div>
-                  <div className="attack-result-detail-meta">
-                    <span>Status: <strong>{selectedResult.status}</strong></span>
-                    <span>Length: <strong>{selectedResult.length}</strong></span>
-                    <span>Time: <strong>{selectedResult.time_ms}ms</strong></span>
-                  </div>
-                  <div className="attack-result-detail-section">
-                    <label>Response Headers</label>
-                    <pre className="attack-detail-pre">{selectedResult.response_headers || '(none)'}</pre>
-                  </div>
-                  <div className="attack-result-detail-section">
-                    <label>Response Body</label>
-                    <pre className="attack-detail-pre">{selectedResult.response_body_preview || '(empty)'}</pre>
-                  </div>
-                  {Object.entries(selectedResult.grep_extracts).length > 0 && (
-                    <div className="attack-result-detail-section">
-                      <label>Grep Extracts</label>
-                      {Object.entries(selectedResult.grep_extracts).map(([k, v]) => (
-                        <div key={k} className="attack-extract-row"><strong>{k}:</strong> <span className="attack-reflected">{v}</span></div>
-                      ))}
+                <>
+                  <div className="attack-splitter" onMouseDown={handleMouseDown} />
+                  <div className="attack-result-detail" style={{ flex: '1 1 0%', minWidth: 0 }}>
+                    <div className="attack-result-detail-header">
+                      <span>#{selectedResult.id} — <span className="attack-payload-cell">{selectedResult.payload}</span></span>
+                      <button className="attack-mark-btn" onClick={() => setSelectedResult(null)}>×</button>
                     </div>
-                  )}
-                </div>
+                    <div className="attack-result-detail-meta">
+                      <span>Status: <strong>{selectedResult.status}</strong></span>
+                      <span>Length: <strong>{selectedResult.length}</strong></span>
+                      <span>Time: <strong>{selectedResult.time_ms}ms</strong></span>
+                    </div>
+                    <div className="attack-result-detail-section" style={{ minHeight: 80, display: 'flex', flexDirection: 'column' }}>
+                      <label>Response Headers</label>
+                      <div style={{ flex: 1, border: '1px solid var(--border-0)', borderRadius: 'var(--radius-s)', overflow: 'hidden' }}>
+                        <HttpViewer value={selectedResult.response_headers || '(none)'} />
+                      </div>
+                    </div>
+                    <div className="attack-result-detail-section" style={{ minHeight: 180, display: 'flex', flexDirection: 'column', flex: 1 }}>
+                      <label>Response Body</label>
+                      <div style={{ flex: 1, border: '1px solid var(--border-0)', borderRadius: 'var(--radius-s)', overflow: 'hidden' }}>
+                        <HttpViewer 
+                          value={selectedResult.response_body_preview || '(empty)'} 
+                          mimeType={selectedResult.response_headers?.match(/content-type:\s*([^\s;]+)/i)?.[1]} 
+                        />
+                      </div>
+                    </div>
+                    {Object.entries(selectedResult.grep_extracts).length > 0 && (
+                      <div className="attack-result-detail-section">
+                        <label>Grep Extracts</label>
+                        {Object.entries(selectedResult.grep_extracts).map(([k, v]) => (
+                          <div key={k} className="attack-extract-row"><strong>{k}:</strong> <span className="attack-reflected">{v}</span></div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </div>

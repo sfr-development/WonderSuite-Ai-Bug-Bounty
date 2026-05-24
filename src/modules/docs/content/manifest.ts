@@ -37,7 +37,6 @@ export const DOC_GROUPS: DocGroup[] = [
       { slug: 'repeater', title: 'Repeater' },
       { slug: 'intruder', title: 'Intruder' },
       { slug: 'scanner', title: 'Scanner' },
-      { slug: 'ports', title: 'Ports' },
       { slug: 'websocket', title: 'WebSocket' },
       { slug: 'oast', title: 'OAST' },
     ],

@@ -15,10 +15,10 @@ jobs:
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
@@ -36,9 +36,9 @@ jobs:
     name: Rust (check + fmt + clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - name: Install Linux deps for Tauri + boring-sys2 + pnet (libpcap-dev)
+      - name: Install Linux deps for Tauri + boring-sys2
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -50,8 +50,7 @@ jobs:
             nasm \
             cmake \
             clang \
-            libclang-dev \
-            libpcap-dev
+            libclang-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

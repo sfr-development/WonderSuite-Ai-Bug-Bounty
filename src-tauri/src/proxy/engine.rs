@@ -700,6 +700,19 @@ impl ProxyEngine {
             String::from_utf8_lossy(&resp_body).to_string()
         };
 
+        let mut source = "proxy".to_string();
+        let mut request_headers_cleaned = String::new();
+        for line in request_headers.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                if k.trim().to_lowercase() == "x-wondersuite-source" {
+                    source = v.trim().to_string();
+                    continue;
+                }
+            }
+            request_headers_cleaned.push_str(line);
+            request_headers_cleaned.push_str("\r\n");
+        }
+
         self.state
             .add_traffic(TrafficEntry {
                 id: self.state.next_id(),
@@ -714,11 +727,11 @@ impl ProxyEngine {
                 response_length: resp_body.len(),
                 response_time_ms: elapsed_ms,
                 mime_type: mime,
-                request_headers: request_headers.to_string(),
+                request_headers: request_headers_cleaned,
                 request_body: request_body.to_string(),
                 response_headers: resp_headers_str,
                 response_body: stored_body,
-                source: "proxy".into(),
+                source: source.into(),
                 notes: String::new(),
                 color: String::new(),
             })
@@ -810,64 +823,37 @@ impl ProxyEngine {
         let m =
             method.parse::<wreq::Method>().map_err(|e| format!("Invalid HTTP method '{}': {}", method, e))?;
 
-        // App-level retry-once on transient h2 errors. wreq has its own
-        // `http2_max_retry_count(2)` but doesn't retry every variant of
-        // "stream error received: unspecific protocol error" we see in the
-        // wild — particularly after a server-initiated GOAWAY mid-handshake.
-        // A second attempt almost always succeeds because the stale pooled
-        // connection got evicted by the first failure.
-        let attempts = 2;
-        let mut last_err: Option<wreq::Error> = None;
-        for attempt in 0..attempts {
-            let client = self.impersonate_client.client().await;
-            let mut builder = client.request(m.clone(), url);
+        let client = self.impersonate_client.client().await;
+        let mut builder = client.request(m, url);
 
-            for (k, v) in headers {
-                let lower = k.to_lowercase();
-                if HOP_BY_HOP_HEADERS.contains(&lower.as_str()) {
-                    continue;
-                }
-                builder = builder.header(k.as_str(), v.as_str());
+        for (k, v) in headers {
+            let lower = k.to_lowercase();
+            if HOP_BY_HOP_HEADERS.contains(&lower.as_str()) {
+                continue;
             }
-
-            if !body.is_empty() {
-                builder = builder.body(body.to_vec());
-            }
-
-            match builder.send().await {
-                Ok(resp) => {
-                    let status = resp.status().as_u16();
-                    let hdrs: Vec<(String, String)> = resp
-                        .headers()
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                        .collect();
-                    return match resp.bytes().await {
-                        Ok(b) => Ok((status, hdrs, b.to_vec())),
-                        Err(e) => Err(wreq_err_chain("body", &e).into()),
-                    };
-                }
-                Err(e) => {
-                    let chain = wreq_err_chain("send", &e);
-                    let is_h2_transient = is_h2_transient_error(&chain);
-                    if is_h2_transient && attempt + 1 < attempts {
-                        // Pause briefly so the next request doesn't race the
-                        // pool eviction triggered by this failure.
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        last_err = Some(e);
-                        continue;
-                    }
-                    return Err(chain.into());
-                }
-            }
+            builder = builder.header(k.as_str(), v.as_str());
         }
 
-        // Unreachable in practice — the loop either returns Ok or Err on the
-        // final iteration. Surface the last error just in case.
-        Err(last_err
-            .map(|e| wreq_err_chain("send", &e))
-            .unwrap_or_else(|| "forward_via_impersonate: exhausted retries".into())
-            .into())
+        if !body.is_empty() {
+            builder = builder.body(body.to_vec());
+        }
+
+        let resp = match builder.send().await {
+            Ok(r) => r,
+            Err(e) => return Err(wreq_err_chain("send", &e).into()),
+        };
+        let status = resp.status().as_u16();
+        let hdrs: Vec<(String, String)> = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        let resp_body = match resp.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => return Err(wreq_err_chain("body", &e).into()),
+        };
+
+        Ok((status, hdrs, resp_body))
     }
 
     async fn handle_websocket_upgrade<W: AsyncWriteExt + Unpin>(
@@ -1124,6 +1110,7 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
     "upgrade",
     "host",
     "accept-encoding", // MUST strip: reqwest disables auto-decompress when set explicitly
+    "x-wondersuite-source",
 ];
 
 fn parse_host_port(target: &str, default_port: u16) -> (String, u16) {
@@ -1170,28 +1157,4 @@ fn wreq_err_chain(stage: &str, e: &wreq::Error) -> String {
         }
     }
     out
-}
-
-/// Best-effort string match for transient HTTP/2 errors that benefit from
-/// a one-shot retry on a fresh pooled connection. wreq's typed error tree
-/// hides h2's internal error codes behind `SendRequest`/`Body` variants, so
-/// we sniff the formatted chain. Patterns are matched case-insensitively
-/// because some error sources camel-case their text.
-#[cfg(not(target_os = "linux"))]
-fn is_h2_transient_error(chain: &str) -> bool {
-    let lower = chain.to_ascii_lowercase();
-    // "stream error received: unspecific protocol error detected" (h2 lib),
-    // "REFUSED_STREAM" / "PROTOCOL_ERROR" (h2 typed errors), "go away" after
-    // server-initiated shutdown, "broken pipe" / "connection reset" / "eof"
-    // on a pooled socket the peer already closed.
-    lower.contains("unspecific protocol error")
-        || lower.contains("protocol_error")
-        || lower.contains("refused_stream")
-        || lower.contains("refused stream")
-        || lower.contains("go away")
-        || lower.contains("goaway")
-        || lower.contains("http2 error")
-        || lower.contains("connection reset")
-        || lower.contains("broken pipe")
-        || lower.contains("unexpected eof")
 }

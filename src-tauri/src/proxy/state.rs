@@ -4,27 +4,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
-// v0.3.10: compile-once cache for `InterceptionRuleType::UrlRegex` and
-// `apply_replacement` regex rules. See `compiled_url_regex` below.
-static REGEX_CACHE: once_cell::sync::Lazy<std::sync::RwLock<HashMap<String, regex::Regex>>> =
-    once_cell::sync::Lazy::new(|| std::sync::RwLock::new(HashMap::new()));
-
-/// Compile `pattern` once and reuse it on subsequent calls. Returns `None`
-/// (caller treats as no-match) when the pattern is invalid — failure here
-/// must NOT crash a proxy request.
-fn compiled_url_regex(pattern: &str) -> Option<regex::Regex> {
-    if let Ok(guard) = REGEX_CACHE.read() {
-        if let Some(r) = guard.get(pattern) {
-            return Some(r.clone());
-        }
-    }
-    let re = regex::Regex::new(pattern).ok()?;
-    if let Ok(mut guard) = REGEX_CACHE.write() {
-        guard.insert(pattern.to_string(), re.clone());
-    }
-    Some(re)
-}
-
 /// A captured HTTP request/response pair for the traffic log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficEntry {
@@ -300,61 +279,7 @@ impl ProxyState {
                 target: InterceptionTarget::Both,
                 action: "passthrough".into(),
             },
-            // v0.3.10: skip 3rd-party tracker / ad / analytics noise so the
-            // traffic log isn't 50% Google + Facebook telemetry. Researcher
-            // workflows like proxy_get_traffic / proxy_search_traffic / the
-            // Sitemap view become 2-3x more usable on real-world targets.
-            // Disabled-by-default rule the user can flip off if they're
-            // *specifically* auditing a tracker integration.
-            Self::tracker_skip_rule(),
         ]
-    }
-
-    fn tracker_skip_rule() -> InterceptionRule {
-        // Regex matches against the full URL. Anchored on host segments so
-        // we don't accidentally match `legitimate-doubleclick-analyzer.com`.
-        // Update this list deliberately — it's the curated set of high-
-        // traffic, low-value-to-pentester third-party hosts.
-        let pattern = concat!(
-            r"https?://(?:[^/]*\.)?(?:",
-            "doubleclick\\.net|googletagmanager\\.com|googletagservices\\.com|",
-            "google-analytics\\.com|googleadservices\\.com|googlesyndication\\.com|",
-            "analytics\\.google\\.com|stats\\.g\\.doubleclick\\.net|",
-            "facebook\\.com/tr|connect\\.facebook\\.net|",
-            "bat\\.bing\\.com|bat\\.bing\\.net|clarity\\.ms|",
-            "snap\\.licdn\\.com|px\\.ads\\.linkedin\\.com|",
-            "redditstatic\\.com|alb\\.reddit\\.com|pixel-config\\.reddit\\.com|",
-            "track\\.adform\\.net|s2\\.adform\\.net|",
-            "pixel\\.byspotify\\.com|pixels\\.spotify\\.com|",
-            "beacon-v2\\.helpscout\\.net|",
-            "integrations\\.etrusted\\.com|",
-            "track\\.papierkram\\.de|",
-            "hotjar\\.com|static\\.hotjar\\.com|",
-            "fullstory\\.com|edge\\.fullstory\\.com|",
-            "mixpanel\\.com|api\\.mixpanel\\.com|",
-            "segment\\.io|api\\.segment\\.io|cdn\\.segment\\.com|",
-            "amplitude\\.com|api\\.amplitude\\.com|",
-            "sentry\\.io|.*\\.ingest\\.sentry\\.io|",
-            "newrelic\\.com|bam\\.nr-data\\.net|js-agent\\.newrelic\\.com|",
-            "datadog\\.com|.*\\.datadoghq\\.com|",
-            "intercom\\.io|widget\\.intercom\\.io|api-iam\\.intercom\\.io|",
-            "usercentrics\\.eu|api\\.usercentrics\\.eu|",
-            "youtube-nocookie\\.com|",
-            "scorecardresearch\\.com|",
-            "criteo\\.com|criteo\\.net|",
-            "taboola\\.com|outbrain\\.com|",
-            "appsflyer\\.com|adjust\\.com|",
-            "dwin1\\.com",
-            r")(?:/|$|\?)",
-        );
-        InterceptionRule {
-            id: "skip-trackers".into(),
-            enabled: true,
-            name: "Skip 3rd-party trackers/ads/analytics".into(),
-            rule_type: InterceptionRuleType::UrlRegex { pattern: pattern.into() },
-            target: InterceptionTarget::Both,
-            action: "passthrough".into(),
-        }
     }
 
     pub fn next_id(&self) -> u64 {
@@ -458,14 +383,7 @@ impl ProxyState {
         match rule_type {
             InterceptionRuleType::UrlContains { pattern } => url.contains(pattern.as_str()),
             InterceptionRuleType::UrlRegex { pattern } => {
-                // v0.3.10: compile-once cache. Previously every request
-                // through the proxy would `regex::Regex::new(pattern)` for
-                // every URL-regex rule — 5 rules at 500 req/s = 2500
-                // recompilations/s. The new default `skip-trackers` rule is
-                // an 80-host alternation that's expensive to compile, so
-                // this matters even more. Cache is keyed by the pattern
-                // string so multiple distinct rules each cache their own.
-                compiled_url_regex(pattern).map(|r| r.is_match(url)).unwrap_or(false)
+                regex::Regex::new(pattern).map(|r| r.is_match(url)).unwrap_or(false)
             }
             InterceptionRuleType::HostEquals { host: h } => host.eq_ignore_ascii_case(h),
             InterceptionRuleType::MethodEquals { method: m } => method.eq_ignore_ascii_case(m),
@@ -536,22 +454,8 @@ impl ProxyState {
     }
 
     /// Apply match & replace rules to a response.
-    ///
-    /// v0.3.10: previously this function did an unconditional UTF-8 lossy
-    /// round-trip on every response body even when zero `response_body` rules
-    /// were active — `String::from_utf8_lossy(body).to_string().into_bytes()`
-    /// silently replaces invalid UTF-8 bytes with `U+FFFD`, corrupting
-    /// images, gzip blobs, protobuf, SHA-pinned downloads. Fix: only enter
-    /// the lossy path when there's actually an enabled `response_body` rule
-    /// that COULD match (and apply it directly without re-encoding for
-    /// headers, which are always valid UTF-8).
     pub async fn apply_match_replace_response(&self, headers: &mut String, body: &mut Vec<u8>) {
         let rules = self.match_replace_rules.read().await;
-
-        // Two passes: (1) header rules — always safe. (2) body rules — only
-        // if an enabled response_body rule actually exists, otherwise we
-        // skip the round-trip entirely and leave `body` untouched.
-        let mut has_body_rule = false;
         for rule in rules.iter() {
             if !rule.enabled {
                 continue;
@@ -559,6 +463,7 @@ impl ProxyState {
             if rule.direction != "response" && rule.direction != "both" {
                 continue;
             }
+
             match rule.target.as_str() {
                 "response_header" => {
                     *headers = self.apply_replacement(
@@ -569,46 +474,25 @@ impl ProxyState {
                     );
                 }
                 "response_body" => {
-                    has_body_rule = true;
+                    let body_str = String::from_utf8_lossy(body).to_string();
+                    let new_body = self.apply_replacement(
+                        &body_str,
+                        &rule.match_pattern,
+                        &rule.replace_value,
+                        rule.is_regex,
+                    );
+                    *body = new_body.into_bytes();
                 }
                 _ => {}
             }
         }
-
-        if !has_body_rule {
-            return; // Leave binary bodies untouched.
-        }
-
-        // We have at least one body rule. Decode once, apply all matching
-        // body rules, re-encode once. We still use `from_utf8_lossy` because
-        // text bodies (HTML, JSON, JS, CSS) are the only sensible targets
-        // for a string match-and-replace — but we ONLY do this when the
-        // user has explicitly configured a body rule, so they've consented
-        // to the lossy behavior.
-        let body_str = String::from_utf8_lossy(body).to_string();
-        let mut new_body = body_str;
-        for rule in rules.iter() {
-            if !rule.enabled {
-                continue;
-            }
-            if rule.direction != "response" && rule.direction != "both" {
-                continue;
-            }
-            if rule.target != "response_body" {
-                continue;
-            }
-            new_body =
-                self.apply_replacement(&new_body, &rule.match_pattern, &rule.replace_value, rule.is_regex);
-        }
-        *body = new_body.into_bytes();
     }
 
     fn apply_replacement(&self, input: &str, pattern: &str, replacement: &str, is_regex: bool) -> String {
         if is_regex {
-            // v0.3.10: cached compile — see compiled_url_regex above.
-            match compiled_url_regex(pattern) {
-                Some(re) => re.replace_all(input, replacement).to_string(),
-                None => input.to_string(),
+            match regex::Regex::new(pattern) {
+                Ok(re) => re.replace_all(input, replacement).to_string(),
+                Err(_) => input.to_string(),
             }
         } else {
             input.replace(pattern, replacement)

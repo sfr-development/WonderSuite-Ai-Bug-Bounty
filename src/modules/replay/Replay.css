@@ -360,3 +360,16 @@
 }
 .replay-view-tab:hover { color: var(--text-1); }
 .replay-view-tab.active { color: var(--text-0); background: var(--bg-3); }
+
+.replay-splitter {
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border-0);
+  transition: background 0.15s;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-0);
+  border-right: 1px solid var(--border-0);
+}
+.replay-splitter:hover, .replay-splitter:active {
+  background: var(--accent);
+}

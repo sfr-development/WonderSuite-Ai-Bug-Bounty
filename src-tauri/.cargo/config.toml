@@ -1,3 +1,0 @@
-# No build-time WinDivert dependency anymore — we dlopen WinDivert.dll from
-# the resource_dir at runtime via libloading (see src/portscan/windivert_ffi.rs).
-# Nothing needs to live here for now.

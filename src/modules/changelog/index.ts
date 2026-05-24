@@ -1,1 +1,0 @@
-export { Changelog } from './Changelog';
