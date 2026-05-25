@@ -75,7 +75,7 @@ p12 = "0.6"
 dirs = "5"
 
 # ── Chromium download + extraction (browser vendoring, v0.2.0) ──
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
 thiserror = "2"
 flate2 = "1"
 
