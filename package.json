@@ -22,15 +22,15 @@
     "dagre": "^0.8.5",
     "lucide-react": "^1.16.0",
     "mermaid": "^11.15.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11",
-    "@types/react": "^19.1.8",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
