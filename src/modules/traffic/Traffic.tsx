@@ -1,22 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Activity, Trash2, Download, Lock, Filter, ArrowUpDown } from 'lucide-react';
+import { Search, Activity, Trash2, Download, Lock, Filter, ArrowUpDown, FileJson } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import { useVisibilityAwareInterval } from '../../hooks/useVisibilityAwareInterval';
-import { HttpViewer } from '../../components/shared/HttpViewer';
+import { downloadHar } from '../../utils/harExport';
 import './Traffic.css';
-
-const securityHeaders = ['strict-transport-security','content-security-policy','x-frame-options','x-content-type-options','x-xss-protection','referrer-policy','permissions-policy'];
-const sensitiveHeaders = ['authorization','cookie','set-cookie','x-api-key','x-auth-token'];
-
-function headerValueStyle(key: string, value: string): React.CSSProperties {
-  const k = key.toLowerCase();
-  if (sensitiveHeaders.includes(k)) return { color: '#ffb454', fontWeight: 600 };
-  if (securityHeaders.includes(k)) return { color: 'var(--green)' };
-  if (k === 'content-type') return { color: '#64b4ff' };
-  if (k === 'server' || k === 'x-powered-by') return { color: '#c678dd' };
-  if (value.startsWith('https://') || value.startsWith('http://')) return { color: '#64b4ff', textDecoration: 'underline' };
-  return {};
-}
 
 interface TrafficEntry {
   id: number;
@@ -262,8 +249,16 @@ export function Traffic() {
         <button className="traffic-toolbar-btn" onClick={clearTraffic} title="Clear traffic">
           <Trash2 size={13} />
         </button>
-        <button className="traffic-toolbar-btn" onClick={exportTraffic} title="Export as JSON">
+        <button className="traffic-toolbar-btn" onClick={exportTraffic} title="Export as JSON" aria-label="Export as JSON">
           <Download size={13} />
+        </button>
+        <button
+          className="traffic-toolbar-btn"
+          onClick={() => downloadHar(filtered.length > 0 ? filtered : entries)}
+          title={`Export ${filtered.length > 0 ? 'filtered' : 'all'} as HAR (HTTP Archive)`}
+          aria-label="Export as HAR"
+        >
+          <FileJson size={13} />
         </button>
         <div className="traffic-search">
           <Search size={14} className="traffic-search-icon" />
@@ -356,10 +351,10 @@ export function Traffic() {
 
               <div className="traffic-detail-body">
                 {detailTab === 'request' && (
-                  <HttpViewer value={selectedEntry.request_headers + (selectedEntry.request_body ? `\n\n${selectedEntry.request_body}` : '')} mimeType={selectedEntry.mime_type} />
+                  <pre>{selectedEntry.request_headers}{selectedEntry.request_body ? `\n\n${selectedEntry.request_body}` : ''}</pre>
                 )}
                 {detailTab === 'response' && (
-                  <HttpViewer value={selectedEntry.response_headers + (selectedEntry.response_body ? `\n\n${selectedEntry.response_body}` : '')} mimeType={selectedEntry.mime_type} />
+                  <pre>{selectedEntry.response_headers}{selectedEntry.response_body ? `\n\n${selectedEntry.response_body}` : ''}</pre>
                 )}
                 {detailTab === 'headers' && (
                   <div className="traffic-parsed-headers">
@@ -368,7 +363,7 @@ export function Traffic() {
                       <table className="traffic-parsed-table">
                         <tbody>
                           {parseHeaders(selectedEntry.request_headers).map((h, i) => (
-                            <tr key={i}><td className="traffic-hdr-key">{h.key}</td><td style={headerValueStyle(h.key, h.value)}>{h.value}</td></tr>
+                            <tr key={i}><td className="traffic-hdr-key">{h.key}</td><td>{h.value}</td></tr>
                           ))}
                         </tbody>
                       </table>
@@ -378,7 +373,7 @@ export function Traffic() {
                       <table className="traffic-parsed-table">
                         <tbody>
                           {parseHeaders(selectedEntry.response_headers).map((h, i) => (
-                            <tr key={i}><td className="traffic-hdr-key">{h.key}</td><td style={headerValueStyle(h.key, h.value)}>{h.value}</td></tr>
+                            <tr key={i}><td className="traffic-hdr-key">{h.key}</td><td>{h.value}</td></tr>
                           ))}
                         </tbody>
                       </table>
@@ -395,7 +390,7 @@ export function Traffic() {
                           <tr key={i}>
                             <td><span className={`traffic-param-src ${p.source}`}>{p.source}</span></td>
                             <td className="traffic-hdr-key">{p.key}</td>
-                            <td style={headerValueStyle(p.key, p.value)}>{p.value}</td>
+                            <td>{p.value}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -403,7 +398,10 @@ export function Traffic() {
                   ) : <div className="traffic-empty-tab">No parameters</div>;
                 })()}
                 {detailTab === 'hex' && (
-                  <HttpViewer value={toHex(selectedEntry.request_headers + (selectedEntry.request_body ? `\n\n${selectedEntry.request_body}` : ''))} isHex={true} />
+                  <pre className="traffic-hex">{toHex(detailTab === 'hex'
+                    ? `${selectedEntry.request_headers}\n\n${selectedEntry.request_body}`
+                    : ''
+                  )}</pre>
                 )}
               </div>
             </div>

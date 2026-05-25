@@ -5,6 +5,7 @@ export type ModuleId =
   | 'replay'
   | 'attack'
   | 'scan'
+  | 'ports'
   | 'sitemap'
   | 'tokens'
   | 'tools'
@@ -21,6 +22,7 @@ export type ModuleId =
   | 'osint'
   | 'discovery'
   | 'docs'
+  | 'changelog'
   | 'settings';
 
 export interface HttpMessage {

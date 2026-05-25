@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  Globe, Download, RefreshCw, CheckCircle, AlertTriangle, FolderOpen, Shield, Trash2,
+  Globe, Download, RefreshCw, CheckCircle, AlertTriangle, FolderOpen, Shield, ShieldAlert,
+  Trash2, Gauge, UserCheck,
 } from 'lucide-react';
 import { useAppStore } from '../../stores';
 import './BrowserSettingsPanel.css';
@@ -375,7 +376,7 @@ export function BrowserSettingsPanel() {
         />
       </div>
 
-      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+      <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
         <div className="settings-label">
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Shield size={12} /> Stealth profile
@@ -384,18 +385,53 @@ export function BrowserSettingsPanel() {
             How human-like the AI's clicks and keystrokes feel. Higher levels add humanised mouse trajectories (Bezier + jitter), per-character typing cadence, dwell time before each action — at the cost of speed. <strong>Human</strong> is the default and passes <code>browser_stealth_check</code> against fraud SDKs like FriendlyCaptcha / Cloudflare Bot Mgmt / Imperva. Use <strong>Paranoid</strong> on highly-instrumented targets (Akamai Bot Manager). <strong>Fast</strong> is for your own lab targets only — programmatic clicks are easy to detect.
           </span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', minWidth: 140 }}>
-          {(['fast', 'human', 'paranoid'] as const).map((p) => (
-            <button
-              key={p}
-              className={`bsp-btn ${stealthProfile === p ? 'bsp-btn-primary' : ''}`}
-              onClick={() => setProfile(p)}
-              style={{ justifyContent: 'flex-start', textTransform: 'capitalize' }}
-            >
-              {stealthProfile === p ? <CheckCircle size={11} /> : <Shield size={11} />} {p}
-              {p === 'human' && <span style={{ marginLeft: 6, fontSize: 9, color: 'var(--text-3)' }}>default</span>}
-            </button>
-          ))}
+        <div className="bsp-stealth-grid">
+          {([
+            { id: 'fast' as const,     label: 'Fast',     Icon: Gauge,       tagline: 'Programmatic clicks. Lab targets only.',                 speed: 100, stealth: 25 },
+            { id: 'human' as const,    label: 'Human',    Icon: UserCheck,   tagline: 'Bezier mouse + Gaussian typing. Defeats most fraud SDKs.', speed: 60,  stealth: 85, isDefault: true },
+            { id: 'paranoid' as const, label: 'Paranoid', Icon: ShieldAlert, tagline: 'Max evasion, slow, occasional overshoot. Akamai-class.',  speed: 25,  stealth: 100 },
+          ]).map(({ id, label, Icon, tagline, speed, stealth, isDefault }) => {
+            const active = stealthProfile === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`bsp-stealth-card ${active ? 'active' : ''}`}
+                onClick={() => setProfile(id)}
+                aria-pressed={active}
+              >
+                <div className="bsp-stealth-card-head">
+                  <div className="bsp-stealth-card-icon-wrap">
+                    <Icon size={16} strokeWidth={1.9} />
+                  </div>
+                  <span className="bsp-stealth-card-name">{label}</span>
+                  {isDefault && <span className="bsp-stealth-card-default">Default</span>}
+                  {active && <CheckCircle size={14} className="bsp-stealth-card-check" />}
+                </div>
+                <span className="bsp-stealth-card-tagline">{tagline}</span>
+                <div className="bsp-stealth-meters">
+                  <div className="bsp-stealth-meter bsp-stealth-meter--speed">
+                    <div className="bsp-stealth-meter-row">
+                      <span className="bsp-stealth-meter-label">Speed</span>
+                      <span className="bsp-stealth-meter-value">{speed}</span>
+                    </div>
+                    <div className="bsp-stealth-meter-bar">
+                      <div className="bsp-stealth-meter-fill" style={{ width: `${speed}%` }} />
+                    </div>
+                  </div>
+                  <div className="bsp-stealth-meter bsp-stealth-meter--stealth">
+                    <div className="bsp-stealth-meter-row">
+                      <span className="bsp-stealth-meter-label">Stealth</span>
+                      <span className="bsp-stealth-meter-value">{stealth}</span>
+                    </div>
+                    <div className="bsp-stealth-meter-bar">
+                      <div className="bsp-stealth-meter-fill" style={{ width: `${stealth}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 

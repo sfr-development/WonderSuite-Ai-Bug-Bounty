@@ -24,6 +24,13 @@ pub async fn handle_tool_call(name: &str, params: &serde_json::Value) -> Result<
     handlers::dispatch(name, params).await
 }
 
+/// v0.3.10: dynamic count of MCP tools. Used by `proxy_get_capabilities` to
+/// stop reporting a hardcoded `mcp_tools: 18` forever — the count now
+/// follows whatever `tool_definitions()` returns.
+pub fn tool_count() -> usize {
+    tool_definitions().len()
+}
+
 pub fn tool_definitions() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -128,8 +135,23 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "proxy_get_traffic".into(),
-            description: "Retrieve captured proxy traffic entries.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "default": 50 } } }),
+            description: "Retrieve captured proxy traffic entries with structured filters and a summary/detail mode. Use `mode: \"summary\"` for an agent-friendly metadata-only view (id, method, host, path, status, sizes; ~30x smaller than `detail`). Filters can be combined: `host` (substring), `method`, `mime` (substring), `status_min`/`status_max`, `exclude_static` (skip images/css/js/fonts), `exclude_third_party` + `primary_host` (skip everything not on your target domain).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "default": 50 },
+                    "mode": { "type": "string", "enum": ["summary", "detail"], "default": "detail", "description": "summary = metadata only; detail = full headers + body preview" },
+                    "body_preview_bytes": { "type": "integer", "default": 4096, "description": "Truncate request/response bodies to this many bytes (detail mode only)" },
+                    "host": { "type": "string", "description": "Host substring filter (e.g. 'papierkram.de')" },
+                    "method": { "type": "string", "description": "Method filter (GET/POST/PUT/PATCH/DELETE)" },
+                    "mime": { "type": "string", "description": "Content-Type substring filter (e.g. 'json', 'html')" },
+                    "status_min": { "type": "integer", "default": 0, "description": "Inclusive lower status bound" },
+                    "status_max": { "type": "integer", "default": 999, "description": "Inclusive upper status bound" },
+                    "exclude_static": { "type": "boolean", "default": false, "description": "Skip images, CSS, JS, fonts, maps, video by extension" },
+                    "exclude_third_party": { "type": "boolean", "default": false, "description": "Only keep entries whose host contains `primary_host`" },
+                    "primary_host": { "type": "string", "description": "Used with exclude_third_party — the target host you're auditing" }
+                }
+            }),
         },
         ToolDef {
             name: "proxy_search_traffic".into(),
@@ -494,11 +516,8 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                 }
             }),
         },
-        ToolDef {
-            name: "browser_stealth_check".into(),
-            description: "[diagnostic] Self-test for the human-emulation stack. Loads a tiny in-memory test page, drives a click + type via the CDP-native input path, then reports back what the page saw: how many events arrived as isTrusted=true vs not, whether navigator.webdriver is exposed, whether the AI cursor overlay leaked into page DOM, plus an overall stealth_score and verdict. Run after switching `stealth_profile` to confirm what bot detectors will see.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
-        },
+        // v0.3.11: `browser_stealth_check` removed from MCP surface — niche
+        // self-test, still callable from UI for manual verification.
         ToolDef {
             name: "websocket_connect".into(),
             description: "Raw WebSocket operations: connect, send, receive, close, list. Use for WS-based testing, socket hijacking, real-time protocol analysis.".into(),
@@ -580,36 +599,161 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "oast_generate_payload".into(),
-            description: "Generate OAST callback payloads for blind-vuln detection (auto-starts the HTTP listener on `port` so the returned URLs are immediately reachable; set WS_OAST_HOST env var to expose externally). Supports blind_sqli, blind_ssrf, blind_xxe, blind_cmdi, blind_xss, blind_ssti. After firing the payload, poll `oast_verify action=get_interactions` for callbacks.".into(),
+            name: "port_scan".into(),
+            description: "TCP connect port scan against a single host. Returns summary (open count, services, sample) + scan_id for follow-up. Service detection (HTTP, TLS+cert, SSH, FTP/SMTP/IMAP/POP3 banners, MySQL, Postgres, Redis, Mongo, Memcached, RDP, VNC, SMB) runs in-process — no nmap subprocess. Adaptive concurrency via Little's Law. SYN/UDP modes land in v0.3.8 — use mode=\"connect\" for now.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "description": { "type": "string" },
-                    "vuln_type": { "type": "string", "enum": ["generic", "blind_sqli", "blind_ssrf", "blind_xxe", "blind_cmdi", "blind_xss", "blind_ssti"], "default": "generic" },
-                    "port": { "type": "integer", "default": 8888 }
+                    "target": { "type": "string", "description": "Hostname, IPv4 or IPv6 address" },
+                    "ports": { "type": "string", "description": "Comma list / range / 'top-100' / 'top-1000' / 'all'", "default": "top-100" },
+                    "mode": { "type": "string", "enum": ["connect", "syn", "udp"], "default": "connect", "description": "TCP connect = no admin needed. UDP = no admin, detects open via protocol replies (DNS/SNMP/NTP/SSDP/etc), no closed detection without ICMP. SYN = falls back to connect until v0.3.8." },
+                    "timing": { "type": "string", "enum": ["T0","T1","T2","T3","T4","T5","T6"], "default": "T3" },
+                    "service_detect": { "type": "boolean", "default": true },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 5 },
+                    "max_wait_ms": { "type": "integer", "default": 20000, "description": "Cap how long this call waits for completion; returns partial summary if scan still running" }
+                },
+                "required": ["target"]
+            }),
+        },
+        ToolDef {
+            name: "port_scan_range".into(),
+            description: "Port scan across multiple hosts (CIDR, range, or list). Same options as port_scan plus `targets` array, `exclude_cdn` (drops CloudFront/Cloudflare/Akamai IPs), and `max_hosts` cap. AI: be considerate — /24 with top-1000 = ~256k probes.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "targets": { "type": "array", "items": { "type": "string" }, "description": "Hosts/IPs/CIDRs (e.g. '10.0.0.0/24', 'example.com', '10.0.0.1-50')" },
+                    "ports": { "type": "string", "default": "top-100" },
+                    "mode": { "type": "string", "enum": ["connect", "syn", "udp"], "default": "connect", "description": "TCP connect = no admin needed. UDP = no admin, detects open via protocol replies (DNS/SNMP/NTP/SSDP/etc), no closed detection without ICMP. SYN = falls back to connect until v0.3.8." },
+                    "timing": { "type": "string", "enum": ["T0","T1","T2","T3","T4","T5","T6"], "default": "T3" },
+                    "service_detect": { "type": "boolean", "default": true },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 5 },
+                    "exclude_cdn": { "type": "boolean", "default": false },
+                    "max_hosts": { "type": "integer", "description": "Cap on expanded host count" },
+                    "max_wait_ms": { "type": "integer", "default": 60000 }
+                },
+                "required": ["targets"]
+            }),
+        },
+        ToolDef {
+            name: "service_detect".into(),
+            description: "Surgical service detection against a known-open port. Runs the same in-process probe pipeline as port_scan: server-first banner → port-hint probe → TLS handshake → common fallbacks. Returns product/version/banner + TLS CN/SAN if applicable.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "host": { "type": "string" },
+                    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "intensity": { "type": "integer", "minimum": 0, "maximum": 9, "default": 7 },
+                    "timeout_ms": { "type": "integer", "default": 2000 }
+                },
+                "required": ["host", "port"]
+            }),
+        },
+        ToolDef {
+            name: "banner_grab".into(),
+            description: "Raw banner grab — connect, optionally send a payload, read up to max_bytes back. No probe synthesis — gives you the raw bytes (UTF-8 string if printable, hex otherwise). Use for custom protocol probing.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "host": { "type": "string" },
+                    "port": { "type": "integer" },
+                    "max_bytes": { "type": "integer", "default": 256, "maximum": 4096 },
+                    "timeout_ms": { "type": "integer", "default": 800 },
+                    "prefer_send": { "type": "string", "description": "Optional bytes to send before reading (UTF-8 only via this surface)" }
+                },
+                "required": ["host", "port"]
+            }),
+        },
+        ToolDef {
+            name: "port_scan_results".into(),
+            description: "Paginated drill-down for a previously-started scan. Returns a slice of results filtered to open by default.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "scan_id": { "type": "string" },
+                    "offset": { "type": "integer", "default": 0 },
+                    "limit": { "type": "integer", "default": 50, "maximum": 500 },
+                    "open_only": { "type": "boolean", "default": true }
+                },
+                "required": ["scan_id"]
+            }),
+        },
+        // v0.3.11: OAST tool group (8 tools — generate_payload, start_dns,
+        // start_smtp, start_http, poll_interactions, status, clear, verify)
+        // removed from MCP surface. The OAST listeners themselves still run
+        // on the Rust side and are driven from the OAST UI panel; agents
+        // can observe callbacks indirectly via the proxy traffic log when
+        // they route blind-vuln payloads through the local proxy.
+        ToolDef {
+            name: "intruder_start".into(),
+            description: "Fire an Intruder attack (v0.3.10). Accepts either the `intruder_config` blob returned by send_to_intruder (fastest path) or explicit `request_template` + `payload_sets` + `grep_rules`. Honors `threads` (concurrency, default 10), `throttle_ms`, `follow_redirects`. Attack types: sniper, battering_ram, pitchfork, cluster_bomb. Returns `attack_id` to poll with intruder_status / intruder_results.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "intruder_config": { "type": "object", "description": "Pass the exact `intruder_config` from send_to_intruder." },
+                    "request_template": { "type": "string", "description": "Raw HTTP request with §marker§ placeholders." },
+                    "payload_sets": { "type": "array", "description": "Array of payload-set objects (payload_type, values/from/to/step, etc)." },
+                    "base_request": { "type": "object", "description": "Alternative to request_template: method + url + headers + body." },
+                    "positions": { "type": "array", "description": "Position metadata (from send_to_intruder)." },
+                    "grep_rules": { "type": "array", "description": "Anomaly detection rules (match/extract)." },
+                    "attack_type": { "type": "string", "enum": ["sniper", "battering_ram", "pitchfork", "cluster_bomb"], "default": "sniper" },
+                    "threads": { "type": "integer", "default": 10 },
+                    "max_concurrent": { "type": "integer", "description": "Alias for threads." },
+                    "throttle_ms": { "type": "integer", "default": 0 },
+                    "delay_ms": { "type": "integer", "description": "Alias for throttle_ms." },
+                    "follow_redirects": { "type": "boolean", "default": false }
                 }
             }),
         },
         ToolDef {
-            name: "oast_start_dns_server".into(),
-            description: "Start OAST DNS callback server for detecting blind DNS exfiltration.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "port": { "type": "integer", "default": 8853 } } }),
+            name: "intruder_status".into(),
+            description: "Poll the progress of a running Intruder attack — completed/total payloads, elapsed time, results count, anomaly count.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "attack_id": { "type": "string" } },
+                "required": ["attack_id"]
+            }),
         },
         ToolDef {
-            name: "oast_start_smtp_server".into(),
-            description: "Start OAST SMTP callback server for detecting blind email-based exfiltration.".into(),
-            input_schema: serde_json::json!({ "type": "object", "properties": { "port": { "type": "integer", "default": 2525 } } }),
-        },
-        ToolDef {
-            name: "oast_verify".into(),
-            description: "OAST server management: start_server, self_test (verify callback chain), get_interactions, clear.".into(),
+            name: "intruder_results".into(),
+            description: "Fetch Intruder attack results with filters. Use `only_anomalies: true` to skip baseline (no-match) results, `status_filter` to keep only specific status codes (e.g. 200, 500), `offset`+`limit` for pagination. Each result has payload, status, length, time_ms, grep_match flag, grep_extracts dict, response preview.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["start_server", "self_test", "get_interactions", "clear"], "default": "self_test" },
-                    "port": { "type": "integer", "default": 8888 },
-                    "correlation_id": { "type": "string" }
+                    "attack_id": { "type": "string" },
+                    "only_anomalies": { "type": "boolean", "default": false },
+                    "status_filter": { "type": "integer", "description": "Keep only results matching this exact HTTP status." },
+                    "limit": { "type": "integer", "default": 100 },
+                    "offset": { "type": "integer", "default": 0 }
+                },
+                "required": ["attack_id"]
+            }),
+        },
+        ToolDef {
+            name: "intruder_stop".into(),
+            description: "Cancel a running Intruder attack. In-flight requests drain; the attack transitions to status `stopped`.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "attack_id": { "type": "string" } },
+                "required": ["attack_id"]
+            }),
+        },
+        ToolDef {
+            name: "intruder_list".into(),
+            description: "List all Intruder attacks (active and historical) in the current session with status, progress, and anomaly counts.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        ToolDef {
+            name: "js_library_audit".into(),
+            description: "Detect frontend JS libraries and their versions on a page (v0.3.10). Pure detection — NO CVE / vulnerability data is bundled. Once you have `(library, version)` pairs, do CVE research yourself (web search, your own knowledge of known issues, retire.js public DB) and decide which deserve a finding. Input modes (exactly one): `url` (fetch + scan), `html` (scan provided), `traffic_id` (pull response from proxy traffic log), `js` (scan a single JS body). Set `follow_scripts: true` to also fetch each external script src — catches minified libs whose header comment survived but whose URL is generic.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Target URL to fetch and scan." },
+                    "html": { "type": "string", "description": "Raw HTML to scan." },
+                    "js": { "type": "string", "description": "Raw JS body to scan (only comment_patterns apply)." },
+                    "traffic_id": { "type": "integer", "description": "Numeric proxy traffic ID — scan that response's body." },
+                    "follow_scripts": { "type": "boolean", "default": false, "description": "Also fetch + scan each <script src=…>. Slower but catches minified libs." },
+                    "follow_limit": { "type": "integer", "default": 8, "description": "Max external scripts to follow." }
                 }
             }),
         },
@@ -774,14 +918,18 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "passive_scan".into(),
-            description: "Passive security scan — analyzes response for security headers, cookie flags, CORS misconfig, info disclosure. No extra attack requests sent.".into(),
+            description: "Passive security scan — analyzes response for security headers, cookie flags, CORS misconfig, info disclosure. By default issues a single GET. Pass `intercept_id` (UUID) or `traffic_id` (numeric) to replay the original request's method/headers/body instead — letting you scan authenticated POST/PUT endpoints, GraphQL mutations, or any non-GET flow exactly as the user saw it.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "description": "Target URL to analyze" },
-                    "checks": { "type": "array", "items": { "type": "string" }, "description": "Check categories: all, headers, cookies, cors, info_disclosure", "default": ["all"] }
-                },
-                "required": ["target"]
+                    "target": { "type": "string", "description": "Target URL to analyze. Optional if intercept_id / traffic_id is given." },
+                    "checks": { "type": "array", "items": { "type": "string" }, "description": "Check categories: all, headers, cookies, cors, info_disclosure", "default": ["all"] },
+                    "intercept_id": { "type": "string", "description": "UUID of an on-hold intercepted request (from get_intercepted). Reuses its method/headers/body for the scan." },
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID. Reuses the logged request's method/headers/body." },
+                    "method": { "type": "string", "description": "Explicit HTTP method override (e.g. POST, PUT, PATCH). Defaults to GET, or the method from intercept/traffic." },
+                    "headers": { "type": "object", "description": "Header overrides (added on top of any headers from intercept/traffic)." },
+                    "body": { "type": "string", "description": "Explicit body override." }
+                }
             }),
         },
         ToolDef {
@@ -842,20 +990,24 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "active_scan".into(),
-            description: "Active vulnerability scanner — error-based + time-based SQLi, reflected XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. With `with_oast: true` (default when scan_types=['all']) also probes blind SQLi, blind cmdi, blind SSRF and log4shell via the bundled OAST listener — every callback becomes a critical, certain-confidence finding.".into(),
+            description: "Active vulnerability scanner — error-based + time-based SQLi, reflected XSS, SSTI (7 engines), LFI (7 techniques), Open Redirect, CRLF/Header Injection. With `with_oast: true` (default when scan_types=['all']) also probes blind SQLi, blind cmdi, blind SSRF and log4shell via the bundled OAST listener — every callback becomes a critical, certain-confidence finding.\n\nInjection points: query string parameters AND request body parameters (JSON object keys + form-urlencoded fields). Pass `intercept_id` (UUID, on-hold intercept) or `traffic_id` (numeric, traffic log) to inherit the original method/headers/body — scanner then fuzzes both URL and body in place, preserving auth headers, cookies, CSRF tokens, and content-type. Critical for POST APIs, GraphQL endpoints, and any flow where the body is the actual attack surface.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "description": "Target URL with query parameters to test" },
+                    "target": { "type": "string", "description": "Target URL with query parameters to test. Optional if intercept_id / traffic_id is given." },
                     "scan_types": { "type": "array", "items": { "type": "string" }, "description": "all | sqli | xss | ssti | lfi | open_redirect | header_injection", "default": ["all"] },
                     "max_payloads_per_type": { "type": "integer", "default": 25 },
                     "max_concurrent": { "type": "integer", "default": 5 },
                     "timeout_secs": { "type": "integer", "default": 15 },
                     "with_oast": { "type": "boolean", "description": "Include OAST blind probes (auto-starts listener). Defaults to true when scan_types includes 'all'.", "default": true },
                     "oast_port": { "type": "integer", "default": 8888 },
-                    "oast_wait_ms": { "type": "integer", "default": 15000, "description": "How long to wait for OAST callbacks after the last probe." }
-                },
-                "required": ["target"]
+                    "oast_wait_ms": { "type": "integer", "default": 15000, "description": "How long to wait for OAST callbacks after the last probe." },
+                    "intercept_id": { "type": "string", "description": "UUID of an on-hold intercepted request (from get_intercepted). Scanner replays the original method/headers/body AND fuzzes JSON body keys + form-urlencoded body fields in addition to query parameters." },
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID. Same effect as intercept_id but reads from the traffic log." },
+                    "method": { "type": "string", "description": "Explicit HTTP method override (e.g. POST, PUT, PATCH)." },
+                    "headers": { "type": "object", "description": "Header overrides (added on top of any headers from intercept/traffic)." },
+                    "body": { "type": "string", "description": "Explicit body override (overrides any body from intercept/traffic)." }
+                }
             }),
         },
         ToolDef {
@@ -889,18 +1041,19 @@ pub fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "send_to_intruder".into(),
-            description: "Convert a proxy traffic entry into a fuzz_request config with auto-detected injection points. Returns a ready-to-use intruder config.".into(),
+            description: "Convert a proxy traffic entry OR a still-pending intercepted request into a fuzz_request config with auto-detected injection points. Detects injection points in query string, JSON body, form-urlencoded body, multipart form-data parts, and Cookie header values. Works on POST/PUT/PATCH/DELETE bodies. Pass `intercept_id` (UUID from get_intercepted) OR `traffic_id` (numeric from proxy_get_traffic) — at least one required. Returns a ready-to-use intruder config you can pass straight to fuzz_request.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "traffic_id": { "type": "integer", "description": "Traffic entry ID to convert" }
-                },
-                "required": ["traffic_id"]
+                    "traffic_id": { "type": "integer", "description": "Numeric traffic entry ID (from proxy_get_traffic). Use this for already-logged requests." },
+                    "intercept_id": { "type": "string", "description": "UUID of a still-pending intercepted request (from get_intercepted). Use this to attack an on-hold request WITHOUT forwarding it first — the body is read straight from the held raw_request." },
+                    "category": { "type": "string", "description": "Override the payload category heuristic (e.g. force 'sqli' on every injection point regardless of parameter name)." }
+                }
             }),
         },
         ToolDef {
             name: "get_intercepted".into(),
-            description: "List all intercepted requests/responses waiting for a decision. Use with forward_intercepted to modify and forward.".into(),
+            description: "List all intercepted requests/responses waiting for a decision. Each item has a UUID `id`, the original `raw_request`, plus a `parsed` object with the request body broken out at `parsed.body` (and headers at `parsed.headers`, query at `parsed.query_params`, content-type at `parsed.content_type`). To attack an intercepted request without forwarding it, pass the UUID `id` straight to `send_to_intruder.intercept_id`, `passive_scan.intercept_id`, or `active_scan.intercept_id`. To modify and forward, use forward_intercepted.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {}

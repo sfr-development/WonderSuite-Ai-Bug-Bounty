@@ -56,6 +56,16 @@ pub struct SnapStats {
     pub links: u32,
 }
 
+impl SnapStats {
+    pub fn merge(&mut self, other: &SnapStats) {
+        self.interactives += other.interactives;
+        self.forms += other.forms;
+        self.iframes += other.iframes;
+        self.shadow_roots += other.shadow_roots;
+        self.links += other.links;
+    }
+}
+
 pub async fn capture(sess: &BrowserSession, include_security: bool) -> Result<Snapshot, String> {
     let url = sess
         .eval("document.location.href")
@@ -66,11 +76,44 @@ pub async fn capture(sess: &BrowserSession, include_security: bool) -> Result<Sn
     let title =
         sess.eval("document.title").await.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
 
-    let ax = sess.send("Accessibility.getFullAXTree", serde_json::json!({})).await?;
-    let nodes = ax["nodes"].as_array().cloned().unwrap_or_default();
+    // v0.3.17: enumerate every frame in the page so iframe descendants are
+    // also captured. Previously `Accessibility.getFullAXTree({})` only
+    // returned the main frame's tree — buttons inside an auth iframe (Stripe,
+    // hCaptcha, OAuth pop-ups, embedded admin panels) were invisible to the
+    // AI, breaking `browser_click` with "not in snapshot — re-snap".
+    let frame_ids = collect_frame_ids(sess).await;
 
     let mut refmap = RefMap::new();
-    let (tree, stats) = render_ax_tree(&nodes, &mut refmap);
+    let mut tree = String::new();
+    let mut stats = SnapStats::default();
+
+    // Main frame first — no frameId parameter so we get the page-level tree.
+    if let Ok(ax) = sess.send("Accessibility.getFullAXTree", serde_json::json!({})).await {
+        if let Some(nodes) = ax["nodes"].as_array() {
+            let (t, s) = render_ax_tree(nodes, &mut refmap);
+            tree.push_str(&t);
+            stats.merge(&s);
+        }
+    }
+
+    // Child frames — one CDP call per frame. Render with a banner so the
+    // agent sees which subtree came from which frame.
+    for frame_id in &frame_ids {
+        let req = serde_json::json!({ "frameId": frame_id });
+        let Ok(ax) = sess.send("Accessibility.getFullAXTree", req).await else { continue };
+        let Some(nodes) = ax["nodes"].as_array() else { continue };
+        if nodes.is_empty() {
+            continue;
+        }
+        let (t, s) = render_ax_tree(nodes, &mut refmap);
+        if t.trim().is_empty() {
+            continue;
+        }
+        tree.push_str(&format!("\n--- iframe {} ---\n", frame_id));
+        tree.push_str(&t);
+        stats.merge(&s);
+    }
+
     *sess.refmap.lock().await = refmap;
 
     let forms =
@@ -83,6 +126,30 @@ pub async fn capture(sess: &BrowserSession, include_security: bool) -> Result<Sn
     };
 
     Ok(Snapshot { url, title, stats, tree, forms, security })
+}
+
+/// Walk `Page.getFrameTree` and return every child frame's id. We skip the
+/// root frame because `getFullAXTree({})` already covers it.
+async fn collect_frame_ids(sess: &BrowserSession) -> Vec<String> {
+    let Ok(tree) = sess.send("Page.getFrameTree", serde_json::json!({})).await else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    if let Some(child_frames) = tree.pointer("/frameTree/childFrames").and_then(|v| v.as_array()) {
+        collect_frame_ids_rec(child_frames, &mut ids);
+    }
+    ids
+}
+
+fn collect_frame_ids_rec(frames: &[serde_json::Value], out: &mut Vec<String>) {
+    for f in frames {
+        if let Some(id) = f.pointer("/frame/id").and_then(|v| v.as_str()) {
+            out.push(id.to_string());
+        }
+        if let Some(children) = f["childFrames"].as_array() {
+            collect_frame_ids_rec(children, out);
+        }
+    }
 }
 
 fn render_ax_tree(nodes: &[serde_json::Value], refmap: &mut RefMap) -> (String, SnapStats) {

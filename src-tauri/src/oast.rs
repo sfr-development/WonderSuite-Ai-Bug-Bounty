@@ -96,6 +96,36 @@ pub fn callback_host() -> String {
     std::env::var("WS_OAST_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
+/// v0.3.10: resolve the local bind address for the DNS/HTTP/SMTP OAST
+/// listeners. Previously hardcoded `0.0.0.0` — that made the user's laptop
+/// reachable on the local network (any cafe-WiFi peer could hit the SMTP
+/// listener, abuse the DNS responder, or trigger the HTTP callback log) WITH
+/// NO CONSENT. The new rule is: loopback by default, public bind only when
+/// the user has opted in by setting `WS_OAST_HOST` to a non-loopback value
+/// (= they want external targets to reach the listener) OR explicitly via
+/// `WS_OAST_BIND=0.0.0.0`. This way a researcher hunting against localhost
+/// is safe by default, and one who set `WS_OAST_HOST=1.2.3.4` is on the
+/// public side intentionally.
+pub fn bind_address() -> String {
+    if let Ok(explicit) = std::env::var("WS_OAST_BIND") {
+        return explicit;
+    }
+    match std::env::var("WS_OAST_HOST") {
+        Ok(host) => {
+            let h = host.to_ascii_lowercase();
+            // Loopback hostname → bind loopback. Anything else (public IP,
+            // tunneled hostname, oast.local etc.) → user is going public on
+            // purpose, bind 0.0.0.0 so they actually receive callbacks.
+            if h == "127.0.0.1" || h == "localhost" || h.starts_with("::1") {
+                "127.0.0.1".to_string()
+            } else {
+                "0.0.0.0".to_string()
+            }
+        }
+        Err(_) => "127.0.0.1".to_string(),
+    }
+}
+
 /// Idempotently make sure the HTTP callback listener is running. Returns the
 /// port it's bound to. Safe to call repeatedly.
 pub async fn ensure_http_listener(default_port: u16) -> Result<u16, String> {
@@ -201,11 +231,12 @@ pub fn collaborator_everywhere_headers(server_domain: &str) -> Vec<(String, Stri
 pub async fn start_dns_server(port: u16) -> Result<(), String> {
     use tokio::net::UdpSocket;
 
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))
+    let bind = bind_address();
+    let socket = UdpSocket::bind(format!("{}:{}", bind, port))
         .await
-        .map_err(|e| format!("Failed to bind DNS port {}: {}", port, e))?;
+        .map_err(|e| format!("Failed to bind DNS port {}:{}: {}", bind, port, e))?;
     let mut shutdown = install_shutdown("dns").await;
-    println!("[OAST] DNS callback server started on port {}", port);
+    println!("[OAST] DNS callback server started on {}:{}", bind, port);
 
     tokio::spawn(async move {
         let mut buf = [0u8; 512];
@@ -319,12 +350,15 @@ pub async fn start_http_callback_server(port: u16) -> Result<(), String> {
     // Match both root (/) and any sub-path so a bare GET on the host is logged.
     let app = Router::new().route("/", handler.clone()).route("/{*path}", handler);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let bind = bind_address();
+    let addr: SocketAddr = format!("{}:{}", bind, port)
+        .parse()
+        .map_err(|e| format!("Invalid OAST HTTP bind address '{}:{}': {}", bind, port, e))?;
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(|e| format!("Failed to bind HTTP port {}: {}", port, e))?;
+        .map_err(|e| format!("Failed to bind HTTP port {}:{}: {}", bind, port, e))?;
     let mut shutdown = install_shutdown("http").await;
-    println!("[OAST] HTTP callback server started on port {}", port);
+    println!("[OAST] HTTP callback server started on {}:{}", bind, port);
 
     tokio::spawn(async move {
         let svc = app.into_make_service_with_connect_info::<SocketAddr>();
@@ -344,11 +378,12 @@ pub async fn start_smtp_server(port: u16) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
+    let bind = bind_address();
+    let listener = TcpListener::bind(format!("{}:{}", bind, port))
         .await
-        .map_err(|e| format!("Failed to bind SMTP port {}: {}", port, e))?;
+        .map_err(|e| format!("Failed to bind SMTP port {}:{}: {}", bind, port, e))?;
     let mut shutdown = install_shutdown("smtp").await;
-    println!("[OAST] SMTP callback server started on port {}", port);
+    println!("[OAST] SMTP callback server started on {}:{}", bind, port);
 
     tokio::spawn(async move {
         loop {

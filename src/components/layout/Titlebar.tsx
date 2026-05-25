@@ -13,10 +13,7 @@ export function Titlebar() {
 
   return (
     <div className="titlebar">
-      <div className="titlebar-drag" data-tauri-drag-region>
-        <img src="/wondersuite_logo.png" alt="WS" style={{ width: 16, height: 16, objectFit: 'contain' }} className="titlebar-icon" />
-        <span className="titlebar-title">WonderSuite</span>
-      </div>
+      <div className="titlebar-drag" data-tauri-drag-region />
       <div className="titlebar-controls">
         <button className="titlebar-btn" onClick={() => appWindow?.minimize()}>
           <Minus size={14} />

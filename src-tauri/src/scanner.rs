@@ -50,9 +50,6 @@ fn tick_live(live: &ScanLive, findings: &[ScanFinding], total_requests: u32, req
 // shows up in Sitemap / Dashboard alongside proxy traffic.
 pub async fn emit_scanner_traffic(proxy_state: &Option<Arc<ProxyState>>, log: &RequestLog) {
     let Some(ps) = proxy_state else { return };
-    if ps.is_running() {
-        return;
-    }
     let parsed = url::Url::parse(&log.url).ok();
     let host = parsed.as_ref().and_then(|u| u.host_str()).unwrap_or("").to_string();
     let path = parsed.as_ref().map(|u| u.path().to_string()).unwrap_or_else(|| log.url.clone());
@@ -493,7 +490,7 @@ pub async fn run_active_scan(
     );
     check_cancel!(live);
 
-    let mut builder = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_millis(config.timeout_ms))
         .redirect(if config.follow_redirects {
@@ -501,28 +498,9 @@ pub async fn run_active_scan(
         } else {
             reqwest::redirect::Policy::none()
         })
-        .user_agent(&config.user_agent);
-
-    if let Some(ref ps) = proxy_state {
-        if ps.is_running() {
-            let port = *ps.proxy_port.lock().await;
-            if port > 0 {
-                let proxy_url = format!("http://127.0.0.1:{}", port);
-                if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
-                    builder = builder.proxy(proxy);
-                }
-            }
-        }
-    }
-
-    let mut default_headers = reqwest::header::HeaderMap::new();
-    default_headers.insert(
-        reqwest::header::HeaderName::from_static("x-wondersuite-source"),
-        reqwest::header::HeaderValue::from_static("scanner"),
-    );
-    builder = builder.default_headers(default_headers);
-
-    let client = builder.build().map_err(|e| e.to_string())?;
+        .user_agent(&config.user_agent)
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let req_start = std::time::Instant::now();
     let baseline = client.get(target).send().await.map_err(|e| e.to_string())?;
@@ -1415,30 +1393,14 @@ pub async fn run_active_scan(
                     break;
                 }
                 let redirect_url = inject_param(target, param_name, payload);
-                let mut redirect_builder = reqwest::Client::builder()
+                if let Ok(resp) = reqwest::Client::builder()
                     .danger_accept_invalid_certs(true)
-                    .redirect(reqwest::redirect::Policy::none());
-
-                if let Some(ref ps) = proxy_state {
-                    if ps.is_running() {
-                        let port = *ps.proxy_port.lock().await;
-                        if port > 0 {
-                            let proxy_url = format!("http://127.0.0.1:{}", port);
-                            if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
-                                redirect_builder = redirect_builder.proxy(proxy);
-                            }
-                        }
-                    }
-                }
-
-                let mut default_headers = reqwest::header::HeaderMap::new();
-                default_headers.insert(
-                    reqwest::header::HeaderName::from_static("x-wondersuite-source"),
-                    reqwest::header::HeaderValue::from_static("scanner"),
-                );
-                redirect_builder = redirect_builder.default_headers(default_headers);
-
-                if let Ok(resp) = redirect_builder.build().unwrap_or_default().get(&redirect_url).send().await
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap_or_default()
+                    .get(&redirect_url)
+                    .send()
+                    .await
                 {
                     bump_req!(live, total_requests, findings, all_request_logs, proxy_state);
                     let status = resp.status().as_u16();
@@ -2298,32 +2260,13 @@ async fn seed_from_crawler_discovery(target: &str, config: &ScanConfig) -> Vec<(
         Err(_) => return out,
     };
 
-    let mut builder = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_millis(config.timeout_ms.min(8_000)))
         .redirect(reqwest::redirect::Policy::limited(5))
-        .user_agent(&config.user_agent);
-
-    if let Some(proxy_state) = crate::proxy_commands::get_global_proxy_state() {
-        if proxy_state.is_running() {
-            let port = *proxy_state.proxy_port.lock().await;
-            if port > 0 {
-                let proxy_url = format!("http://127.0.0.1:{}", port);
-                if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
-                    builder = builder.proxy(proxy);
-                }
-            }
-        }
-    }
-
-    let mut default_headers = reqwest::header::HeaderMap::new();
-    default_headers.insert(
-        reqwest::header::HeaderName::from_static("x-wondersuite-source"),
-        reqwest::header::HeaderValue::from_static("scanner"),
-    );
-    builder = builder.default_headers(default_headers);
-
-    let client = match builder.build() {
+        .user_agent(&config.user_agent)
+        .build()
+    {
         Ok(c) => c,
         Err(_) => return out,
     };

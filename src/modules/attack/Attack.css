@@ -331,22 +331,3 @@
 .turbo-error-row td { background: rgba(255, 80, 80, 0.05); }
 .turbo-preview { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 9px; }
 
-.attack-results-container {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-.attack-splitter {
-  width: 6px;
-  cursor: col-resize;
-  background: var(--border-0);
-  transition: background 0.15s;
-  flex-shrink: 0;
-  border-left: 1px solid var(--border-0);
-  border-right: 1px solid var(--border-0);
-}
-.attack-splitter:hover, .attack-splitter:active {
-  background: var(--accent);
-}
-

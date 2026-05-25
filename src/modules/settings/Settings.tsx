@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink } from 'lucide-react';
+import { Wrench, Palette, Shield, Plug, Power, Copy, CheckCircle, Zap, RefreshCw, Unlock, Link, List, Lock, Download, Check, AlertTriangle, Search, ZoomIn, LayoutGrid, Moon, Sun, Terminal, Globe, BookOpen, FolderOpen, ExternalLink, Trash2 } from 'lucide-react';
 import { BrowserSettingsPanel } from './BrowserSettingsPanel';
 import { invoke } from '@tauri-apps/api/core';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { useAppStore } from '../../stores';
+import { useAppSettings } from '../../stores/appSettingsStore';
+import { notificationsEnabled, setNotificationsEnabled } from '../../lib/desktopNotify';
 import './Settings.css';
 
 
@@ -84,7 +87,7 @@ function IdeIconComponent({ type, size = 20 }: { type: string; size?: number }) 
   }
 }
 
-type SettingsTab = 'general' | 'mcp' | 'proxy' | 'appearance' | 'browser' | 'skill';
+type SettingsTab = 'general' | 'mcp' | 'outputs' | 'proxy' | 'appearance' | 'browser' | 'skill';
 
 
 interface McpToolEntry {
@@ -244,11 +247,18 @@ export function Settings() {
     <div className="settings">
       <div className="settings-nav">
         <div className="settings-nav-title">Settings</div>
+        {/* v0.3.16: nav search — types a query, the first nav item whose
+            keyword list matches gets auto-selected so the user finds where
+            a setting lives without scrolling 1000+ lines of UI. */}
+        <SettingsNavSearch tab={tab} setTab={setTab} />
         <button className={`settings-nav-item ${tab === 'general' ? 'active' : ''}`} onClick={() => setTab('general')}>
           <Wrench size={14} /> General
         </button>
         <button className={`settings-nav-item ${tab === 'mcp' ? 'active' : ''}`} onClick={() => setTab('mcp')}>
           <Plug size={14} /> MCP Server
+        </button>
+        <button className={`settings-nav-item ${tab === 'outputs' ? 'active' : ''}`} onClick={() => setTab('outputs')}>
+          <FolderOpen size={14} /> Outputs
         </button>
         <button className={`settings-nav-item ${tab === 'proxy' ? 'active' : ''}`} onClick={() => setTab('proxy')}>
           <Shield size={14} /> Proxy
@@ -364,38 +374,13 @@ export function Settings() {
         {tab === 'general' && (
           <>
           <GeneralSystemInfo />
-          <div className="settings-section">
-            <h2>General</h2>
-            <p>Core application settings</p>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Max traffic entries
-                <span>Maximum stored HTTP messages</span>
-              </div>
-              <input className="settings-input" defaultValue="10000" style={{ minWidth: 80 }} />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Response size limit
-                <span>Max response body size to store (MB)</span>
-              </div>
-              <input className="settings-input" defaultValue="10" style={{ minWidth: 80 }} />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                Follow redirects
-                <span>Automatically follow HTTP redirects</span>
-              </div>
-              <button className="settings-toggle on" onClick={() => {}} />
-            </div>
-            
-            <GlobalScopeSettings />
-          </div>
+          <GeneralSettingsPanel />
+          <DesktopNotificationsToggle />
+          <GlobalScopeSettings />
           </>
         )}
+
+        {tab === 'outputs' && <McpOutputsPanel />}
 
         {tab === 'proxy' && (
           <ProxySettings proxyPort={proxyPort} onPortChange={setProxyPort} />
@@ -475,15 +460,6 @@ export function Settings() {
               </div>
               <button className={`settings-toggle ${appearance.compactMode ? 'on' : ''}`}
                       onClick={() => updateAppearance({ compactMode: !appearance.compactMode })} />
-            </div>
-
-            <div className="settings-row">
-              <div className="settings-label">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Zap size={12} /> Auto-Switch Tab on Send</div>
-                <span>Automatically switch active tab when sending requests to Repeater/Intruder</span>
-              </div>
-              <button className={`settings-toggle ${appearance.switchTabOnSend !== false ? 'on' : ''}`}
-                      onClick={() => updateAppearance({ switchTabOnSend: appearance.switchTabOnSend === false ? true : false })} />
             </div>
           </div>
         )}
@@ -1309,6 +1285,383 @@ function GeneralSystemInfo() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// v0.3.17: MCP-output viewer — lists screenshots / saved files under
+// ~/.wondersuite/, shows the root path, lets the user delete individual
+// files or clear by kind, and reveals the folder in the OS file manager.
+interface McpOutputEntry {
+  kind: string;
+  path: string;
+  name: string;
+  size_bytes: number;
+  modified_unix: number;
+}
+interface McpOutputsListing {
+  root: string;
+  entries: McpOutputEntry[];
+  total_size_bytes: number;
+}
+
+function McpOutputsPanel() {
+  const [listing, setListing] = useState<McpOutputsListing | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState('');
+
+  const load = async () => {
+    setBusy(true);
+    try {
+      const r = await invoke<McpOutputsListing>('list_mcp_outputs');
+      setListing(r);
+    } catch (e) {
+      console.error('list_mcp_outputs failed', e);
+    }
+    setBusy(false);
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const deleteOne = async (path: string) => {
+    if (!confirm(`Delete this file?\n${path}`)) return;
+    try {
+      await invoke('delete_mcp_output', { path });
+      await load();
+    } catch (e) { alert(`Delete failed: ${e}`); }
+  };
+
+  const clearKind = async (kind: string) => {
+    if (!confirm(`Delete every ${kind} on disk? This cannot be undone.`)) return;
+    try {
+      const n = await invoke<number>('clear_mcp_outputs', { kind });
+      await load();
+      alert(`${n} file${n === 1 ? '' : 's'} removed.`);
+    } catch (e) { alert(`Clear failed: ${e}`); }
+  };
+
+  const reveal = async (path: string) => {
+    try { await invoke('reveal_in_file_manager', { path, select: true }); }
+    catch (e) { alert(`Open failed: ${e}`); }
+  };
+
+  const filtered = listing?.entries.filter(e =>
+    !filter || e.name.toLowerCase().includes(filter.toLowerCase()) || e.kind.includes(filter.toLowerCase())
+  ) || [];
+
+  const fmt = (b: number) =>
+    b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
+  const fmtDate = (u: number) => u ? new Date(u * 1000).toLocaleString() : '—';
+
+  const totalMb = listing ? listing.total_size_bytes / 1024 / 1024 : 0;
+
+  return (
+    <div className="settings-section">
+      <h2>MCP Outputs</h2>
+      <p>Files the AI agent writes to disk — screenshots, saved attachments. Listed per file with full path so you know exactly what to clear.</p>
+
+      {listing && (
+        <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+          <div className="settings-label">
+            Storage root
+            <span style={{ fontFamily: 'monospace', fontSize: 10 }}>{listing.root}</span>
+          </div>
+          <button
+            className="settings-btn"
+            onClick={() => reveal(listing.root)}
+            title="Open this folder in your OS file manager"
+          >
+            <FolderOpen size={11} /> Open
+          </button>
+        </div>
+      )}
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Total on disk
+          <span>{listing ? `${filtered.length} of ${listing.entries.length} files shown · ${totalMb.toFixed(2)} MB total` : 'Loading...'}</span>
+        </div>
+        <button className="settings-btn" onClick={load} disabled={busy}>
+          <RefreshCw size={11} style={{ transform: busy ? 'rotate(180deg)' : undefined }} /> Refresh
+        </button>
+        <button className="settings-btn" onClick={() => clearKind('screenshot')} disabled={busy} title="Delete every screenshot">
+          <Trash2 size={11} /> Clear screenshots
+        </button>
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Filter
+          <span>Narrow the list by name or kind</span>
+        </div>
+        <input
+          className="settings-input"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="e.g. .jpg or screenshot"
+          style={{ minWidth: 180 }}
+        />
+      </div>
+
+      <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-0)', borderRadius: 6, marginTop: 8 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 11 }}>
+            {listing ? 'No outputs found. They will appear here after the AI agent writes its first screenshot.' : 'Loading...'}
+          </div>
+        ) : filtered.map((e) => (
+          <div
+            key={e.path}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '60px 1fr 80px 120px 70px 70px',
+              gap: 8,
+              padding: '6px 10px',
+              borderBottom: '1px solid var(--border-0)',
+              fontSize: 11,
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ color: 'var(--text-3)', textTransform: 'uppercase', fontSize: 9 }}>{e.kind}</span>
+            <span style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.path}>
+              {e.name}
+            </span>
+            <span style={{ color: 'var(--text-3)' }}>{fmt(e.size_bytes)}</span>
+            <span style={{ color: 'var(--text-3)' }}>{fmtDate(e.modified_unix)}</span>
+            <button className="settings-btn" onClick={() => reveal(e.path)} title="Reveal in file manager">
+              <FolderOpen size={10} />
+            </button>
+            <button className="settings-btn" onClick={() => deleteOne(e.path)} title="Delete this file">
+              <Trash2 size={10} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// v0.3.16: indexed keyword search across all settings panels — types
+// "timeout" or "scope" and jumps the user to the right tab.
+const NAV_KEYWORDS: { tab: SettingsTab; words: string[] }[] = [
+  { tab: 'general', words: ['general', 'autosave', 'timeout', 'request', 'cookie', 'ttl', 'response', 'size', 'redirect', 'notification', 'desktop', 'scope', 'in-scope', 'highlight', 'search', 'throttle', 'rate limit', 'debug', 'verbosity', 'reset', 'defaults'] },
+  { tab: 'mcp', words: ['mcp', 'tool', 'ai', 'claude', 'cursor', 'windsurf', 'ide', 'port', 'integration'] },
+  { tab: 'outputs', words: ['outputs', 'screenshot', 'attachment', 'file', 'disk', 'storage', 'clear', 'delete', 'wondersuite folder', 'session output'] },
+  { tab: 'proxy', words: ['proxy', 'tls', 'ssl', 'ca', 'cert', 'certificate', 'upstream', 'socks', 'intercept', 'match', 'replace', 'rule', 'listener', 'port'] },
+  { tab: 'appearance', words: ['theme', 'color', 'accent', 'dark', 'light', 'font', 'scale', 'compact'] },
+  { tab: 'browser', words: ['browser', 'chrome', 'chromium', 'download', 'install', 'launch'] },
+  { tab: 'skill', words: ['skill', 'claude', 'plugin', 'agent'] },
+];
+
+function SettingsNavSearch({ tab, setTab }: { tab: SettingsTab; setTab: (t: SettingsTab) => void }) {
+  const [q, setQ] = useState('');
+  const match = q.trim().toLowerCase();
+  useEffect(() => {
+    if (!match) return;
+    const hit = NAV_KEYWORDS.find((g) => g.words.some((w) => w.includes(match) || match.includes(w)));
+    if (hit && hit.tab !== tab) setTab(hit.tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match]);
+  return (
+    <div className="settings-nav-search">
+      <Search size={11} />
+      <input
+        className="settings-input"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search settings…"
+        aria-label="Search settings"
+      />
+    </div>
+  );
+}
+
+// v0.3.16: real General settings panel — replaces the placeholder inputs
+// that had no onChange handlers. Backed by useAppSettings → localStorage.
+function GeneralSettingsPanel() {
+  const s = useAppSettings();
+  return (
+    <div className="settings-section">
+      <h2>General</h2>
+      <p>Core application settings — saved across launches</p>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Autosave interval
+          <span>How often to snapshot project state to disk (seconds)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={5} max={3600}
+          value={s.autosaveIntervalSec}
+          onChange={(e) => s.set('autosaveIntervalSec', Math.max(5, Math.min(3600, Number(e.target.value) || 30)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Request timeout
+          <span>Default outbound HTTP request timeout (seconds)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={1} max={300}
+          value={s.requestTimeoutSec}
+          onChange={(e) => s.set('requestTimeoutSec', Math.max(1, Math.min(300, Number(e.target.value) || 30)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Cookie jar TTL
+          <span>How long persistent cookies live in the session jar (days, 0 = session-only)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={0} max={3650}
+          value={s.cookieJarTtlDays}
+          onChange={(e) => s.set('cookieJarTtlDays', Math.max(0, Math.min(3650, Number(e.target.value) || 0)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Response size limit
+          <span>Max response body size to store (MB)</span>
+        </div>
+        <input
+          className="settings-input"
+          type="number" min={1} max={1024}
+          value={s.responseSizeLimitMb}
+          onChange={(e) => s.set('responseSizeLimitMb', Math.max(1, Math.min(1024, Number(e.target.value) || 10)))}
+          style={{ minWidth: 80 }}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Follow redirects
+          <span>Automatically follow HTTP redirects on outbound requests</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.followRedirects ? 'on' : ''}`}
+          onClick={() => s.set('followRedirects', !s.followRedirects)}
+          aria-label="Follow redirects"
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Highlight search matches
+          <span>Visually highlight matches in Traffic / Logger search results</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.highlightSearchMatches ? 'on' : ''}`}
+          onClick={() => s.set('highlightSearchMatches', !s.highlightSearchMatches)}
+          aria-label="Highlight search matches"
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Outbound request throttle
+          <span>Rate-limit outbound requests (Repeater / Scanner / Discovery)</span>
+        </div>
+        <button
+          className={`settings-toggle ${s.enableThrottling ? 'on' : ''}`}
+          onClick={() => s.set('enableThrottling', !s.enableThrottling)}
+          aria-label="Enable throttling"
+        />
+      </div>
+
+      {s.enableThrottling && (
+        <div className="settings-row">
+          <div className="settings-label">
+            Throttle rate
+            <span>Maximum outbound requests per second</span>
+          </div>
+          <input
+            className="settings-input"
+            type="number" min={1} max={10000}
+            value={s.throttleRequestsPerSec}
+            onChange={(e) => s.set('throttleRequestsPerSec', Math.max(1, Math.min(10000, Number(e.target.value) || 50)))}
+            style={{ minWidth: 80 }}
+          />
+        </div>
+      )}
+
+      <div className="settings-row">
+        <div className="settings-label">
+          Debug verbosity
+          <span>How much detail to write to the developer console</span>
+        </div>
+        <select
+          className="settings-input"
+          value={s.debugVerbosity}
+          onChange={(e) => s.set('debugVerbosity', e.target.value as any)}
+          style={{ minWidth: 100 }}
+        >
+          <option value="silent">Silent</option>
+          <option value="error">Error</option>
+          <option value="warn">Warn</option>
+          <option value="info">Info</option>
+          <option value="debug">Debug</option>
+        </select>
+      </div>
+
+      <div className="settings-row" style={{ borderTop: '1px solid var(--border-0)', paddingTop: 10 }}>
+        <div className="settings-label">
+          Reset to defaults
+          <span>Restore every general setting on this page to its factory default</span>
+        </div>
+        <button
+          className="settings-btn"
+          onClick={() => { if (confirm('Reset all general settings to defaults?')) s.resetDefaults(); }}
+        >
+          Reset
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DesktopNotificationsToggle() {
+  const [enabled, setEnabled] = useState(() => notificationsEnabled());
+  const [permission, setPermission] = useState<string>('unknown');
+
+  useEffect(() => {
+    isPermissionGranted().then((g) => setPermission(g ? 'granted' : 'unknown')).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = !enabled;
+    setEnabled(next);
+    setNotificationsEnabled(next);
+    if (next) {
+      try {
+        const granted = await isPermissionGranted();
+        if (!granted) {
+          const r = await requestPermission();
+          setPermission(r === 'granted' ? 'granted' : 'denied');
+        } else {
+          setPermission('granted');
+        }
+      } catch { setPermission('error'); }
+    }
+  };
+
+  return (
+    <div className="settings-row">
+      <div className="settings-label">
+        Desktop notifications
+        <span>
+          Native OS toast when long-running tasks finish (port scans, active scans, etc.)
+          {permission === 'denied' && <strong style={{ color: 'var(--orange,#fb923c)' }}> — OS permission denied; enable in Windows Settings → Notifications</strong>}
+        </span>
+      </div>
+      <button className={`settings-toggle ${enabled ? 'on' : ''}`} onClick={toggle} />
     </div>
   );
 }

@@ -81,3 +81,37 @@
   90% { width: 92%; }
   100% { width: 100%; }
 }
+
+.splash-tip {
+  position: absolute;
+  bottom: 32px;
+  left: 0;
+  right: 0;
+  max-width: 540px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-2);
+  text-align: center;
+  animation: splashTipIn 0.6s 0.4s ease both;
+}
+
+.splash-tip-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.splash-tip span {
+  font-style: italic;
+}
+
+@keyframes splashTipIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

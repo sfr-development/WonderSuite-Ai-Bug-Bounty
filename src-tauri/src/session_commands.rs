@@ -5,6 +5,65 @@ use crate::session::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn normalize_samesite(s: &str) -> Option<&'static str> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "strict" => Some("Strict"),
+        "lax" => Some("Lax"),
+        "none" => Some("None"),
+        _ => None,
+    }
+}
+
+async fn sync_cookie_to_browser(cookie: &Cookie) -> Result<bool, String> {
+    let Ok(sess) = crate::mcp::browser::session().await else {
+        return Ok(false);
+    };
+    let mut params = serde_json::json!({
+        "name":     cookie.name,
+        "value":    cookie.value,
+        "domain":   cookie.domain,
+        "path":     cookie.path,
+        "secure":   cookie.secure,
+        "httpOnly": cookie.httponly,
+    });
+    if let Some(ss) = cookie.samesite.as_deref().and_then(normalize_samesite) {
+        params["sameSite"] = serde_json::Value::String(ss.into());
+    }
+    sess.send("Network.setCookie", params).await.map(|_| true)
+}
+
+async fn sync_delete_cookie_from_browser(name: &str, domain: &str) -> Result<bool, String> {
+    let Ok(sess) = crate::mcp::browser::session().await else {
+        return Ok(false);
+    };
+    let params = serde_json::json!({ "name": name, "domain": domain, "path": "/" });
+    sess.send("Network.deleteCookies", params).await.map(|_| true)
+}
+
+async fn sync_clear_browser_cookies() -> Result<bool, String> {
+    let Ok(sess) = crate::mcp::browser::session().await else {
+        return Ok(false);
+    };
+    sess.send("Network.clearBrowserCookies", serde_json::json!({})).await.map(|_| true)
+}
+
+#[derive(Debug, Serialize)]
+pub struct CookieOpResult {
+    pub msg: String,
+    pub synced: bool,
+    pub sync_error: Option<String>,
+}
+
+impl CookieOpResult {
+    fn from_sync(msg: String, sync: Result<bool, String>) -> Self {
+        match sync {
+            Ok(true) => Self { msg, synced: true, sync_error: None },
+            Ok(false) => Self { msg, synced: false, sync_error: None },
+            Err(e) => Self { msg, synced: false, sync_error: Some(e) },
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn session_get_cookies(
     state: tauri::State<'_, SessionHandle>,
@@ -29,9 +88,8 @@ pub async fn session_set_cookie(
     secure: Option<bool>,
     httponly: Option<bool>,
     samesite: Option<String>,
-) -> Result<String, String> {
-    let mut session = state.lock().await;
-    session.cookie_jar.set(Cookie {
+) -> Result<CookieOpResult, String> {
+    let cookie = Cookie {
         name: name.clone(),
         value,
         domain: domain.clone(),
@@ -40,8 +98,13 @@ pub async fn session_set_cookie(
         httponly: httponly.unwrap_or(false),
         samesite,
         expires: None,
-    });
-    Ok(format!("Cookie '{}' set for {}", name, domain))
+    };
+    {
+        let mut session = state.lock().await;
+        session.cookie_jar.set(cookie.clone());
+    }
+    let sync = sync_cookie_to_browser(&cookie).await;
+    Ok(CookieOpResult::from_sync(format!("Cookie '{}' set for {}", name, domain), sync))
 }
 
 #[tauri::command]
@@ -49,31 +112,60 @@ pub async fn session_remove_cookie(
     state: tauri::State<'_, SessionHandle>,
     name: String,
     domain: String,
-) -> Result<String, String> {
-    let mut session = state.lock().await;
-    session.cookie_jar.remove(&name, &domain);
-    Ok(format!("Cookie '{}' removed from {}", name, domain))
+) -> Result<CookieOpResult, String> {
+    {
+        let mut session = state.lock().await;
+        session.cookie_jar.remove(&name, &domain);
+    }
+    let sync = sync_delete_cookie_from_browser(&name, &domain).await;
+    Ok(CookieOpResult::from_sync(format!("Cookie '{}' removed from {}", name, domain), sync))
 }
 
 #[tauri::command]
-pub async fn session_clear_cookies(state: tauri::State<'_, SessionHandle>) -> Result<String, String> {
-    let mut session = state.lock().await;
-    session.cookie_jar.clear();
-    Ok("All cookies cleared".into())
+pub async fn session_clear_cookies(state: tauri::State<'_, SessionHandle>) -> Result<CookieOpResult, String> {
+    {
+        let mut session = state.lock().await;
+        session.cookie_jar.clear();
+    }
+    let sync = sync_clear_browser_cookies().await;
+    Ok(CookieOpResult::from_sync("All cookies cleared".into(), sync))
 }
 
 #[tauri::command]
 pub async fn session_import_cookies(
     state: tauri::State<'_, SessionHandle>,
     json: String,
-) -> Result<String, String> {
+) -> Result<CookieOpResult, String> {
     let cookies: Vec<Cookie> = serde_json::from_str(&json).map_err(|e| format!("Invalid JSON: {}", e))?;
     let count = cookies.len();
-    let mut session = state.lock().await;
-    for c in cookies {
-        session.cookie_jar.set(c);
+    {
+        let mut session = state.lock().await;
+        for c in cookies.iter().cloned() {
+            session.cookie_jar.set(c);
+        }
     }
-    Ok(format!("Imported {} cookies", count))
+    let mut any_synced = false;
+    let mut errors: Vec<String> = Vec::new();
+    for c in cookies.iter() {
+        match sync_cookie_to_browser(c).await {
+            Ok(true) => any_synced = true,
+            Ok(false) => break,
+            Err(e) => errors.push(format!("{}: {}", c.name, e)),
+        }
+    }
+    let sync = if !errors.is_empty() {
+        Err(errors.join("; "))
+    } else if any_synced {
+        Ok(true)
+    } else {
+        Ok(false)
+    };
+    Ok(CookieOpResult::from_sync(format!("Imported {} cookies", count), sync))
+}
+
+#[tauri::command]
+pub async fn session_browser_sync_status() -> Result<bool, String> {
+    Ok(crate::mcp::browser::session().await.is_ok())
 }
 
 #[tauri::command]

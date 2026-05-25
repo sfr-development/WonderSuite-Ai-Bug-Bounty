@@ -7,12 +7,15 @@ pub mod crawler;
 mod crawler_commands;
 mod http2;
 mod intruder;
+mod jslib;
 mod mcp;
 mod oast;
 mod oast_commands;
 mod osint_commands;
 mod payload_commands;
 mod port_commands;
+mod portscan;
+mod portscan_commands;
 mod project;
 mod proxy;
 mod proxy_commands;
@@ -26,6 +29,7 @@ mod system;
 mod tls_impersonate;
 mod updater;
 mod websocket_commands;
+mod window_manager;
 
 use proxy_commands::ProxyAppState;
 use tauri::Manager;
@@ -45,20 +49,27 @@ pub fn run() {
     let session_state = session::create_session_state();
     let intruder_state = intruder::create_intruder_state();
     let ws_state = websocket_commands::create_ws_state();
+    let window_state = window_manager::create_window_state();
+    let portscan_state = portscan::orchestrator::create_state();
+    mcp::handlers::portscan::init_state(portscan_state.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(mcp_state)
         .manage(proxy_state)
         .manage(scanner_state)
         .manage(session_state)
         .manage(intruder_state)
         .manage(ws_state)
+        .manage(window_state)
+        .manage(portscan_state)
         .invoke_handler(tauri::generate_handler![
             commands::send_http_request,
+            commands::fetch_github_releases,
             commands::mcp_start,
             commands::mcp_stop,
             commands::mcp_status,
@@ -73,6 +84,15 @@ pub fn run() {
             project::get_project_config,
             project::update_project_config,
             project::duplicate_project,
+            project::project_save_state,
+            project::project_load_state,
+            project::project_save_state_blob,
+            project::project_load_state_blob,
+            project::list_mcp_outputs,
+            project::delete_mcp_output,
+            project::clear_mcp_outputs,
+            project::list_project_files,
+            project::reveal_in_file_manager,
             project::get_memory_stats,
             proxy_commands::proxy_start,
             proxy_commands::proxy_stop,
@@ -101,6 +121,7 @@ pub fn run() {
             proxy_commands::proxy_set_upstream,
             proxy_commands::proxy_get_tls_impersonate,
             proxy_commands::proxy_set_tls_impersonate,
+            proxy_commands::proxy_set_max_traffic_entries,
             proxy_commands::proxy_get_websocket_messages,
             proxy_commands::proxy_get_listeners,
             proxy_commands::proxy_add_listener,
@@ -110,6 +131,7 @@ pub fn run() {
             proxy_commands::proxy_get_capabilities,
             proxy_commands::proxy_get_statistics,
             scanner_commands::scanner_start_active,
+            scanner_commands::scanner_stop,
             scanner_commands::scanner_status,
             scanner_commands::scanner_get_findings,
             scanner_commands::scanner_get_result,
@@ -130,6 +152,7 @@ pub fn run() {
             session_commands::session_create_rule,
             session_commands::session_toggle_rule,
             session_commands::session_delete_rule,
+            session_commands::session_browser_sync_status,
             intruder::intruder_start,
             intruder::intruder_stop,
             intruder::intruder_pause,
@@ -145,6 +168,22 @@ pub fn run() {
             websocket_commands::ws_add_match_replace,
             websocket_commands::ws_get_match_replace,
             websocket_commands::ws_remove_match_replace,
+            window_manager::window_detach_module,
+            window_manager::window_redock_module,
+            window_manager::window_focus_detached,
+            window_manager::window_list_detached,
+            window_manager::window_move_detached,
+            window_manager::window_resize_detached,
+            portscan_commands::portscan_start,
+            portscan_commands::portscan_stop,
+            portscan_commands::portscan_status,
+            portscan_commands::portscan_list,
+            portscan_commands::portscan_results,
+            portscan_commands::portscan_summary,
+            portscan_commands::portscan_export,
+            portscan_commands::portscan_capability_check,
+            portscan_commands::portscan_driver_status,
+            portscan_commands::portscan_driver_install,
             system::get_system_info,
             browser::browser_detect,
             browser::browser_status,

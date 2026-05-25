@@ -1,6 +1,6 @@
 ---
 name: wondersuite
-description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (85 tools — proxy + browser + scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser".
+description: Use this skill whenever the user wants to perform web-application penetration testing, security analysis, vulnerability hunting, recon, OAST blind-vuln detection, JWT / auth analysis, or any browser-driven testing through WonderSuite's MCP server (91 tools — proxy + browser + scanner + port scanner + OAST + recon + codec). Trigger phrases include "test this target", "scan", "pentest", "find vulnerabilities", "check the API", "look at this site", "intercept", "fuzz", "attach to my browser", "port scan", "what's running on".
 ---
 
 # WonderSuite Pentest Operating Manual
@@ -26,7 +26,7 @@ The behaviour is controlled by the **stealth_profile** session setting (Settings
 | `human` (default) | Almost everything | ~300-600ms per click | Indistinguishable on ~95% of real sites |
 | `paranoid` | Banking, sophisticated bot mgmt (Akamai BMP) | ~600-1200ms per click | Maximum stealth + overshoot |
 
-After switching the profile, run **`browser_stealth_check`** — it loads an in-memory test page, drives a click + type, and reports back how many events arrived as `isTrusted:true`, whether `navigator.webdriver` is exposed, whether the cursor overlay leaked into page DOM, plus an overall `stealth_score` and verdict (`indistinguishable` / `good` / `partially-detectable` / `detectable`).
+After switching the profile, ask the user to run the **WonderBrowser stealth self-check** from the UI (it moved out of MCP in v0.3.11 to keep the agent's tool list lean). The check loads an in-memory test page, drives a click + type, and reports back how many events arrived as `isTrusted:true`, whether `navigator.webdriver` is exposed, whether the cursor overlay leaked into page DOM, plus an overall `stealth_score` and verdict (`indistinguishable` / `good` / `partially-detectable` / `detectable`).
 
 ## Three Rules You Don't Get to Break
 
@@ -59,9 +59,47 @@ crtsh_search({domain})        # second source for subdomain enum
 wayback_lookup({domain})      # archived URLs often leak deleted endpoints
 discover_content({target, wordlist: "common"})
 find_secrets({content_or_url})# scan crawl output for AWS keys / JWTs / API tokens
+js_library_audit({url})       # detect frontend libraries + versions — see below
 ```
 
 For SPAs: `crawl_target` is regex-based and blind to client-side routing — fall back to `browser_open` + `browser_snapshot` + `browser_resource_hints`.
+
+### Library Inventory → Outdated → CVE Hunt (v0.3.10)
+
+**`js_library_audit` detects WHAT is running. You research WHAT'S VULNERABLE yourself.** That separation is intentional — WonderSuite ships pure detection so the library knowledge stays fresh; CVE / advisory data ages out the moment we release. Your job is to read each `(library, version)` pair from the detection output, then check it against the actual current security landscape using your own knowledge plus web search.
+
+**The workflow:**
+
+```
+js_library_audit({url: target})
+  # → { detections: [
+  #       { library: "jquery",   version: "1.7.2", source: "script_src", script_url: "/js/jquery-1.7.2.min.js" },
+  #       { library: "bootstrap", version: "3.3.7", source: "script_src", script_url: "..." },
+  #       { library: "next.js",   version: null,    source: "html_pattern", evidence: "__NEXT_DATA__" },
+  #     ] }
+```
+
+Then for each detection:
+
+1. **Pinned version?** (e.g. `jquery 1.7.2`) — apply known-CVE knowledge:
+   - Do you remember CVEs that affect this version?
+   - If not certain: web search `<library> <version> CVE`, `<library> <version> security advisory`, `<library> <version> retire.js`.
+   - Concrete sources to consult: GitHub Advisory Database, retire.js's public `jsrepository.json` on GitHub, Snyk Vulnerability DB, NPM audit, the project's own changelog (often calls out security fixes in the version-N-after summary).
+2. **Detection without version** (`version: null` — e.g. Next.js detected via `__NEXT_DATA__` but no version visible) — try `follow_scripts: true` to fetch `/_next/static/chunks/*` and look for inline version comments; if still no version, ask the user to inspect manually (`browser_navigate` + DevTools).
+3. **Generic CDN URL** (e.g. `bundle.min.js` with no version in filename) — set `follow_scripts: true` so the tool fetches the body and tries to extract a version from the inline header comment.
+4. **For each library version that's outdated OR has a known CVE you've confirmed**, file a finding. Severity follows the CVE itself (use NVD CVSS scores or vendor advisories). Use this output style:
+
+```
+[severity] Outdated <library> <version> with <known-vuln-type>
+  evidence:    <library>@<version> detected via <source> at <script_url-if-present>
+               + your CVE-research citation (URL, advisory id)
+  detail:      what the CVE allows, why it matters in this context
+  fix:         upgrade to <safe-version>; immediate mitigations if upgrade isn't possible
+```
+
+**Anti-pattern**: don't report "outdated library" findings without a SPECIFIC CVE or known issue. "jQuery 1.7.2 is old" is not a finding; "jQuery 1.7.2 is vulnerable to CVE-2011-4969 (selector-based XSS via location.hash)" is. The version-detection step is exact; the CVE-attribution step is your research.
+
+**When to run js_library_audit**: at the start of every engagement (right after `crawl_target`), and again after each significant navigation in `browser_open`, since SPAs lazy-load chunks. Repeat per-host across subdomains — different teams ship different stacks.
 
 ### Auto-Vulnerability-Hunt During Every Browser Flow
 
@@ -150,18 +188,15 @@ browser_resource_hints      # robots.txt + sitemap.xml + .well-known/* + script 
 
 ### OAST Blind-Vuln Hunt
 
-WonderSuite's OAST runs entirely in-process — no external server like Burp Collaborator needed. Path-correlated callbacks mean each payload knows which request triggered it.
+WonderSuite's OAST listeners (DNS / HTTP / SMTP) run in-process — no external server like Burp Collaborator needed. As of v0.3.11 the standalone `oast_*` MCP tools are **no longer exposed to the agent** (they were dropping ~8 entries into the tool list and most agents lost the workflow in the noise). The functionality is intact and available two ways:
 
-```
-oast_start_server                              # auto-started by oast_generate_payload too
-oast_self_test                                 # callback-chain sanity check (do this once per session)
-oast_generate_payload({purpose: "rce"})        # returns {payload, callback_url, path}
-# inject `payload` into params via fuzz_request or browser actions
-oast_verify({path})                            # poll for hits; returns matching interactions
+1. **Through `active_scan({with_oast: true})`** — the recommended path. The scanner generates correlation IDs, fires blind_cmdi / blind_ssrf / blind_sqli_dns / log4shell payloads, and reports OAST callbacks back in the findings list. One tool call covers the whole blind-vuln chain:
+   ```
+   active_scan({target, with_oast: true})       # blind probes + scanner findings, all in one
+   ```
+2. **Through the OAST UI panel** — start listeners, view live interactions, generate one-off payloads. Useful when you want to inject manually via `browser_*` or `send_request`. Ask the user to drive the UI; the agent observes results via `proxy_get_traffic` (since blind payloads injected by you go through the local proxy).
 
-# Or just enable OAST mode on the active scan:
-active_scan({target, with_oast: true})         # blind_cmdi + blind_ssrf + log4shell + blind_sqli_dns probes
-```
+If you need the raw OAST MCP surface back (single payloads, manual polling), it's still in the Rust source — un-comment the dispatch + tool_definitions entries in `mcp/handlers/mod.rs` and `mcp/mod.rs`. The v0.3.11 cut was a context-budget decision, not a deprecation.
 
 ### Auth + JWT Analysis
 
@@ -216,7 +251,7 @@ generate_report({format: "markdown" | "json", scan_id?})
 
 ---
 
-## Tool Reference (85 tools)
+## Tool Reference (91 tools)
 
 ### HTTP / Send Request (the workhorses)
 
@@ -287,10 +322,9 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - `browser_wait_for({action, selector|text|url, timeout_ms})` — synchronisation.
 - `browser_replay_to_proxy({request_id})` — push a CDP-captured request into the proxy's Repeater.
 
-**Diagnostic:**
-- `browser_stealth_check` — loads an in-memory test page, drives a click + type, reports `isTrusted` counts per event type, `navigator.webdriver` state, whether the AI cursor leaked into page DOM, and an overall `stealth_score` + verdict. Run after switching `stealth_profile`.
+**Diagnostic (UI-only as of v0.3.11):** the stealth-self-test moved out of the MCP surface — open the WonderBrowser settings panel and click "Run stealth check". It reports `isTrusted` counts per event type, `navigator.webdriver` state, cursor-overlay leakage check, and an overall score.
 
-**AI cursor lives in a closed Shadow DOM** — visible to the user, completely invisible to page-JS (can't be queried, mutated, or detected). Updates by listening to native mousemove/click/keydown events fired by the CDP input pipeline. Self-heals via MutationObserver + 1.5s polling.
+**AI cursor (v0.3.11 fix):** lives on `documentElement`, **only in the top frame** (sub-frames like auth-widget iframes no longer spawn ghost cursors). Updates via CDP-driven `__ws_cursor_animate` calls; back-to-back animations cancel each other via a generation token. Self-heals via MutationObserver + 1.5 s polling.
 
 ### Scanner (active + passive)
 
@@ -300,11 +334,9 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - **`payload_manager`** — manage wordlists from SecLists / PayloadsAllTheThings.
 - **`generate_report({format})`** — final report from accumulated findings.
 
-### OAST (4 tools)
+### OAST (not in MCP surface as of v0.3.11)
 
-- **`oast_generate_payload({purpose})`** — returns `{payload, callback_url, path}`. Inject `payload` somewhere; poll with `oast_verify({path})`.
-- **`oast_verify({path})`** — poll for hits.
-- **`oast_start_dns_server` / `oast_start_smtp_server`** — start the DNS / SMTP callback channels for protocols that don't do HTTP.
+The 8 `oast_*` tools were removed from the agent's tool list in v0.3.11 to trim the context budget. OAST functionality is still 100% available — drive it via `active_scan({with_oast: true})` (recommended; the scanner generates correlation IDs and reports callbacks back in its findings list) or ask the user to operate the OAST UI panel and observe results via `proxy_get_traffic`.
 
 ### Recon / OSINT
 
@@ -319,6 +351,40 @@ The `stealth_profile` param is optional per call (`fast` | `human` | `paranoid`)
 - **`js_link_finder({js_url})`** — extract endpoints/paths/parameters from JS bundles.
 - **`graphql_introspect({url})`** — discover GraphQL schema (works against many "disabled introspection" servers).
 - **`dns_resolve`**, **`tech_detect`**, **`analyze_cdn_waf`** — basics.
+
+### Port Recon (5 tools — v0.3.7)
+
+In-process port scanner with **three real engines**: TCP Connect (no admin), TCP SYN (raw sockets, requires CAP_NET_RAW / root / Npcap), and UDP (no admin, response-based detection). Service detection runs in-process against **187 probes + 12k match patterns** from nmap's canonical `nmap-service-probes` file — no nmap subprocess. Adaptive concurrency via Little's Law (`in_flight = pps × RTT`).
+
+- **`port_scan({target, ports, mode, timing, service_detect, intensity, max_wait_ms})`** — scan a single host. `ports`: `"top-100"` (default), `"top-1000"`, `"80,443"`, `"1-1024"`, `"all"`. `mode`: `"connect" | "syn" | "udp"` (defaults `connect`). `timing`: T0 paranoid → T6 ludicrous (default T3). Returns `{scan_id, total_probes, targets_resolved, ports_count, summary}` — summary has `total_open`, `by_service` histogram, and a 50-item sample.
+- **`port_scan_range({targets: [...], ports, mode, exclude_cdn, max_hosts, max_wait_ms})`** — scan multiple hosts (CIDR, range, hostnames). `exclude_cdn` drops known CDN ranges. **Be considerate** — `/24` × top-1000 = ~256k probes. SYN mode is much faster than connect for large ranges.
+- **`service_detect({host, port, intensity, timeout_ms})`** — surgical service detection on a known-open port. Runs the full nmap-service-probes pipeline: NULL banner read → port-relevant active probes by rarity ≤ intensity → fallback chain. Returns `{service: {name, product, version, banner, tls_cn, tls_san, info, hostname, os, device, cpe[]}}`.
+- **`banner_grab({host, port, max_bytes, timeout_ms, prefer_send?})`** — raw banner read. No probe synthesis. Returns banner string if printable + hex either way. Use for custom protocols.
+- **`port_scan_results({scan_id, offset, limit, open_only})`** — paginated drill-down for a previously-issued scan_id.
+
+Scan-mode decision:
+```
+Quick triage, no admin               → mode="connect"
+Large subnet, speed + stealth, admin → mode="syn"  (needs CAP_NET_RAW / root / Npcap)
+DNS / SNMP / NTP / IPMI / SIP recon  → mode="udp"
+```
+
+Tool-by-tool decision:
+```
+Single host, fast triage           → port_scan(target, ports="top-100")
+Subnet sweep                       → port_scan_range(targets, exclude_cdn=true)
+Already know port open, want svc   → service_detect(host, port)
+Raw bytes for custom regex match   → banner_grab(host, port, prefer_send="...")
+Drill into a previous scan's full result set → port_scan_results(scan_id, offset, limit)
+```
+
+Privilege model:
+- **Linux SYN**: needs `CAP_NET_RAW`. Tell the user: `sudo setcap cap_net_raw,cap_net_admin=+eip /path/to/wondersuite`. Without it the engine **gracefully falls back to TCP connect** so the scan still produces results.
+- **macOS SYN**: needs `sudo` to run WonderSuite. No `setcap` equivalent.
+- **Windows SYN**: uses **bundled WinDivert** (LGPLv3, EV-signed, ~140 KB). First SYN scan triggers a single UAC prompt to install the kernel driver as a system service. No external download. HVCI / Memory Integrity must be disabled for the driver to load — the UI surfaces this clearly and falls back to TCP connect when HVCI is enforced.
+- **UDP**: no admin needed. Without raw ICMP we can't distinguish `closed` from `open|filtered` (same limitation as nmap UDP without root).
+
+Auto-finding hooks: when `service_detect` reports an `auth_required:false` on a sensitive service (Redis, Mongo, Memcached, anonymous FTP, Elasticsearch) — emit a finding via the scanner-finding event and mention it explicitly. Look for `product` strings matching known CVE-prone software (old OpenSSH, old nginx, etc.) and cross-reference against findings.
 
 ### Codec / Crypto
 
@@ -418,6 +484,6 @@ Severity scale: `critical | high | medium | low | info`. Use `info` for things l
 
 ## One-Liner You Can Steal
 
-> "I'm wired into a local WonderSuite MCP server (85 tools — proxy / browser / scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
+> "I'm wired into a local WonderSuite MCP server (91 tools — proxy / browser / scanner / port scanner / OAST / recon / codec). Tell me a target you have permission to test, and I'll start with a passive sweep before anything noisy."
 
 That's the right opening line for any new engagement.

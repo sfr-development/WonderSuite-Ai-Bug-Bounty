@@ -156,9 +156,25 @@ fn build_client(
         .emulation(profile.to_emulation())
         // We're a proxy: follow redirects manually so the browser sees them.
         .redirect(WreqPolicy::none())
-        // Connection pool — small, short-lived.
+        // Connection pool — short-lived so we don't reuse a stale H2 socket
+        // that the server GOAWAY-ed in the meantime. Cloudflare/Akamai send
+        // GOAWAY at ~10-20s of idle; wreq has no `http2_keep_alive_*` PING
+        // knobs (verified against wreq 5.x ClientBuilder), so the only
+        // mitigation is to evict idle conns *before* they can go stale.
+        // 5s is well under the typical CDN idle-GOAWAY threshold.
         .pool_max_idle_per_host(2)
-        .pool_idle_timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(5))
+        // Built-in wreq retry on transient h2 errors (REFUSED_STREAM,
+        // PROTOCOL_ERROR after GOAWAY). With a fresh pool eviction policy
+        // this rarely fires, but it's the last line of defence and costs
+        // nothing on the happy path.
+        .http2_max_retry_count(2)
+        // TCP-level keep-alive — helps detect dead intermediaries (NAT
+        // timeouts, load-balancer session-table expiry) before we try to
+        // reuse the socket and get hit with a RST/PROTOCOL_ERROR.
+        .tcp_keepalive(Duration::from_secs(15))
+        .tcp_keepalive_interval(Duration::from_secs(5))
+        .tcp_keepalive_retries(3u32)
         .timeout(Duration::from_secs(60))
         // Fail fast on connect so a single dead host doesn't stall the proxy.
         .connect_timeout(Duration::from_secs(10))
@@ -170,7 +186,19 @@ fn build_client(
         .no_proxy()
         // Bundle Mozilla's WebPKI root CAs so BoringSSL can validate upstream
         // certs without the OS trust store. Same trust anchors Firefox uses.
-        .cert_store(mozilla_root_store());
+        .cert_store(mozilla_root_store())
+        // Pentest-tool semantics — DISABLE upstream cert validation. We're
+        // an intercepting proxy: the user expects to be able to MITM any
+        // target including self-signed certs, expired certs, hostname/SAN
+        // mismatches, and direct IP-address connections (where the upstream
+        // cert is for a domain, never the IP literal). Burp Suite, mitmproxy,
+        // and Caido all do this by default. The reqwest fallback path
+        // (engine.rs build_default_client) already does
+        // `.danger_accept_invalid_certs(true)`; this aligns the wreq path.
+        // Validating CAs on browser→proxy is still done by the user's OS
+        // trust store via our local CA — only the proxy→origin hop is
+        // affected here.
+        .cert_verification(false);
 
     if let Some(up) = upstream {
         let url = match (&up.username, &up.password) {

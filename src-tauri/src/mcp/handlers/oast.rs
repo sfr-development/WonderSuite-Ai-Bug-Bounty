@@ -90,6 +90,78 @@ pub async fn handle_oast_start_smtp_server(params: &serde_json::Value) -> Handle
     Ok(serde_json::json!({"status": "smtp_server_started", "port": port}))
 }
 
+/// v0.3.10: explicit HTTP-listener bring-up tool. Previously only auto-started
+/// inside `oast_generate_payload`. Exposing it lets an agent prepare the
+/// listener before generating multiple payloads.
+pub async fn handle_oast_start_http_server(params: &serde_json::Value) -> HandlerResult {
+    let port = params["port"].as_u64().unwrap_or(8888) as u16;
+    let actual_port = crate::oast::ensure_http_listener(port).await?;
+    Ok(serde_json::json!({
+        "status": "http_server_started",
+        "port": actual_port,
+        "callback_host": crate::oast::callback_host(),
+        "bind": crate::oast::bind_address(),
+    }))
+}
+
+/// v0.3.10: poll the OAST interaction log. The missing piece in the OAST
+/// workflow — previously the agent fired blind payloads but had no
+/// MCP-accessible way to see callbacks. Poll model: pass `since_offset`
+/// (number of entries seen on the previous poll) to get only new ones; the
+/// response includes `next_offset` to pass on the next call. Combine with
+/// `correlation_id` to filter to a specific payload's callbacks, or `kind`
+/// to filter by interaction type.
+pub async fn handle_oast_poll_interactions(params: &serde_json::Value) -> HandlerResult {
+    let since_offset = params["since_offset"].as_u64().unwrap_or(0) as usize;
+    let corr = params["correlation_id"].as_str();
+    let kind = params["kind"].as_str(); // "http" | "dns" | "smtp" filter
+    let limit = params["limit"].as_u64().unwrap_or(200) as usize;
+
+    let log = crate::oast::get_interactions().lock().await;
+    let total = log.len();
+    let next_offset = total;
+
+    let interactions: Vec<&crate::oast::OastInteraction> = log
+        .iter()
+        .skip(since_offset)
+        .filter(|i| {
+            if let Some(cid) = corr {
+                i.correlation_id.contains(cid) || i.raw_data.contains(cid)
+            } else {
+                true
+            }
+        })
+        .filter(|i| if let Some(k) = kind { i.interaction_type.eq_ignore_ascii_case(k) } else { true })
+        .take(limit)
+        .collect();
+
+    Ok(serde_json::json!({
+        "total_in_log": total,
+        "returned": interactions.len(),
+        "next_offset": next_offset,
+        "interactions": interactions,
+    }))
+}
+
+/// v0.3.10: surface OAST listener status for the agent — which listeners
+/// are running, on what ports, with what host/bind.
+pub async fn handle_oast_status(_params: &serde_json::Value) -> HandlerResult {
+    let http_port = crate::oast::http_listener_port();
+    let log = crate::oast::get_interactions().lock().await;
+    Ok(serde_json::json!({
+        "http_server_port": http_port,
+        "callback_host": crate::oast::callback_host(),
+        "bind_address": crate::oast::bind_address(),
+        "interactions_count": log.len(),
+    }))
+}
+
+/// v0.3.10: clear the interaction log. Useful before a fresh OAST campaign.
+pub async fn handle_oast_clear(_params: &serde_json::Value) -> HandlerResult {
+    crate::oast::get_interactions().lock().await.clear();
+    Ok(serde_json::json!({"status": "cleared"}))
+}
+
 pub async fn handle_oast_verify(params: &serde_json::Value) -> HandlerResult {
     let action = params["action"].as_str().unwrap_or("self_test");
     let port = params["port"].as_u64().unwrap_or(8888) as u16;

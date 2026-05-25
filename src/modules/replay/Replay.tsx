@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { Send, Plus, X, ArrowRight, Loader2, Copy, Clock, Code, Settings2, ClipboardPaste } from 'lucide-react';
 import { useReplayStore, useAppStore } from '../../stores';
 import { invoke } from '@tauri-apps/api/core';
-import { HttpViewer } from '../../components/shared/HttpViewer';
 import './Replay.css';
 
 /** Best-effort parser for pasted requests. Accepts:
@@ -171,43 +170,6 @@ export function Replay() {
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
 
-  const [splitWidth, setSplitWidth] = useState(50);
-  const [isDragging, setIsDragging] = useState(false);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (!isDragging) return;
-    const container = document.querySelector('.replay-panels');
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const percentage = ((e.clientX - rect.left) / rect.width) * 100;
-    if (percentage > 15 && percentage < 85) {
-      setSplitWidth(percentage);
-    }
-  }, [isDragging]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    } else {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    }
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, handleMouseMove, handleMouseUp]);
-
   const handleImport = () => {
     setImportError(null);
     const parsed = parsePastedRequest(importText);
@@ -275,7 +237,7 @@ export function Replay() {
         const lines = tab.requestRaw.split('\n');
         let bodyStartIdx = -1;
         for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].replace('\r', '');
+          const line = lines[i].replace(/\r/g, '');
           if (line === '') { bodyStartIdx = i + 1; break; }
           const colonIdx = line.indexOf(':');
           if (colonIdx > 0) {
@@ -358,8 +320,23 @@ export function Replay() {
 
   const copyCurl = () => {
     if (!tab) return;
-    const curl = `curl -X ${tab.method} '${tab.url}'`;
-    navigator.clipboard.writeText(curl);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToCurl } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToCurl({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
+  };
+
+  // v0.3.16: copy current request as Python (requests) / Node (fetch).
+  const copyPython = () => {
+    if (!tab) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToPython } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToPython({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
+  };
+  const copyNode = () => {
+    if (!tab) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { requestToNode } = require('../../utils/requestExport');
+    navigator.clipboard.writeText(requestToNode({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
   };
 
   const startRename = (id: string, name: string) => {
@@ -457,8 +434,10 @@ export function Replay() {
 
             <div className="replay-toolbar-divider" />
 
-            <button className="replay-action-btn" onClick={duplicateTab} title="Duplicate tab"><Copy size={12} /></button>
-            <button className="replay-action-btn" onClick={copyCurl} title="Copy as cURL"><Code size={12} /></button>
+            <button className="replay-action-btn" onClick={duplicateTab} title="Duplicate tab" aria-label="Duplicate tab"><Copy size={12} /></button>
+            <button className="replay-action-btn" onClick={copyCurl} title="Copy as cURL" aria-label="Copy as cURL"><Code size={12} /></button>
+            <button className="replay-action-btn" onClick={copyPython} title="Copy as Python (requests)" aria-label="Copy as Python">PY</button>
+            <button className="replay-action-btn" onClick={copyNode} title="Copy as Node (fetch)" aria-label="Copy as Node">JS</button>
             <button className={`replay-action-btn ${showImport ? 'active' : ''}`} onClick={() => setShowImport(s => !s)} title="Import raw HTTP / cURL / fetch">
               <ClipboardPaste size={12} />
             </button>
@@ -534,7 +513,7 @@ export function Replay() {
           )}
 
           <div className="replay-panels">
-            <div className="replay-panel" style={{ flex: `0 0 ${splitWidth}%` }}>
+            <div className="replay-panel">
               <div className="replay-panel-header">
                 <span className="replay-panel-title">Request</span>
                 <div className="replay-panel-tabs">
@@ -544,27 +523,21 @@ export function Replay() {
                 </div>
                 <button className="replay-copy-btn" onClick={copyRequest} title="Copy request"><Copy size={10} /></button>
               </div>
-              <div className="replay-editor" style={{ padding: 0 }}>
+              <div className="replay-editor">
                 {reqView === 'raw' && (
-                  <HttpViewer 
-                    value={tab.requestRaw} 
-                    editable={true} 
-                    onChange={(val) => updateTab(tab.id, { requestRaw: val })}
-                    placeholder={`${tab.method} / HTTP/1.1\nHost: example.com\nAccept: */*`}
-                  />
+                  <textarea value={tab.requestRaw} onChange={(e) => updateTab(tab.id, { requestRaw: e.target.value })}
+                    placeholder={`${tab.method} / HTTP/1.1\nHost: example.com\nAccept: */*`} spellCheck={false} />
                 )}
                 {reqView === 'headers' && (
-                  <HttpViewer value={(tab.requestRaw || '').split('\n\n')[0]} />
+                  <div className="replay-editor-readonly">{(tab.requestRaw || '').split('\n\n')[0]}</div>
                 )}
                 {reqView === 'hex' && (
-                  <HttpViewer value={toHex(tab.requestRaw || '')} isHex={true} />
+                  <pre className="replay-hex">{toHex(tab.requestRaw || '')}</pre>
                 )}
               </div>
             </div>
 
-            <div className="replay-splitter" onMouseDown={handleMouseDown} />
-
-            <div className="replay-panel" style={{ flex: '1 1 0%', minWidth: 0 }}>
+            <div className="replay-panel">
               <div className="replay-panel-header">
                 <span className="replay-panel-title">Response</span>
                 <div className="replay-panel-meta">
@@ -585,12 +558,12 @@ export function Replay() {
                 </div>
                 <button className="replay-copy-btn" onClick={copyResponse} title="Copy response"><Copy size={10} /></button>
               </div>
-              <div className="replay-editor" style={{ padding: 0 }}>
+              <div className="replay-editor">
                 {tab.responseRaw ? (
                   respView === 'hex' ? (
-                    <HttpViewer value={toHex(tab.responseRaw)} isHex={true} />
+                    <pre className="replay-hex">{toHex(tab.responseRaw)}</pre>
                   ) : (
-                    <HttpViewer value={formatBody(tab.responseRaw, respView)} fileName={tab.url} />
+                    <div className="replay-editor-readonly">{formatBody(tab.responseRaw, respView)}</div>
                   )
                 ) : (
                   <div className="replay-empty-response">
