@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Security
+- Patch `openssl` 0.10.79 → 0.10.80 (GHSA-phqj-4mhp-q6mq, MEDIUM,
+  transitive via `native-tls`).
+- Patch `ws` 8.20.0 → 8.21.0 (GHSA-58qx-3vcg-4xpx, MEDIUM, transitive
+  npm dep).
+
+### Dependencies
+- Bump `tauri` 2.11.1 → 2.11.2 (closes Dependabot PR #27).
+- Bump `tauri-build` 2.6.1 → 2.6.2 (closes #22).
+- Bump `dashmap` 6.1.0 → 6.2.1 (closes #24).
+- Bump `serde_json` 1.0.149 → 1.0.150 (closes #32).
+- Bump `react` + `react-dom` 19.1.0 → 19.2.6 (closes #31).
+- Bump `@types/react` 19.1.8 → 19.2.15.
+- Bump `@tauri-apps/cli` 2.11.1 → 2.11.2 (closes #25).
+- Bump `zip` 2.4.2 → 4.6.1 (closes #26; major, only used for read-only
+  `ZipArchive::new()` in `chromium/extract.rs`).
+- Bump `@google/genai` 1.50.1 → 2.6.0 (closes #34; the package has no
+  imports anywhere in the repo — likely safe to drop entirely, but the
+  bump silences Dependabot for now).
+- `lucide-react` 1.16.0 already current — PR #33 obsolete.
+- Held: PR #29 (`typescript` 5.8 → 6.0 + `vite` 7 → 8 +
+  `@vitejs/plugin-react` 4 → 6 in one shot — wants a dedicated test
+  pass before merging).
+
 ## [0.3.22] — 2026-05-25
 
 ### Recovery release — sorry about v0.3.21
