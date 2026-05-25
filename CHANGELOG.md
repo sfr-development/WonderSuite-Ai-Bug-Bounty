@@ -22,9 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Bump `@tauri-apps/cli` 2.11.1 → 2.11.2 (closes #25).
 - Bump `zip` 2.4.2 → 4.6.1 (closes #26; major, only used for read-only
   `ZipArchive::new()` in `chromium/extract.rs`).
-- Bump `@google/genai` 1.50.1 → 2.6.0 (closes #34; the package has no
-  imports anywhere in the repo — likely safe to drop entirely, but the
-  bump silences Dependabot for now).
+- Drop `@google/genai` — was listed as a runtime dep but never imported
+  anywhere in the codebase. Removing it cuts 445 lines from
+  `package-lock.json` (drops protobufjs + transitive chain).
 - `lucide-react` 1.16.0 already current — PR #33 obsolete.
 - Bump `typescript` ~5.8.3 → ~6.0.3 (closes #29; major).
 - Bump `vite` ^7.0.4 → ^8.0.14 (major).
