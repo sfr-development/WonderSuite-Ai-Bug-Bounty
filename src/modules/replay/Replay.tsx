@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Send, Plus, X, ArrowRight, Loader2, Copy, Clock, Code, Settings2, ClipboardPaste } from 'lucide-react';
 import { useReplayStore, useAppStore } from '../../stores';
 import { invoke } from '@tauri-apps/api/core';
+import { requestToCurl, requestToPython, requestToNode } from '../../utils/requestExport';
 import './Replay.css';
 
 /** Best-effort parser for pasted requests. Accepts:
@@ -320,22 +321,16 @@ export function Replay() {
 
   const copyCurl = () => {
     if (!tab) return;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { requestToCurl } = require('../../utils/requestExport');
     navigator.clipboard.writeText(requestToCurl({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
   };
 
   // v0.3.16: copy current request as Python (requests) / Node (fetch).
   const copyPython = () => {
     if (!tab) return;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { requestToPython } = require('../../utils/requestExport');
     navigator.clipboard.writeText(requestToPython({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
   };
   const copyNode = () => {
     if (!tab) return;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { requestToNode } = require('../../utils/requestExport');
     navigator.clipboard.writeText(requestToNode({ method: tab.method, url: tab.url, requestRaw: tab.requestRaw }));
   };
 

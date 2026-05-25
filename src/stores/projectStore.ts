@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ProjectInfo, ProjectConfig, CreateProjectOpts, MemoryStats } from '../types';
 import { useAppStore, useReplayStore } from './index';
+import { useAppSettings } from './appSettingsStore';
 import { gatherProjectState, applyProjectState, parseProjectStateBlob } from '../utils/projectState';
 
 const LAST_PROJECT_KEY = 'ws_last_active_project_id';
@@ -123,11 +124,9 @@ let autoSaveTimer: ReturnType<typeof setInterval> | null = null;
 function startAutoSave(projectId: string) {
   stopAutoSave();
   // v0.3.16: read the user-configurable autosave interval from the
-  // app-settings store (default 30 s). Lazy import to avoid a cycle.
+  // app-settings store (default 30 s).
   let intervalMs = 30000;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { useAppSettings } = require('./appSettingsStore');
     intervalMs = Math.max(5, Math.min(3600, useAppSettings.getState().autosaveIntervalSec)) * 1000;
   } catch {}
   autoSaveTimer = setInterval(async () => {
