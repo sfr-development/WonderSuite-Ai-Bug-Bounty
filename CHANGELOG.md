@@ -26,9 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
   imports anywhere in the repo — likely safe to drop entirely, but the
   bump silences Dependabot for now).
 - `lucide-react` 1.16.0 already current — PR #33 obsolete.
-- Held: PR #29 (`typescript` 5.8 → 6.0 + `vite` 7 → 8 +
-  `@vitejs/plugin-react` 4 → 6 in one shot — wants a dedicated test
-  pass before merging).
+- Bump `typescript` ~5.8.3 → ~6.0.3 (closes #29; major).
+- Bump `vite` ^7.0.4 → ^8.0.14 (major).
+- Bump `@vitejs/plugin-react` ^4.6.0 → ^6.0.2 (major).
+- Replaced four legacy `require()` lazy loads with static top-level
+  imports — TS 6 no longer tolerates `require` without `@types/node`
+  in browser code. No runtime behavior change.
 
 ## [0.3.22] — 2026-05-25
 
