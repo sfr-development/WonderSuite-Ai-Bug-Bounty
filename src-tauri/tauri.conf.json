@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WonderSuite",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "identifier": "com.wondersuite.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,7 +30,7 @@
         "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src": "'self' https://fonts.gstatic.com",
         "img-src": "'self' data: blob: asset: http://asset.localhost",
-        "connect-src": "'self' ipc: http://ipc.localhost https://generativelanguage.googleapis.com",
+        "connect-src": "'self' ipc: http://ipc.localhost",
         "object-src": "'none'",
         "base-uri": "'self'",
         "form-action": "'self'"

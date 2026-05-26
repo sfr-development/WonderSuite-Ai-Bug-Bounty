@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.23] — 2026-05-26
+
 ### Live MCP→UI visibility (closes the "AI works behind the user's back" gap)
 
 Background: when an AI agent drives WonderSuite via the MCP server, the
@@ -108,6 +110,14 @@ token) is left as a follow-up so it doesn't break existing client configs.
 - Replaced four legacy `require()` lazy loads with static top-level
   imports — TS 6 no longer tolerates `require` without `@types/node`
   in browser code. No runtime behavior change.
+
+### CSP cleanup
+- Removed `https://generativelanguage.googleapis.com` from `connect-src`
+  (`tauri.conf.json`). Was carried over from the era when `@google/genai`
+  shipped as a runtime dep; the package was dropped earlier in this
+  release cycle and nothing else in `src/` talks to that origin. CSP is
+  now strictly `'self' ipc: http://ipc.localhost` — no third-party
+  endpoints reachable from the webview.
 
 ## [0.3.22] — 2026-05-25
 
