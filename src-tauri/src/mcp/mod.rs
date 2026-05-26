@@ -1234,9 +1234,7 @@ async fn origin_guard(
 ) -> Result<axum::response::Response, axum::http::StatusCode> {
     if let Some(origin) = headers.get(axum::http::header::ORIGIN) {
         let s = origin.to_str().unwrap_or("");
-        let ok = s.starts_with("tauri://")
-            || s == "http://tauri.localhost"
-            || s == "https://tauri.localhost";
+        let ok = s.starts_with("tauri://") || s == "http://tauri.localhost" || s == "https://tauri.localhost";
         if !ok {
             eprintln!("[MCP] rejected request from foreign Origin: {}", s);
             return Err(axum::http::StatusCode::FORBIDDEN);

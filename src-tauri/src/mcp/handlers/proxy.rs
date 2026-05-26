@@ -868,12 +868,8 @@ pub async fn handle_proxy_annotate_traffic(params: &serde_json::Value) -> Handle
 
     // v0.3.23: tell the UI so the row re-renders with the new color/note
     // without waiting for the next traffic-tab refresh.
-    ps.emit(ProxyEvent::TrafficAnnotated {
-        id: traffic_id,
-        notes: notes.clone(),
-        color: color.clone(),
-    })
-    .await;
+    ps.emit(ProxyEvent::TrafficAnnotated { id: traffic_id, notes: notes.clone(), color: color.clone() })
+        .await;
 
     Ok(serde_json::json!({
         "traffic_id": traffic_id,
