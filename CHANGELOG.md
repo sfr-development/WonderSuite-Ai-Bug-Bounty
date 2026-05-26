@@ -6,6 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Live MCP→UI visibility (closes the "AI works behind the user's back" gap)
+
+Background: when an AI agent drives WonderSuite via the MCP server, the
+backend mutates shared state, but the previous architecture had **no path
+for MCP handlers to fire Tauri events**. The UI only saw MCP-initiated
+changes when it next polled the relevant Tauri command. So:
+
+- AI calls `proxy_clear_traffic` → UI Traffic tab stayed full until the
+  next 1-second poll tick.
+- AI calls `proxy_annotate_traffic` → the row's color/note didn't appear
+  until the user clicked away and back.
+- AI calls `proxy_add_*_rule` / `proxy_set_upstream` → the Settings tab
+  showed stale rule lists indefinitely.
+
+Fix:
+
+- **`mcp::set_app_handle()` / `mcp::emit_event()` helper** (mcp/mod.rs).
+  The Tauri `AppHandle` is stashed in `MCP_APP_HANDLE` (OnceLock) during
+  `setup()`, parallel to the existing `mcp::browser::set_app_handle`. MCP
+  handlers can now fire arbitrary Tauri events from any subsystem without
+  the JSON-RPC dispatcher having to thread `AppHandle` through.
+
+- **4 new `ProxyEvent` variants** (proxy/state.rs):
+  `traffic_cleared`, `traffic_annotated`, `rules_changed`, `upstream_changed`.
+  Additive — existing frontend listeners ignore unknown types so nothing
+  breaks; the new types just deliver more information when consumed.
+
+- **MCP handlers wired up** (mcp/handlers/proxy.rs): every `add_*` /
+  `remove_*` / `set_upstream` / `annotate` handler now calls
+  `ps.emit(ProxyEvent::…)` after mutation. `proxy_clear_traffic` was
+  fixed in `ProxyState::clear_traffic` itself so both the Tauri-command
+  path and the MCP-handler path emit.
+
+- **Frontend listeners updated**:
+  - `Traffic.tsx` consumes `traffic_cleared` (empties the table) and
+    `traffic_annotated` (re-renders the single row).
+  - `Sitemap.tsx` consumes `traffic_cleared` (clears the tree).
+  - `Settings.tsx` consumes `rules_changed` and `upstream_changed`
+    (re-fetches the four config arrays).
+
+### Security — local-origin guard on the MCP HTTP endpoint
+
+The MCP server has always bound `127.0.0.1` (so remote attackers can't
+reach it), but a local browser tab on the same machine could
+`fetch('http://localhost:3100/mcp')` and drive every registered tool
+without the user noticing. Legitimate MCP clients (Claude Code, Cursor,
+custom CLI tools) speak JSON-RPC directly and **do not** set an `Origin`
+header; browsers always do.
+
+New `origin_guard` middleware (mcp/mod.rs):
+- no `Origin` header → allow (legitimate CLI MCP clients)
+- `tauri://*` / `http://tauri.localhost` / `https://tauri.localhost`
+  → allow (our own webview)
+- anything else → 403
+
+This is one layer; a native local-attacker process with the right libs
+can still send no-Origin requests. The next step (per-install capability
+token) is left as a follow-up so it doesn't break existing client configs.
+
+### Known gaps documented in code (follow-up work)
+
+- **`mcp/handlers/websocket.rs` keeps an MCP-only WS connection pool.**
+  AI-initiated `websocket_connect` sessions land in `WS_CONNECTIONS` /
+  `WS_MESSAGES` LazyLocks and are **invisible** to the UI's WebSocket tab
+  (which reads from `proxy_state.websocket_messages`, the MITM-proxy
+  pool). Unification is a non-trivial refactor — for now, AI-side WS
+  sessions can be observed via `get_mcp_traffic` / `get_mcp_activity`.
+  Marked with a comment block at the top of `mcp/handlers/websocket.rs`.
+
+- **No MCP-side "cancel a UI-started operation" tool.** The UI can
+  cancel a long-running operation (the cancel flag in `ProxyState` is
+  shared with MCP handlers via `Arc`), but there's no MCP tool for an
+  AI to cancel a scan/crawl/fuzz that the user started in the UI. Adding
+  one (`cancel_running_operation` taking a category + id) is a clean
+  follow-up.
+
 ### Security
 - Patch `openssl` 0.10.79 → 0.10.80 (GHSA-phqj-4mhp-q6mq, MEDIUM,
   transitive via `native-tls`).

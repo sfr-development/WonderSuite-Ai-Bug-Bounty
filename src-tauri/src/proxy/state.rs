@@ -206,6 +206,16 @@ pub enum ProxyEvent {
     WebSocket { message: WebSocketMessage },
     #[serde(rename = "status")]
     Status { running: bool, port: u16, total_requests: usize },
+    // v0.3.23 — fired by MCP handlers (and Tauri commands going forward) so the
+    // UI re-renders live when an AI agent mutates state behind the scenes.
+    #[serde(rename = "traffic_cleared")]
+    TrafficCleared,
+    #[serde(rename = "traffic_annotated")]
+    TrafficAnnotated { id: u64, notes: String, color: String },
+    #[serde(rename = "rules_changed")]
+    RulesChanged { category: String },
+    #[serde(rename = "upstream_changed")]
+    UpstreamChanged,
 }
 
 /// Central proxy state shared across all tasks.
@@ -705,6 +715,10 @@ impl ProxyState {
 
     pub async fn clear_traffic(&self) {
         self.traffic.lock().await.clear();
+        // v0.3.23: fire so MCP-initiated clears are reflected live in the UI
+        // (Tauri-cmd clears come from the UI itself, so the redundant event is
+        // harmless — UI just re-renders an already-empty list).
+        self.emit(ProxyEvent::TrafficCleared).await;
     }
 
     pub async fn get_websocket_messages(&self) -> Vec<WebSocketMessage> {

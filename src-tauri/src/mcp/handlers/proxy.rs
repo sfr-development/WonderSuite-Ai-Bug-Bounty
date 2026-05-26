@@ -418,6 +418,8 @@ pub async fn handle_proxy_add_match_replace(params: &serde_json::Value) -> Handl
 
     ps.match_replace_rules.write().await.push(rule);
 
+    ps.emit(ProxyEvent::RulesChanged { category: "match_replace".to_string() }).await;
+
     Ok(serde_json::json!({
         "status": "added",
         "rule_id": id,
@@ -468,6 +470,8 @@ pub async fn handle_proxy_add_tls_passthrough(params: &serde_json::Value) -> Han
 
     ps.tls_passthrough.write().await.push(entry);
 
+    ps.emit(ProxyEvent::RulesChanged { category: "tls_passthrough".to_string() }).await;
+
     Ok(serde_json::json!({
         "status": "added",
         "entry_id": id,
@@ -498,6 +502,8 @@ pub async fn handle_proxy_set_upstream(params: &serde_json::Value) -> HandlerRes
     };
 
     *ps.upstream_proxy.write().await = config;
+
+    ps.emit(ProxyEvent::UpstreamChanged).await;
 
     Ok(serde_json::json!({
         "status": "configured",
@@ -578,6 +584,8 @@ pub async fn handle_proxy_add_interception_rule(params: &serde_json::Value) -> H
     };
 
     ps.interception_rules.write().await.push(rule);
+
+    ps.emit(ProxyEvent::RulesChanged { category: "interception".to_string() }).await;
 
     Ok(serde_json::json!({
         "status": "added",
@@ -751,36 +759,44 @@ pub async fn handle_proxy_remove_interception_rule(params: &serde_json::Value) -
     let id = params["id"].as_str().ok_or("Missing rule id")?;
     let action = params["action"].as_str().unwrap_or("remove"); // "remove" or "toggle"
 
-    let mut rules = ps.interception_rules.write().await;
+    // Hold the rules write-guard only while mutating; drop before awaiting
+    // on ps.emit() to keep guards out of .await scopes.
+    let result = {
+        let mut rules = ps.interception_rules.write().await;
+        match action {
+            "toggle" => {
+                if let Some(rule) = rules.iter_mut().find(|r| r.id == id) {
+                    rule.enabled = !rule.enabled;
+                    Ok(serde_json::json!({
+                        "action": "toggled",
+                        "id": id,
+                        "enabled": rule.enabled,
+                        "name": rule.name,
+                    }))
+                } else {
+                    Err(format!("Rule '{}' not found", id))
+                }
+            }
+            _ => {
+                let before = rules.len();
+                rules.retain(|r| r.id != id);
+                if rules.len() < before {
+                    Ok(serde_json::json!({
+                        "action": "removed",
+                        "id": id,
+                        "remaining_rules": rules.len(),
+                    }))
+                } else {
+                    Err(format!("Rule '{}' not found", id))
+                }
+            }
+        }
+    };
 
-    match action {
-        "toggle" => {
-            if let Some(rule) = rules.iter_mut().find(|r| r.id == id) {
-                rule.enabled = !rule.enabled;
-                Ok(serde_json::json!({
-                    "action": "toggled",
-                    "id": id,
-                    "enabled": rule.enabled,
-                    "name": rule.name,
-                }))
-            } else {
-                Err(format!("Rule '{}' not found", id))
-            }
-        }
-        _ => {
-            let before = rules.len();
-            rules.retain(|r| r.id != id);
-            if rules.len() < before {
-                Ok(serde_json::json!({
-                    "action": "removed",
-                    "id": id,
-                    "remaining_rules": rules.len(),
-                }))
-            } else {
-                Err(format!("Rule '{}' not found", id))
-            }
-        }
+    if result.is_ok() {
+        ps.emit(ProxyEvent::RulesChanged { category: "interception".to_string() }).await;
     }
+    result
 }
 
 /// Remove or toggle a match/replace rule by ID.
@@ -789,36 +805,42 @@ pub async fn handle_proxy_remove_match_replace(params: &serde_json::Value) -> Ha
     let id = params["id"].as_str().ok_or("Missing rule id")?;
     let action = params["action"].as_str().unwrap_or("remove");
 
-    let mut rules = ps.match_replace_rules.write().await;
+    let result = {
+        let mut rules = ps.match_replace_rules.write().await;
+        match action {
+            "toggle" => {
+                if let Some(rule) = rules.iter_mut().find(|r| r.id == id) {
+                    rule.enabled = !rule.enabled;
+                    Ok(serde_json::json!({
+                        "action": "toggled",
+                        "id": id,
+                        "enabled": rule.enabled,
+                        "name": rule.name,
+                    }))
+                } else {
+                    Err(format!("Rule '{}' not found", id))
+                }
+            }
+            _ => {
+                let before = rules.len();
+                rules.retain(|r| r.id != id);
+                if rules.len() < before {
+                    Ok(serde_json::json!({
+                        "action": "removed",
+                        "id": id,
+                        "remaining_rules": rules.len(),
+                    }))
+                } else {
+                    Err(format!("Rule '{}' not found", id))
+                }
+            }
+        }
+    };
 
-    match action {
-        "toggle" => {
-            if let Some(rule) = rules.iter_mut().find(|r| r.id == id) {
-                rule.enabled = !rule.enabled;
-                Ok(serde_json::json!({
-                    "action": "toggled",
-                    "id": id,
-                    "enabled": rule.enabled,
-                    "name": rule.name,
-                }))
-            } else {
-                Err(format!("Rule '{}' not found", id))
-            }
-        }
-        _ => {
-            let before = rules.len();
-            rules.retain(|r| r.id != id);
-            if rules.len() < before {
-                Ok(serde_json::json!({
-                    "action": "removed",
-                    "id": id,
-                    "remaining_rules": rules.len(),
-                }))
-            } else {
-                Err(format!("Rule '{}' not found", id))
-            }
-        }
+    if result.is_ok() {
+        ps.emit(ProxyEvent::RulesChanged { category: "match_replace".to_string() }).await;
     }
+    result
 }
 
 /// Annotate a traffic entry — add notes, color highlighting, like Burp's highlighting.
@@ -826,24 +848,38 @@ pub async fn handle_proxy_annotate_traffic(params: &serde_json::Value) -> Handle
     let ps = proxy()?;
     let traffic_id = params["traffic_id"].as_u64().ok_or("Missing traffic_id")?;
 
-    let mut traffic = ps.traffic.lock().await;
-    let entry = traffic
-        .iter_mut()
-        .find(|e| e.id == traffic_id)
-        .ok_or(format!("Traffic entry {} not found", traffic_id))?;
+    // Mutate inside its own scope so the guard drops before we await on
+    // ps.emit(), avoiding any chance of holding the traffic-lock across .await.
+    let (notes, color, url) = {
+        let mut traffic = ps.traffic.lock().await;
+        let entry = traffic
+            .iter_mut()
+            .find(|e| e.id == traffic_id)
+            .ok_or(format!("Traffic entry {} not found", traffic_id))?;
 
-    if let Some(notes) = params["notes"].as_str() {
-        entry.notes = notes.to_string();
-    }
-    if let Some(color) = params["color"].as_str() {
-        entry.color = color.to_string();
-    }
+        if let Some(notes) = params["notes"].as_str() {
+            entry.notes = notes.to_string();
+        }
+        if let Some(color) = params["color"].as_str() {
+            entry.color = color.to_string();
+        }
+        (entry.notes.clone(), entry.color.clone(), entry.url.clone())
+    };
+
+    // v0.3.23: tell the UI so the row re-renders with the new color/note
+    // without waiting for the next traffic-tab refresh.
+    ps.emit(ProxyEvent::TrafficAnnotated {
+        id: traffic_id,
+        notes: notes.clone(),
+        color: color.clone(),
+    })
+    .await;
 
     Ok(serde_json::json!({
         "traffic_id": traffic_id,
-        "notes": entry.notes,
-        "color": entry.color,
-        "url": entry.url,
+        "notes": notes,
+        "color": color,
+        "url": url,
     }))
 }
 

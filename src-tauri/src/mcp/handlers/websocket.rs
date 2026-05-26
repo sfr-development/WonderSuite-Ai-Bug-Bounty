@@ -1,5 +1,14 @@
 use crate::mcp::types::HandlerResult;
 
+// KNOWN GAP (tracked separately): these two statics hold an MCP-only pool of
+// outbound WebSocket connections + their captured frames. The UI's WebSocket
+// module (`src/modules/websocket/`) reads from `proxy_state.websocket_messages`
+// (the MITM-proxy-MITM'd WS pool, populated by `proxy/engine.rs`), so anything
+// the AI opens via `websocket_connect` is invisible to the UI tab. Unifying
+// the two pools is a non-trivial refactor (this handler runs an independent
+// reqwest/tokio_tungstenite client; proxy/engine.rs runs the MITM-side). For
+// now AI-initiated WS sessions can only be observed via `get_mcp_traffic` /
+// `get_mcp_activity`. See CHANGELOG `[Unreleased]` for the follow-up plan.
 pub async fn handle_websocket_connect(params: &serde_json::Value) -> HandlerResult {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;

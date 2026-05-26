@@ -235,6 +235,11 @@ pub fn run() {
             // Stash the AppHandle so the MCP server (running on its own thread
             // with no Tauri state access) can launch the bundled browser etc.
             mcp::browser::set_app_handle(app.handle().clone());
+            // v0.3.23: also stash it for the general MCP emit-helper so non-browser
+            // MCP handlers can fire Tauri events to the UI (closes the "AI works
+            // behind the user's back" gap on proxy_clear_traffic, annotate, rule
+            // add/remove, etc.).
+            mcp::set_app_handle(app.handle().clone());
 
             let mcp: mcp::McpState = app.state::<mcp::McpState>().inner().clone();
             let mut server = mcp.blocking_lock();

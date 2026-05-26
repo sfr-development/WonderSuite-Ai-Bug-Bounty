@@ -966,7 +966,7 @@ function ProxySettings({ proxyPort, onPortChange }: { proxyPort: string; onPortC
   }, []);
 
   useEffect(() => {
-    (async () => {
+    const refetchRulesAndUpstream = async () => {
       try {
         const [cert, mr, tls, up, ir] = await Promise.all([
           invoke<any>('proxy_get_ca_cert').catch(() => null),
@@ -981,7 +981,27 @@ function ProxySettings({ proxyPort, onPortChange }: { proxyPort: string; onPortC
         setUpstream(up);
         setIntRules(ir);
       } catch {}
+    };
+
+    refetchRulesAndUpstream();
+
+    // v0.3.23: when an AI agent mutates rules via MCP (proxy_add_*, set_upstream)
+    // the backend fires `proxy-event` with rules_changed / upstream_changed.
+    // Refetch so the Settings panel re-renders without waiting for the user
+    // to navigate away and back.
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<any>('proxy-event', (event) => {
+          const t = event.payload?.type;
+          if (t === 'rules_changed' || t === 'upstream_changed') {
+            refetchRulesAndUpstream();
+          }
+        });
+      } catch {}
     })();
+    return () => { unlisten?.(); };
   }, []);
 
   const startProxy = async () => { try { await invoke('proxy_start', { port: parseInt(proxyPort) }); setProxyRunning(true); } catch (e) { console.error(e); alert(e); } };

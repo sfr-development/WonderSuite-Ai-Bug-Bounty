@@ -351,6 +351,11 @@ export function Sitemap() {
             pendingEntries.push(event.payload.entry);
             cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(flushEntries);
+          } else if (event.payload?.type === 'traffic_cleared') {
+            // v0.3.23: keep the sitemap tree in sync when an AI agent
+            // (or anyone else) wipes the proxy traffic log.
+            pendingEntries.length = 0;
+            setTree([]);
           }
         });
       } catch {}

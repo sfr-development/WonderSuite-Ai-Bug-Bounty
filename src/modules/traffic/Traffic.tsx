@@ -113,6 +113,18 @@ export function Traffic() {
           const data = event.payload;
           if (data.type === 'traffic') {
             setEntries((prev) => [...prev, data.entry]);
+          } else if (data.type === 'traffic_cleared') {
+            // v0.3.23: fires when AI calls proxy_clear_traffic via MCP — the
+            // UI-initiated clear sets [] directly in clearTraffic(), so this
+            // path catches the MCP-initiated case and keeps the two paths
+            // visually identical.
+            setEntries([]);
+          } else if (data.type === 'traffic_annotated') {
+            setEntries((prev) =>
+              prev.map((e) =>
+                e.id === data.id ? { ...e, notes: data.notes, color: data.color } : e
+              )
+            );
           }
         });
       } catch {}

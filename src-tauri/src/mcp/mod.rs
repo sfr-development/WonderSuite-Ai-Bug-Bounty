@@ -20,6 +20,31 @@ use tokio::sync::Mutex;
 
 pub mod handlers;
 
+// Bridge so MCP handlers can fire Tauri events to the UI. Set in lib.rs's
+// setup() callback alongside `mcp::browser::set_app_handle`. Without this,
+// every MCP-initiated state mutation (clear traffic, annotate, add rule, …)
+// only becomes visible to the human researcher when the UI next polls — the
+// AI would effectively work behind the user's back.
+static MCP_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+pub fn set_app_handle(h: tauri::AppHandle) {
+    let _ = MCP_APP_HANDLE.set(h);
+}
+
+pub fn app_handle() -> Option<tauri::AppHandle> {
+    MCP_APP_HANDLE.get().cloned()
+}
+
+/// Fire a Tauri event from an MCP handler so the UI re-renders without
+/// having to poll. No-op if the handle hasn't been set yet (early-init
+/// race during the first ms of startup) — callers don't have to check.
+pub fn emit_event<S: serde::Serialize + Clone>(name: &str, payload: S) {
+    if let Some(handle) = app_handle() {
+        use tauri::Emitter;
+        let _ = handle.emit(name, payload);
+    }
+}
+
 pub async fn handle_tool_call(name: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
     handlers::dispatch(name, params).await
 }
@@ -1185,6 +1210,41 @@ pub fn tool_definitions() -> Vec<ToolDef> {
     ]
 }
 
+/// v0.3.23 — same-origin guard for the MCP HTTP endpoint. The MCP server
+/// binds 127.0.0.1 only (so remote attackers can't reach it), but a local
+/// browser tab on the same machine could `fetch('http://localhost:3100/mcp')`
+/// and drive every tool. Legitimate MCP clients (Claude Code, Cursor, custom
+/// CLI tools) speak JSON-RPC directly and DO NOT set an `Origin` header.
+/// Browsers always do. So:
+///   - no `Origin`  → allow  (CLI MCP clients)
+///   - `tauri://*` / `http://tauri.localhost` / `https://tauri.localhost`
+///                  → allow  (our own webview, on the off chance it ever
+///                            calls localhost:3100 — currently it doesn't,
+///                            CSP `connect-src` doesn't list this endpoint)
+///   - anything else → 403   (rogue local browser tab, file://, etc.)
+///
+/// This is one layer. A native local-attacker process with the right libs
+/// can still send no-Origin requests — but no defense short of capability
+/// tokens stops that, and adding tokens would break every existing client
+/// config. Document the limitation in CHANGELOG/wondersuite.md.
+async fn origin_guard(
+    headers: axum::http::HeaderMap,
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, axum::http::StatusCode> {
+    if let Some(origin) = headers.get(axum::http::header::ORIGIN) {
+        let s = origin.to_str().unwrap_or("");
+        let ok = s.starts_with("tauri://")
+            || s == "http://tauri.localhost"
+            || s == "https://tauri.localhost";
+        if !ok {
+            eprintln!("[MCP] rejected request from foreign Origin: {}", s);
+            return Err(axum::http::StatusCode::FORBIDDEN);
+        }
+    }
+    Ok(next.run(request).await)
+}
+
 pub struct McpServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     thread_handle: Option<std::thread::JoinHandle<()>>,
@@ -1222,11 +1282,13 @@ impl McpServer {
                 };
 
                 rt.block_on(async move {
-                    let app = Router::new().route(
-                        "/mcp",
-                        post(|body: axum::body::Bytes| async move { router::handle_rpc(body).await })
-                            .get(router::handle_mcp_get),
-                    );
+                    let app = Router::new()
+                        .route(
+                            "/mcp",
+                            post(|body: axum::body::Bytes| async move { router::handle_rpc(body).await })
+                                .get(router::handle_mcp_get),
+                        )
+                        .layer(axum::middleware::from_fn(origin_guard));
 
                     let ports = [port, port + 1, port + 2];
                     let mut listener_opt = None;
