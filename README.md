@@ -36,7 +36,7 @@ A desktop-native security testing platform built on Rust and Tauri with native M
 
 ## Overview
 
-**WonderSuite** is a desktop-native offensive security engine that combines Burp Suite-class tooling with autonomous AI agent capabilities. It provides a fully integrated environment for web application security testing, network reconnaissance, and exploit development — all orchestrated through an MCP-compatible AI interface.
+**WonderSuite** is a desktop native offensive security engine that combines Burp Suite-class tooling with autonomous AI agent capabilities. It provides a fully integrated environment for web application security testing, network reconnaissance, and exploit development — all orchestrated through an MCP-compatible AI interface.
 
 The platform ships with **91 purpose-built security tools** accessible via JSON-RPC (trimmed from 100 in v0.3.11 — the standalone OAST tools were folded into `active_scan(with_oast: true)` to keep the AI's context budget lean), a full MITM proxy with **Chrome 137 JA3/JA4 + HTTP/2 fingerprint impersonation** (defeats Cloudflare, Akamai Bot Manager, DataDome, PerimeterX), a **bundled Chrome-for-Testing 148** with stealth extension and per-version isolation, a pentest-grade browser MCP surface with stable element refs and OAST-integrated blind-vuln detection, and automated vulnerability scanning across SQLi, XSS, SSTI, LFI, CRLF, Open Redirect, plus blind cmdi / SSRF / Log4Shell via the bundled OAST listener.
 
