@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### CI
+- Restructured `.github/workflows/release.yml` into three jobs
+  (`create-release` → `build` matrix → `publish-release`) to fix the
+  race that hit v0.3.23, where four matrix jobs called
+  `gh release create` in parallel and 1–2 lost the API arbitration
+  with the misleading error "Sorry. Your account was suspended"
+  (Windows + macOS-aarch64 installers were missing from the v0.3.23
+  release as a result). Now exactly one job creates the GitHub release
+  as a draft, the matrix build jobs upload assets into it via
+  `releaseId` (no concurrent `release create` calls), and a final
+  one-shot job flips the draft to public only after every platform
+  built successfully. Net: still parallel (fast), no race, atomic
+  publish — a half-built release is never visible to users. Effective
+  from the next tag push.
+
 ## [0.3.23] — 2026-05-26
 
 ### Live MCP→UI visibility (closes the "AI works behind the user's back" gap)

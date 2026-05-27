@@ -10,24 +10,30 @@ on:
     tags:
       - 'v*'
 
+# v0.3.24: Three-stage pipeline to fix the race that hit v0.3.23 (Windows
+# + macOS-aarch64 failed with "Sorry. Your account was suspended" because
+# four matrix jobs were calling `gh release create` in parallel and 1–2
+# lost the API arbitration).
+#
+#   create-release  →  build (matrix, parallel)  →  publish-release
+#       │                    │                              │
+#       │ creates DRAFT       │ uploads assets to            │ flips draft → public
+#       │ once, returns       │ existing draft (no concurrent│ once every platform
+#       │ release_id          │ release-create races)        │ build succeeded
+#
+# Net effect: matrix-jobs still run in parallel (fast), but they no longer
+# try to *create* the release — they only *upload assets* into a release
+# that already exists. The atomic publish at the end means a half-built
+# release is never visible to users.
 jobs:
-  release:
+  create-release:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        settings:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'windows-latest'
-            args: ''
-
-    runs-on: ${{ matrix.settings.platform }}
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,10 +57,81 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+      # Extract the body of the current release from CHANGELOG.md so the
+      # GitHub release page + the in-app Changelog tab show real content
+      # instead of the workflow's boilerplate.
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          BODY="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+            capture && /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md | sed -e '/^$/N;/^\n$/D')"
+          if [ -z "$BODY" ]; then
+            echo "::warning::No CHANGELOG section found for v$VERSION — using fallback body"
+            BODY="Automated release for WonderSuite v$VERSION. See CHANGELOG.md for details."
+          fi
+          {
+            echo "body<<__END_OF_NOTES__"
+            echo "$BODY"
+            echo "__END_OF_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
+      # Idempotent: if a release for this tag already exists (manual prep,
+      # a re-run, or a tag pushed without a matching workflow run), reuse
+      # its id instead of failing. Otherwise create a fresh DRAFT.
+      - name: Create or reuse draft release
+        id: create
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES: ${{ steps.notes.outputs.body }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -e
+          if ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id 2>/dev/null); then
+            echo "Found existing release for ${TAG} with id=${ID}"
+          else
+            echo "Creating draft release ${TAG}"
+            gh release create "${TAG}" \
+              --repo "${REPO}" \
+              --title "WonderSuite ${TAG}" \
+              --notes "${NOTES}" \
+              --draft
+            ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id)
+          fi
+          echo "release_id=${ID}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.settings.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Sync version into manifests
         shell: bash
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         run: |
           node -e '
             const fs = require("fs");
@@ -121,38 +198,10 @@ jobs:
         shell: bash
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --quiet || (echo "Lockfile drift — run 'cargo update' locally and commit Cargo.lock"; exit 1)
 
-      # Extract the body of the current release from CHANGELOG.md so the
-      # GitHub release page + the in-app Changelog tab show real content
-      # instead of the workflow's boilerplate. Falls back to a minimal
-      # banner if the version isn't found.
-      - name: Extract release notes from CHANGELOG
-        id: notes
-        shell: bash
-        run: |
-          set -e
-          VERSION="${{ steps.version.outputs.version }}"
-          if [ -z "$VERSION" ]; then
-            echo "Falling back to tag without leading v"
-            VERSION="${{ steps.version.outputs.tag }}"
-            VERSION="${VERSION#v}"
-          fi
-          # Grab everything between `## [<version>]` and the next `## [` header.
-          BODY="$(awk -v ver="$VERSION" '
-            $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
-            capture && /^## \[/ { capture = 0 }
-            capture { print }
-          ' CHANGELOG.md | sed -e '/^$/N;/^\n$/D')"
-          if [ -z "$BODY" ]; then
-            echo "::warning::No CHANGELOG section found for v$VERSION — using fallback body"
-            BODY="Automated release for WonderSuite v$VERSION. See CHANGELOG.md for details."
-          fi
-          # Multiline output via heredoc
-          {
-            echo "body<<__END_OF_NOTES__"
-            echo "$BODY"
-            echo "__END_OF_NOTES__"
-          } >> "$GITHUB_OUTPUT"
-
+      # Upload-only: releaseId tells tauri-action the release already
+      # exists (from the create-release job) — it skips create/edit and
+      # only attaches platform-specific bundles. No more concurrent
+      # create-release calls across the matrix.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -160,10 +209,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ steps.version.outputs.tag }}
-          releaseName: WonderSuite ${{ steps.version.outputs.tag }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.settings.args }}
           includeUpdaterJson: true
+
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release (flip draft → public)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release edit "${TAG}" --repo "${REPO}" --draft=false
+          echo "Released ${TAG} (now visible at https://github.com/${REPO}/releases/tag/${TAG})"
