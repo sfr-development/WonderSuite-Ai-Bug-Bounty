@@ -60,7 +60,7 @@ The platform ships with **91 purpose-built security tools** accessible via JSON-
 
 ### Intercepting Proxy
 
-Full man-in-the-middle proxy with TLS interception and dynamic certificate authority generation. Supports real-time request and response modification, match-and-replace rules with regex (5 targets: request_header/body/url, response_header/body), WebSocket message capture, upstream proxy chaining (HTTP/SOCKS5), traffic annotation with color highlighting, and proper HAR/JSON export (headers, queryString, statusText all populated). Upstream requests can be re-originated through a **BoringSSL stack tuned to match Chrome 137's exact ClientHello, JA3/JA4 fingerprint and HTTP/2 SETTINGS frame ordering** — bypasses Cloudflare, Akamai Bot Manager, DataDome, and PerimeterX.
+Full man-in-the-middle proxy with TLS interception and dynamic certificate authority generation. Supports real time request and response modification, match-and-replace rules with regex (5 targets: request_header/body/url, response_header/body), WebSocket message capture, upstream proxy chaining (HTTP/SOCKS5), traffic annotation with color highlighting, and proper HAR/JSON export (headers, queryString, statusText all populated). Upstream requests can be re-originated through a **BoringSSL stack tuned to match Chrome 137's exact ClientHello, JA3/JA4 fingerprint and HTTP/2 SETTINGS frame ordering** — bypasses Cloudflare, Akamai Bot Manager, DataDome, and PerimeterX.
 
 ### WonderBrowser — Bundled Chrome-for-Testing 148
 
