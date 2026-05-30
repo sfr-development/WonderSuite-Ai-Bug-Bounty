@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.24] — 2026-05-30
+
+### Added — Code Audit tab (Sitemap module)
+
+A new **Code Audit** tab lives inside the Sitemap module (next to the
+existing Site Map tab). It automatically analyses all assets the proxy
+has captured — no separate scan step required. Assets appear as soon as
+they are intercepted; the analysis re-runs in the background whenever
+new traffic arrives.
+
+**Three-column layout:**
+
+- **Left — Asset Tree** (240 px): assets grouped as Domain → Type
+  (JS, CSS, HTML, API, Images, Fonts, Media, Other) → File. Each node
+  shows a finding-count badge (red) and file size. A filter input
+  narrows the tree. "Export Tree" saves a formatted `.txt` manifest.
+
+- **Middle — Editor**: click any file to view it syntax-highlighted via
+  Shiki (`one-dark-pro` theme). Code is auto-beautified via
+  `js-beautify` before display so minified assets are readable. Click
+  a finding in the right panel to jump to that line with a flash
+  animation. Copy button in the header copies the beautified source.
+
+- **Right — Panel** (320 px): two tabs:
+  - *Findings* — findings for the selected file, grouped by type
+    (Secrets, Tokens, API Endpoints, Links, Comments), sorted by
+    severity. Each finding is clickable and jumps to the source line.
+    Each section has its own Export button.
+  - *Summary* — global asset stats (counts by type, total size) +
+    finding counts by severity + full export menu. A "This file only"
+    toggle scopes the summary to the selected asset.
+
+**Finder engine** (`src/modules/sitemap/finders.ts`) — 60+ regex
+patterns across five categories:
+
+| Category | What it finds |
+|---|---|
+| Secrets | AWS/GCP/Azure keys, OpenAI/Anthropic/HuggingFace API keys, Stripe live keys, GitHub tokens, Slack webhooks, Supabase service/anon keys, DB connection strings, private key blocks, `.env`-style leaks, and 30+ more |
+| Tokens | JWT, Bearer, Basic Auth, OAuth, id_token, refresh_token, session cookies |
+| API Endpoints | `fetch()`, `axios.*()`, XHR `open()`, API path strings, GraphQL operations, WebSocket URLs, gRPC/tRPC endpoints |
+| Links | Absolute URLs, relative paths |
+| Comments | TODO/FIXME/HACK/BUG annotations, comments mentioning credentials |
+
+Findings are deduplicated and capped per category to avoid noise
+(links 150, comments 80, API endpoints 200, tokens 100, secrets 500).
+
+**Context menu** (right-click any tree node):
+- *Export Source (formatted)* — save a single beautified file
+- *Export All Sources (concat)* — concatenate all code assets in scope
+- *HTML Report* — scoped self-contained HTML with all findings
+- *All Findings (CSV)*, *Secrets only*, *Tokens only*, *API Endpoints*,
+  *Links* — per-category exports
+- *Asset List (JSON)* — asset metadata
+- **Export as ZIP (All Files)** — bundles all assets into a ZIP
+  (`js/`, `css/`, `html/`, `api/`, `images/`, `fonts/`, `findings/`)
+  with a `README.txt` and `assets.json` manifest; uses Tauri's native
+  save dialog via `save_file_bytes`
+
+**Asset-type filter chips** in the toolbar toggle which types are
+analysed. A Settings gear opens a panel to configure active finders
+and asset types individually.
+
+**New runtime dependencies:**
+- `shiki ^4.1.0` — syntax highlighter (one-dark-pro theme)
+- `js-beautify ^1.15.4` — JS / CSS / HTML formatter
+- `jszip ^3.10.1` — in-memory ZIP builder
+
+### Added — Ctrl+click multi-select in Sitemap tree
+
+Holding **Ctrl** (or Cmd on macOS) while clicking nodes in the Sitemap
+tree adds them to a multi-selection set (highlighted with a distinct
+`ctrl-selected` style). Allows visual selection of multiple endpoints
+without entering Delete mode. Cleared on a plain click.
+
+### Fixed — Export as ZIP does nothing (Tauri WebView)
+
+`exportDomainZip` used `URL.createObjectURL` + `<a>.click()` — silently
+fails inside Tauri's WebView. Now:
+1. Generates the ZIP as a `Uint8Array` via JSZip
+2. Base64-encodes in 64 KB chunks (avoids call-stack overflow)
+3. Opens Tauri's native Save dialog (`.zip` filter)
+4. Calls `invoke('save_file_bytes', { path, data_base64 })` through the
+   existing validated Rust command
+
+### Added — lib helpers (`src/lib/`)
+
+Three new shared utilities consumed by the Audit tab:
+- `src/lib/highlighter.ts` — singleton Shiki highlighter with
+  `initHighlighter()`, `highlight()`, `highlightSync()`, and
+  `detectHighlightLang()`. Loaded languages: JS, TS, CSS, SCSS, HTML,
+  XML, JSON, Bash, HTTP, Markdown, Plaintext.
+- `src/lib/beautify.ts` — wrapper around `js-beautify` exposing
+  `beautify(code, lang)` and `canBeautify(lang)`.
+- `src/lib/useCodeView.ts` — React hook combining highlight + beautify
+  for stale-free async rendering (cancels in-flight renders on prop
+  change).
+
 ### CI
 - Restructured `.github/workflows/release.yml` into three jobs
   (`create-release` → `build` matrix → `publish-release`) to fix the

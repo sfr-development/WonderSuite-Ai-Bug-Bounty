@@ -1,7 +1,7 @@
 {
   "name": "wondersuite",
   "private": true,
-  "version": "0.3.23",
+  "version": "0.3.24",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11",
+    "js-beautify": "^1.15.4",
+    "jszip": "^3.10.1",
+    "shiki": "^4.1.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",

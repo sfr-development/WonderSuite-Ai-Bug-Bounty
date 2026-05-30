@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Globe, Folder, FileText, FileCode, Palette, Type, Image, Zap, Network, ListTree, GitMerge, Code2, Download, Lock, FileJson, Table, FileType, Archive, FileEdit, Link, Trash2, Wand2, Copy, Check, PlusCircle, Ban, X } from 'lucide-react';
 import { VisualMap } from './VisualMap';
 import { MermaidView } from './MermaidView';
+import { AuditTab } from './AuditTab';
 import { useAppStore } from '../../stores';
 import './Sitemap.css';
 
@@ -156,9 +157,10 @@ function isImageMime(mime?: string): boolean {
   return !!mime && (mime.includes('image/png') || mime.includes('image/jpeg') || mime.includes('image/gif') || mime.includes('image/svg') || mime.includes('image/webp') || mime.includes('image/bmp') || mime.includes('image/ico'));
 }
 
-function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onToggleDelete, markedForDelete }: {
+function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onToggleDelete, markedForDelete, ctrlSelected, onCtrlSelect }: {
   node: TreeNode; depth: number; selected: string; onSelect: (n:TreeNode)=>void; parentHost?: string;
   deleteMode?: boolean; onToggleDelete?: (key:string)=>void; markedForDelete?: Set<string>;
+  ctrlSelected?: Set<string>; onCtrlSelect?: (key:string)=>void;
 }) {
   const [open, setOpen] = useState(false);
   const { openContextMenu } = useAppStore();
@@ -167,6 +169,7 @@ function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onT
   const currentHost = node.type === 'host' ? node.name : parentHost;
   const nodeKey = node.type === 'host' ? `host::${node.name}` : `${parentHost}::${node.name}`;
   const isMarked = markedForDelete?.has(nodeKey) || false;
+  const isCtrlSelected = ctrlSelected?.has(nodeKey) || false;
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -176,15 +179,25 @@ function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onT
       requestRaw: node.trafficEntries?.[0]?.request_headers || `${node.method||'GET'} ${node.name} HTTP/1.1\r\nHost: target\r\n\r\n`,
       responseRaw: node.trafficEntries?.[0]?.response_headers || 'HTTP/1.1 200 OK\r\n\r\n',
       source: 'sitemap',
-      // sitemap-specific delete is handled by the existing pendingDeleteUrl pipeline
     });
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (deleteMode && onToggleDelete) { onToggleDelete(nodeKey); return; }
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      onCtrlSelect?.(nodeKey);
+      return;
+    }
+    if (hasChildren) setOpen(!open);
+    onSelect(node);
   };
 
   return (
     <>
-      <div className={`sitemap-node ${selected === node.name ? 'active' : ''} ${isMarked ? 'marked-delete' : ''}`}
+      <div className={`sitemap-node ${selected === node.name ? 'active' : ''} ${isMarked ? 'marked-delete' : ''} ${isCtrlSelected ? 'ctrl-selected' : ''}`}
         style={{ paddingLeft: 8 + depth * 16 }}
-        onClick={() => { if (deleteMode && onToggleDelete) { onToggleDelete(nodeKey); return; } if (hasChildren) setOpen(!open); onSelect(node); }}
+        onClick={handleClick}
         onContextMenu={handleContextMenu}
       >
         {deleteMode ? (
@@ -207,7 +220,7 @@ function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onT
         </span>
       </div>
       {open && hasChildren && node.children!.map((child, i) => (
-        <TreeItem key={`${child.name}-${i}`} node={child} depth={depth+1} selected={selected} onSelect={onSelect} parentHost={currentHost} deleteMode={deleteMode} onToggleDelete={onToggleDelete} markedForDelete={markedForDelete} />
+        <TreeItem key={`${child.name}-${i}`} node={child} depth={depth+1} selected={selected} onSelect={onSelect} parentHost={currentHost} deleteMode={deleteMode} onToggleDelete={onToggleDelete} markedForDelete={markedForDelete} ctrlSelected={ctrlSelected} onCtrlSelect={onCtrlSelect} />
       ))}
     </>
   );
@@ -246,9 +259,11 @@ function buildTreeFromTraffic(entries: any[], checkBlacklist?: (url: string) => 
 
 type ViewMode = 'list' | 'map' | 'mermaid';
 type DetailTab = 'overview' | 'request' | 'response' | 'headers';
+type TopTab = 'sitemap' | 'audit';
 
 export function Sitemap() {
   const [tree, setTree] = useState<TreeNode[]>([]);
+  const [topTab, setTopTab] = useState<TopTab>('sitemap');
   const [selected, setSelected] = useState('');
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
@@ -257,6 +272,7 @@ export function Sitemap() {
   const [showExport, setShowExport] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const [markedForDelete, setMarkedForDelete] = useState<Set<string>>(new Set());
+  const [ctrlSelected, setCtrlSelected] = useState<Set<string>>(new Set());
   const [formatted, setFormatted] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showBlacklist, setShowBlacklist] = useState(false);
@@ -363,7 +379,15 @@ export function Sitemap() {
     return () => { unlisten?.(); cancelAnimationFrame(rafId); };
   }, []);
 
-  const handleSelect = (n: TreeNode) => { setSelected(n.name); setSelectedNode(n); setFormatted(false); };
+  const handleSelect = (n: TreeNode) => { setSelected(n.name); setSelectedNode(n); setFormatted(false); setCtrlSelected(new Set()); };
+
+  const toggleCtrlSelect = useCallback((key: string) => {
+    setCtrlSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
   const totalEndpoints = tree.reduce((s, h) => s + (h.children?.length || 0), 0);
 
   const toggleDeleteMark = useCallback((name: string) => {
@@ -501,6 +525,23 @@ export function Sitemap() {
 
   return (
     <div className="sitemap">
+      {/* Top-level tab bar */}
+      <div className="sitemap-top-tabs">
+        <button className={`sitemap-top-tab ${topTab === 'sitemap' ? 'active' : ''}`} onClick={() => setTopTab('sitemap')}>
+          <ListTree size={11}/> Site Map
+        </button>
+        <button className={`sitemap-top-tab ${topTab === 'audit' ? 'active' : ''}`} onClick={() => setTopTab('audit')}>
+          <Code2 size={11}/> Code Audit
+        </button>
+      </div>
+
+      {/* Code Audit tab — always mounted to preserve state when switching */}
+      <div style={{ display: topTab === 'audit' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
+        <AuditTab tree={tree}/>
+      </div>
+
+      {/* Sitemap tab */}
+      <div className="sitemap-content" style={{ display: topTab === 'audit' ? 'none' : 'flex' }}>
       <div className="sitemap-tree" style={{ flex: viewMode === 'mermaid' ? 0 : (viewMode === 'map' ? 2 : 1), display: viewMode === 'mermaid' ? 'none' : 'flex' }}>
         <div className="sitemap-tree-header">
           <div style={{ display:'flex', alignItems:'center', gap:6 }}>
@@ -562,7 +603,7 @@ export function Sitemap() {
                   <span style={{fontSize:10}}>Start the proxy and browse to populate</span>
                 </div>
               ) : filteredTree.map((node) => (
-                <TreeItem key={node.name} node={node} depth={0} selected={selected} onSelect={handleSelect} deleteMode={deleteMode} onToggleDelete={toggleDeleteMark} markedForDelete={markedForDelete} />
+                <TreeItem key={node.name} node={node} depth={0} selected={selected} onSelect={handleSelect} deleteMode={deleteMode} onToggleDelete={toggleDeleteMark} markedForDelete={markedForDelete} ctrlSelected={ctrlSelected} onCtrlSelect={toggleCtrlSelect} />
               ))}
             </div>
             {deleteMode && (
@@ -723,6 +764,7 @@ export function Sitemap() {
           )}
         </div>
       )}
+      </div>{/* end sitemap-content */}
     </div>
   );
 }

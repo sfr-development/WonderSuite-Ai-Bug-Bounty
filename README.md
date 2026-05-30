@@ -159,6 +159,30 @@ TLS impersonation is **on by default**. It can be disabled in **Settings → Bro
 
 Multi-level fetcher with robots.txt + sitemap.xml + `/.well-known/` + JS endpoint extraction discovery, soft-404 detection, SPA-aware rendering hooks, cookie + path canonicalization. Regex-based fast path for static apps; for SPAs the browser MCP surface is the better tool.
 
+### Code Audit (v0.3.24+)
+
+A passive source-level audit that analyses every asset the proxy has captured. Lives inside the **Sitemap** module as a second tab alongside the tree view — no separate crawl step needed.
+
+**Three-panel layout:** Asset tree (domain → type → file) · Syntax-highlighted source editor with jump-to-finding · Findings + Summary panel.
+
+**Finder engine** — 60+ regex patterns across five categories:
+
+| Category | Examples |
+|---|---|
+| **Secrets** | AWS/GCP/Azure keys, OpenAI/Anthropic/HuggingFace/Replicate tokens, Stripe live keys, GitHub tokens (ghp/gho/ghu/ghs/ghr/gha/PAT), Slack webhooks, Supabase service/anon keys, MongoDB/Postgres/MySQL/Redis connection strings, private key blocks, `.env`-style `NEXT_PUBLIC_` / `VITE_` / `REACT_APP_` leaks |
+| **Tokens** | JWT, Bearer, Basic Auth, OAuth, id\_token, refresh\_token, session cookies |
+| **API Endpoints** | `fetch()`, `axios.*()`, XHR `.open()`, API path strings, GraphQL operations, WebSocket URLs, gRPC/tRPC endpoints |
+| **Links** | Absolute URLs, relative paths |
+| **Comments** | TODO/FIXME/HACK/BUG, comments referencing credentials |
+
+**Source editor** powered by Shiki (`one-dark-pro` theme) with js-beautify auto-formatting — minified assets rendered readable. Click any finding → editor scrolls + flash-highlights that line.
+
+**Export options** (context menu per domain / type-group / file):
+- Beautified source, concatenated sources, HTML security report, per-category CSV/TXT
+- **Export as ZIP** — full asset bundle in `js/` · `css/` · `html/` · `api/` · `findings/` folders + `README.txt` + `assets.json` manifest; saved via Tauri's native file-chooser dialog
+
+**Ctrl+click** selects multiple nodes in the Sitemap tree (highlighted, additive, cleared on plain click).
+
 ### Port Scanner — In-Process, Adaptive, Three-Mode (v0.3.7+)
 
 Built-in port scanner with **three real engines**: TCP Connect (no admin, default), TCP SYN (raw sockets via bundled WinDivert on Windows / pnet on Linux+macOS), and UDP (no admin, response-based protocol detection). **No nmap subprocess** — service detection runs against the real `nmap-service-probes` file (187 probes, 12k+ regex match patterns) embedded at build time. **Adaptive concurrency via Little's Law** (`in_flight = target_pps × RTT_p50`) — the permit pool floats with observed network conditions every 2 seconds, where RustScan's `batch_size` is fixed at startup. Live streaming results to a virtualized table; presets (Top-100, Top-1000, Web, Dev, DB, All); timing templates T0 paranoid → T6 ludicrous; export to JSONL, CSV, Nmap XML, gnmap, or `ip:port`. CIDR + range + hostname expansion. Idle-mode caps at ~100 pps for field-laptop use.

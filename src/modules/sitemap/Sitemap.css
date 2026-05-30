@@ -59,6 +59,8 @@
 .sitemap-node.active { background: var(--bg-3); color: var(--text-0); }
 .sitemap-node.marked-delete { background: rgba(239,68,68,0.08); }
 .sitemap-node.marked-delete:hover { background: rgba(239,68,68,0.15); }
+.sitemap-node.ctrl-selected { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 2px solid var(--accent); }
+.sitemap-node.ctrl-selected:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .sitemap-node-checkbox { width: 16px; display: flex; align-items: center; justify-content: center; }
 
 .sitemap-node-toggle {
