@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.26] — 2026-05-30
+
+### Fixed — Ctrl+click selection had no action bar
+
+Ctrl+clicking nodes in the Sitemap tree highlighted them with the
+`ctrl-selected` style, but no bottom bar appeared and there were no
+buttons to act on the selection — bulk Delete and Blacklist were
+unreachable. Now, whenever `ctrlSelected.size > 0` (and Delete mode is
+off), a bar appears at the bottom of the tree with:
+- Item count
+- **Clear** — deselects all
+- **Blacklist (N)** — adds all selected URLs to the blacklist and
+  removes them from the tree
+- **Delete (N)** — removes all selected nodes from the tree
+
+### Added — Drag-to-select (rubber-band selection)
+
+Hold the left mouse button and drag over empty space in the Sitemap tree
+to draw a selection rectangle. All nodes whose rows overlap with the
+rectangle are added to the `ctrlSelected` set when the button is
+released. Once nodes are selected the ctrl-bar appears with the bulk
+actions above. Ctrl+clicking individual nodes remains additive on top
+of a drag selection.
+
+**Implementation:**
+- `data-key` attribute added to every `.sitemap-node` element (used by
+  the rubber-band hit test via `getBoundingClientRect`)
+- `mousedown` on the tree list (not on a node) starts the drag
+- Global `mousemove` / `mouseup` handlers update and commit the rect
+- A `.sitemap-drag-rect` overlay (accent border + 12% fill, `position:
+  fixed`, `pointer-events: none`, z-index 999) renders during drag
+- Drags shorter than 5 px are treated as missed clicks (no selection)
+
 ## [0.3.25] — 2026-05-30
 
 ### Fixed — Code Audit / Sitemap layout completely broken after v0.3.24

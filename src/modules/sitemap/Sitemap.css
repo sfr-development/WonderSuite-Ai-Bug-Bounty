@@ -295,6 +295,30 @@
 .mermaid-legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-2); }
 .mermaid-legend-dot { width: 8px; height: 8px; border-radius: 50%; }
 
+/* Ctrl+click / drag-select action bar */
+.sitemap-ctrl-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  flex-shrink: 0;
+}
+.sitemap-ctrl-count {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Rubber-band drag selection rectangle */
+.sitemap-drag-rect {
+  position: fixed;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 2px;
+  z-index: 999;
+}
+
 /* Delete bar */
 .sitemap-delete-bar {
   display: flex; align-items: center; justify-content: space-between;

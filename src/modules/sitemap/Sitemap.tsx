@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ChevronRight, ChevronDown, Globe, Folder, FileText, FileCode, Palette, Type, Image, Zap, Network, ListTree, GitMerge, Code2, Download, Lock, FileJson, Table, FileType, Archive, FileEdit, Link, Trash2, Wand2, Copy, Check, PlusCircle, Ban, X } from 'lucide-react';
 import { VisualMap } from './VisualMap';
 import { MermaidView } from './MermaidView';
@@ -197,6 +197,7 @@ function TreeItem({ node, depth, selected, onSelect, parentHost, deleteMode, onT
     <>
       <div className={`sitemap-node ${selected === node.name ? 'active' : ''} ${isMarked ? 'marked-delete' : ''} ${isCtrlSelected ? 'ctrl-selected' : ''}`}
         style={{ paddingLeft: 8 + depth * 16 }}
+        data-key={nodeKey}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
       >
@@ -411,6 +412,83 @@ export function Sitemap() {
     setSelectedNode(null); setSelected('');
   }, [markedForDelete]);
 
+  // ── Ctrl+click bulk actions ────────────────────────────────────────────
+  const deleteCtrlSelected = useCallback(() => {
+    setTree(prev => prev
+      .filter(h => !ctrlSelected.has(`host::${h.name}`))
+      .map(host => ({
+        ...host,
+        children: host.children?.filter(c => !ctrlSelected.has(`${host.name}::${c.name}`)),
+      }))
+    );
+    setCtrlSelected(new Set());
+    setSelectedNode(null); setSelected('');
+  }, [ctrlSelected]);
+
+  const blacklistCtrlSelected = useCallback(() => {
+    const urls: string[] = [];
+    ctrlSelected.forEach(key => {
+      if (key.startsWith('host::')) {
+        urls.push(key.replace('host::', '') + '/*');
+      } else {
+        const [host, ...pathParts] = key.split('::');
+        urls.push(host + pathParts.join('::'));
+      }
+    });
+    addToBlacklist(urls);
+    deleteCtrlSelected();
+  }, [ctrlSelected, addToBlacklist, deleteCtrlSelected]);
+
+  // ── Rubber-band / drag-to-select ────────────────────────────────────────
+  const treeListRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{x:number;y:number}|null>(null);
+  const [dragRect, setDragRect] = useState<{x1:number;y1:number;x2:number;y2:number}|null>(null);
+
+  const handleTreeMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (deleteMode) return;
+    if ((e.target as Element).closest('[data-key]')) return; // clicking a node
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+  }, [deleteMode]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const { x, y } = dragStartRef.current;
+      setDragRect({
+        x1: Math.min(x, e.clientX), y1: Math.min(y, e.clientY),
+        x2: Math.max(x, e.clientX), y2: Math.max(y, e.clientY),
+      });
+    };
+    const onUp = (e: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const { x, y } = dragStartRef.current;
+      const rect = {
+        x1: Math.min(x, e.clientX), y1: Math.min(y, e.clientY),
+        x2: Math.max(x, e.clientX), y2: Math.max(y, e.clientY),
+      };
+      // Only treat as drag if moved more than 5px
+      if ((rect.x2 - rect.x1 > 5 || rect.y2 - rect.y1 > 5) && treeListRef.current) {
+        const nodes = treeListRef.current.querySelectorAll<HTMLElement>('[data-key]');
+        const next = new Set<string>();
+        nodes.forEach(el => {
+          const br = el.getBoundingClientRect();
+          if (br.bottom >= rect.y1 && br.top <= rect.y2 && br.right >= rect.x1 && br.left <= rect.x2) {
+            const k = el.getAttribute('data-key');
+            if (k) next.add(k);
+          }
+        });
+        if (next.size > 0) setCtrlSelected(next);
+      }
+      dragStartRef.current = null;
+      setDragRect(null);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, []);
+
   const copyBody = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
   }, []);
@@ -596,7 +674,7 @@ export function Sitemap() {
         {viewMode === 'list' ? (
           <>
             <input className="sitemap-tree-filter" placeholder="Filter..." value={filter} onChange={e=>setFilter(e.target.value)} />
-            <div className="sitemap-tree-list">
+            <div className="sitemap-tree-list" ref={treeListRef} onMouseDown={handleTreeMouseDown}>
               {filteredTree.length === 0 ? (
                 <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--text-3)',gap:8}}>
                   <Network size={24}/><span style={{fontSize:11}}>No sites discovered</span>
@@ -606,6 +684,21 @@ export function Sitemap() {
                 <TreeItem key={node.name} node={node} depth={0} selected={selected} onSelect={handleSelect} deleteMode={deleteMode} onToggleDelete={toggleDeleteMark} markedForDelete={markedForDelete} ctrlSelected={ctrlSelected} onCtrlSelect={toggleCtrlSelect} />
               ))}
             </div>
+            {/* Ctrl+click / drag-select action bar */}
+            {ctrlSelected.size > 0 && !deleteMode && (
+              <div className="sitemap-ctrl-bar">
+                <span className="sitemap-ctrl-count">{ctrlSelected.size} selected</span>
+                <div style={{display:'flex',gap:4}}>
+                  <button className="sitemap-delete-cancel" onClick={()=>setCtrlSelected(new Set())}>Clear</button>
+                  <button className="sitemap-delete-confirm" style={{background:'rgba(232,135,60,0.15)',color:'#e8873c',border:'1px solid rgba(232,135,60,0.3)'}} onClick={blacklistCtrlSelected}>
+                    <PlusCircle size={11}/> Blacklist ({ctrlSelected.size})
+                  </button>
+                  <button className="sitemap-delete-confirm" onClick={deleteCtrlSelected}>
+                    <Trash2 size={11}/> Delete ({ctrlSelected.size})
+                  </button>
+                </div>
+              </div>
+            )}
             {deleteMode && (
               <div className="sitemap-delete-bar">
                 <span style={{fontSize:10,color:'var(--text-2)'}}>{markedForDelete.size} selected</span>
@@ -765,6 +858,15 @@ export function Sitemap() {
         </div>
       )}
       </div>{/* end sitemap-content */}
+
+      {/* Rubber-band drag selection overlay — fixed so it sits over the whole viewport */}
+      {dragRect && (
+        <div className="sitemap-drag-rect" style={{
+          left: dragRect.x1, top: dragRect.y1,
+          width: dragRect.x2 - dragRect.x1,
+          height: dragRect.y2 - dragRect.y1,
+        }}/>
+      )}
     </div>
   );
 }
