@@ -46,6 +46,7 @@ export const DOC_GROUPS: DocGroup[] = [
     title: 'Recon',
     pages: [
       { slug: 'sitemap', title: 'Sitemap' },
+      { slug: 'code-audit', title: 'Code Audit' },
       { slug: 'discovery', title: 'Discovery' },
       { slug: 'osint', title: 'OSINT' },
     ],

@@ -4,6 +4,8 @@ The Sitemap builds a structured map of the target application from everything Wo
 
 Open it with <kbd>Ctrl+7</kbd>.
 
+The module has two top-level tabs: **Site Map** and **Code Audit**. See [Code Audit](page:code-audit) for the full source-analysis reference.
+
 ## How it's built
 
 The Sitemap listens to proxy traffic live. As requests flow through, each URL is broken into host → path and slotted into the tree. Repeated hits on the same path are grouped, so one node can hold many traffic entries.
@@ -23,9 +25,13 @@ Three ways to look at the same data, switched from the toolbar:
 - The **filter box** narrows the tree to matching paths.
 - The **Blacklist** keeps noise out permanently — add URL patterns (wildcards supported) and matching nodes are excluded from the Sitemap. The blacklist persists across sessions. Manage entries from the blacklist panel.
 
+## Multi-select with Ctrl+click
+
+Hold <kbd>Ctrl</kbd> (or <kbd>Cmd</kbd> on macOS) while clicking nodes to build an additive selection (highlighted in a distinct colour). This lets you visually flag a group of endpoints without entering Delete mode. A plain click clears the selection.
+
 ## Delete mode
 
-Toggle **Select & Delete** to get a checkbox on every node. Mark the nodes you don't want and confirm — useful for pruning analytics, CDN, and third-party noise. You can also delete a single node from its right-click menu.
+Toggle **Select & Delete** to get a checkbox on every node. Mark the nodes you don't want and confirm — useful for pruning analytics, CDN, and third-party noise. From the delete bar you can either **Delete** (removes from the current tree only) or **Blacklist** (persists the pattern so those URLs never appear again). You can also delete a single node from its right-click menu.
 
 ## The detail pane
 
@@ -40,4 +46,19 @@ A **Format** toggle beautifies minified JS/CSS/JSON/HTML in place, and every vie
 
 ## Export & context menu
 
-**Export** saves the Sitemap structure to a file. Right-click any node for the shared context menu — send the request to [Repeater](page:repeater), [Intruder](page:intruder), [Scanner](page:scanner), and more.
+Click the **Download** icon to export the Sitemap structure. Available formats:
+
+| Format | Contents |
+|---|---|
+| JSON | Full tree with per-endpoint request/response bodies |
+| CSV | One row per endpoint: method, URL, status, MIME, size, time |
+| XML Sitemap | Standard `<urlset>` format for `sitemap.xml` |
+| HAR | HTTP Archive 1.2 — import into Burp, Chrome DevTools, Charles |
+| Markdown | Human-readable outline of the site structure |
+| URLs | Plain-text list of every captured URL |
+
+Right-click any node for the shared context menu — send the request to [Repeater](page:repeater), [Intruder](page:intruder), [Scanner](page:scanner), and more.
+
+## Code Audit tab
+
+The **Code Audit** tab (next to Site Map in the header) performs passive source-level analysis on every asset captured by the proxy. See the full [Code Audit](page:code-audit) documentation.
