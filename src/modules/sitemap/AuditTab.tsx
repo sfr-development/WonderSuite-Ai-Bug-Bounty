@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom';
 import {
   ChevronRight, ChevronDown, Globe, Folder, FileCode, Palette, FileText,
   Image, Type, Zap, Film, Link, Key, ShieldOff, MessageSquare,
-  Terminal, Download, Copy, Check, Settings, X, FileJson, AlignLeft, Network, Archive,
+  Terminal, Download, Copy, Check, Settings, X, FileJson, AlignLeft, Network, Archive, Package,
 } from 'lucide-react';
 import { highlight, detectHighlightLang, initHighlighter } from '../../lib/highlighter';
 import { beautify, canBeautify } from '../../lib/beautify';
@@ -44,6 +44,7 @@ const SEV_COLOR: Record<Severity, string> = {
 const FINDING_SECTIONS: { type: FindingType; label: string; icon: React.ReactNode }[] = [
   { type: 'secret',       label: 'Secrets',       icon: <ShieldOff    size={12}/> },
   { type: 'token',        label: 'Tokens',         icon: <Key          size={12}/> },
+  { type: 'library',      label: 'Libraries',      icon: <Package      size={12}/> },
   { type: 'api_endpoint', label: 'API Endpoints',  icon: <Terminal     size={12}/> },
   { type: 'link',         label: 'Links',           icon: <Link         size={12}/> },
   { type: 'comment',      label: 'Comments',        icon: <MessageSquare size={12}/> },

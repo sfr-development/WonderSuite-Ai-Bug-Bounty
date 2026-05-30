@@ -1,5 +1,5 @@
 export type AssetType = 'html' | 'js' | 'css' | 'image' | 'font' | 'media' | 'api' | 'other';
-export type FindingType = 'link' | 'token' | 'secret' | 'api_endpoint' | 'comment';
+export type FindingType = 'link' | 'token' | 'secret' | 'api_endpoint' | 'comment' | 'library';
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
 export interface AuditAsset {
@@ -51,7 +51,7 @@ export const DEFAULT_SETTINGS: AuditSettings = {
   browserMode: 'proxy',
   enabledFinders: {
     link: true, token: true, secret: true,
-    api_endpoint: true, comment: true,
+    api_endpoint: true, comment: true, library: true,
   },
   beautifyByDefault: false,
 };
@@ -68,7 +68,7 @@ export interface AuditResult {
 export function computeStats(assets: AuditAsset[], findings: AuditFinding[]): AuditStats {
   const byType = { html: 0, js: 0, css: 0, image: 0, font: 0, media: 0, api: 0, other: 0 } as Record<AssetType, number>;
   const findingsBySeverity = { info: 0, low: 0, medium: 0, high: 0, critical: 0 } as Record<Severity, number>;
-  const findingsByType = { link: 0, token: 0, secret: 0, api_endpoint: 0, comment: 0 } as Record<FindingType, number>;
+  const findingsByType = { link: 0, token: 0, secret: 0, api_endpoint: 0, comment: 0, library: 0 } as Record<FindingType, number>;
   let totalSize = 0;
   for (const a of assets) { byType[a.type] = (byType[a.type] || 0) + 1; totalSize += a.size || 0; }
   for (const f of findings) {

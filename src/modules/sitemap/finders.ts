@@ -6,6 +6,8 @@ interface Pattern {
   severity: Severity;
   regex: RegExp;
   extractGroup?: number;
+  /** Override the extracted value with a custom formatter (e.g. "LibName v1.2.3"). */
+  extractFormat?: (m: RegExpExecArray) => string;
 }
 
 const PATTERNS: Pattern[] = [
@@ -256,6 +258,37 @@ const PATTERNS: Pattern[] = [
     regex: /\/\/\s*(?:TODO|FIXME|HACK|XXX|TEMP|BUG|NOTE|DEPRECATED|WARN)[:\s][^\n]{5,}/gi },
   { name: 'sensitive_comment',    category: 'comment', severity: 'low',
     regex: /\/\/[^\n]*\b(?:password|secret|private[_-]?key|credential|auth)\b[^\n]{0,80}/gi },
+
+
+  // ╔══════════════════════════════════════════════════════════════════╗
+  // ║  LIBRARY DETECTION                                               ║
+  // ╚══════════════════════════════════════════════════════════════════╝
+
+  // ── Banner comments (/*, /*!) ─────────────────────────────────────
+  // Matches: /*! jQuery v3.6.0 | …   /*! Bootstrap v5.3.0 (…
+  //          /*\n * React v18.2.0    /*!  lodash v4.17.21
+  { name: 'lib_banner', category: 'library', severity: 'info',
+    regex: /\/\*!?\s*[\r\n]?\s*\*?\s*((?:@[\w-]+\/)?[\w$][\w$.\- ]{1,60}?)\s+[vV]?(\d+\.\d+(?:\.\d+)?(?:[.\-][a-z\d]+)?)\b/gi,
+    extractFormat: m => `${m[1].trim()} v${m[2]}`,
+  },
+
+  // ── jQuery fn.jquery property (doesn't use banner format) ─────────
+  { name: 'lib_jquery', category: 'library', severity: 'info',
+    regex: /\bjQuery\.fn\.jquery\s*=\s*["'](\d+\.\d+(?:\.\d+)?)/g,
+    extractFormat: m => `jQuery v${m[1]}`,
+  },
+
+  // ── Vue.version ───────────────────────────────────────────────────
+  { name: 'lib_vue', category: 'library', severity: 'info',
+    regex: /\bVue\.version\s*=\s*["'](\d+\.\d+(?:\.\d+)?)/g,
+    extractFormat: m => `Vue.js v${m[1]}`,
+  },
+
+  // ── package.json / inline deps (captured /package.json, webpack config, etc.) ──
+  { name: 'lib_pkg_dep', category: 'library', severity: 'info',
+    regex: /"(react|vue|angular|jquery|lodash|moment|dayjs|axios|bootstrap|tailwindcss|svelte|next|nuxt|gatsby|three|d3|chart\.js|express|fastify|socket\.io|rxjs|zustand|redux|mobx|graphql|prisma|typeorm|mongoose|sequelize|knex|pinia|vite|webpack|rollup|esbuild|typescript|lit|alpinejs|htmx|stimulus|ember|backbone)"\s*:\s*"[\^~]?(\d+\.\d+(?:\.\d+)?)/gi,
+    extractFormat: m => `${m[1]} v${m[2]}`,
+  },
 ];
 
 // Values that look like code expressions → reject for secret/token
@@ -280,7 +313,7 @@ export function runFinders(asset: AuditAsset, settings: AuditSettings): AuditFin
   const seen = new Set<string>();
   const catCount: Partial<Record<FindingType, number>> = {};
   const CAT_CAP: Partial<Record<FindingType, number>> = {
-    link: 150, comment: 80, api_endpoint: 200, token: 100, secret: 500,
+    link: 150, comment: 80, api_endpoint: 200, token: 100, secret: 500, library: 80,
   };
 
   for (const p of PATTERNS) {
@@ -292,7 +325,9 @@ export function runFinders(asset: AuditAsset, settings: AuditSettings): AuditFin
     while ((m = p.regex.exec(content)) !== null) {
       if ((catCount[p.category] ?? 0) >= cap) break;
 
-      const raw = (p.extractGroup !== undefined ? m[p.extractGroup] : m[0]) ?? m[0];
+      const raw = (p.extractFormat
+        ? p.extractFormat(m)
+        : (p.extractGroup !== undefined ? m[p.extractGroup] : m[0])) ?? m[0];
       if (!raw || raw.length < 5) continue;
       const trimmed = raw.trim();
       if (!trimmed || trimmed.length < 5) continue;

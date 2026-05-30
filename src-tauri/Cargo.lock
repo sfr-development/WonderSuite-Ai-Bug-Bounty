@@ -6630,7 +6630,7 @@ dependencies = [
 
 [[package]]
 name = "wondersuite"
-version = "0.3.32"
+version = "0.3.33"
 dependencies = [
  "axum",
  "base64 0.22.1",

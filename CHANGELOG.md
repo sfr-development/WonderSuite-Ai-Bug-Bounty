@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.33] — 2026-05-30
+
+### Added — Code Audit: Library Detector
+
+The finder engine now has a `library` category. Findings appear in the
+right panel under **Libraries** (Package icon), between Tokens and API
+Endpoints. The detector is enabled by default and toggleable in the
+Settings gear.
+
+**Detection patterns:**
+
+| Pattern | Covers |
+|---|---|
+| `/*! Name vX.Y.Z` banner comments | jQuery, Lodash, Moment, Bootstrap, React (dev build), Axios, D3, Three.js, and any library that emits a JSDoc/license banner |
+| `jQuery.fn.jquery = "X.Y.Z"` | jQuery (minified builds omit banner, set this property instead) |
+| `Vue.version = "X.Y.Z"` | Vue.js |
+| `"dep":"X.Y.Z"` in JSON fragments | 40+ named libs (react, vue, angular, lodash, moment, dayjs, axios, bootstrap, tailwindcss, svelte, next, nuxt, gatsby, three, d3, chart.js, express, fastify, socket.io, rxjs, zustand, redux, mobx, graphql, prisma, typeorm, mongoose, pinia, vite, webpack, rollup, esbuild, typescript, lit, alpinejs, htmx, and more) when a `package.json` or inline config is captured |
+
+Each finding value is formatted as `LibraryName vX.Y.Z` — copy it straight into a CVE database or ask an AI agent to check for known vulnerabilities.
+
+Cap: 80 library findings per file (prevents noise from large bundle comments).
+
+**Implementation:**
+- `FindingType` extended with `'library'`
+- `Pattern` interface extended with optional `extractFormat(m)` callback — lets patterns compose a human-readable value (e.g. `jQuery v3.6.0`) from multiple capture groups without changing the extraction loop
+- `DEFAULT_SETTINGS.enabledFinders.library = true`
+- `FINDING_SECTIONS` in `AuditTab.tsx` includes `{ type:'library', label:'Libraries', icon:<Package/> }`
+
 ## [0.3.32] — 2026-05-30
 
 ### Fixed — Export saves to Downloads (or any user-chosen path) produced no file
