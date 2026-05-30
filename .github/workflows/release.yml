@@ -229,6 +229,40 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      # tauri-action generates latest.json with an empty "notes" field when
+      # called via releaseId (it doesn't read the release body). Re-upload the
+      # latest.json with the real CHANGELOG notes so the in-app update modal
+      # shows "what's new".
+      - name: Patch latest.json with release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -e
+          # Extract notes from CHANGELOG.md
+          NOTES="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+            capture && /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md | sed -e '/^$/N;/^\n$/D')"
+
+          # Download the latest.json that tauri-action uploaded
+          gh release download "${TAG}" --repo "${REPO}" --pattern "latest.json" --dir /tmp --clobber
+
+          # Inject notes into the JSON
+          PATCHED=$(jq --arg n "$NOTES" '.notes = $n' /tmp/latest.json)
+          echo "$PATCHED" > /tmp/latest.json
+
+          # Re-upload (overwrite) the asset
+          gh release upload "${TAG}" /tmp/latest.json \
+            --repo "${REPO}" \
+            --clobber
+
       - name: Publish release (flip draft → public)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
