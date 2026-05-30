@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.28] — 2026-05-30
+
+### Fixed — WonderBrowser serves stale cached responses instead of routing through proxy
+
+When WonderBrowser was reopened on a site visited in a previous session,
+Chrome's on-disk HTTP cache served files (JS, CSS, images) directly from
+disk — never touching the proxy. These files therefore never appeared in
+the Sitemap or Code Audit, and were invisible to traffic capture.
+
+**Root cause:** Chrome's on-disk cache (`Default/Cache/`,
+`Default/Code Cache/`, `Default/Service Worker/`, etc.) persists in
+`~/.wondersuite/browser-profile/` across launches. The existing
+`--disk-cache-size=0` flag prevents *new* disk-cache writes but does
+**not** delete cache entries that were written by an earlier Chrome
+run (before that flag was in place, or by the profile's first boot).
+Similarly, `Network.setCacheDisabled(true)` via CDP was sent after a
+2-second delay, meaning the first navigations could still serve from
+the RAM cache before the CDP command arrived.
+
+**Fixes:**
+
+1. **`clear_browser_caches(profile_dir)` — Rust, `browser.rs`.**
+   Called inside `launch_browser()` before Chrome is spawned. Deletes:
+   `Default/Cache`, `Default/Code Cache`, `Default/GPUCache`,
+   `Default/Network`, `Default/Service Worker`, `Default/CacheStorage`,
+   `Default/Application Cache`. Cookies, localStorage, extension data,
+   and all other profile data are preserved. Non-fatal if a directory
+   cannot be removed (Chrome recreates them).
+
+2. **CDP delay reduced 2 000 ms → 500 ms.**
+   `Network.setCacheDisabled(true)` and `Network.enable` are now sent
+   500 ms after Chrome spawns instead of 2 s. This closes the window
+   during which early navigations could serve from the in-process RAM
+   cache before the CDP session was established. Both the
+   stealth-fallback path and the normal extension path are updated.
+
+After this fix, every WonderBrowser launch starts with an empty cache —
+all requests flow through the proxy and appear in the Sitemap + Code
+Audit immediately.
+
 ## [0.3.27] — 2026-05-30
 
 ### Fixed — Context menu appears far below the right-click position

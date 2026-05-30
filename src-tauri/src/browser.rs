@@ -444,6 +444,32 @@ impl Default for LaunchOptions {
     }
 }
 
+/// Delete the directories Chrome uses for on-disk caching inside the given
+/// profile. Leaves cookies, localStorage, extension data, and all other
+/// profile data intact — only removes caches that would otherwise serve
+/// stale responses and bypass the proxy.
+fn clear_browser_caches(profile_dir: &PathBuf) {
+    // Chrome stores caches under the "Default" sub-profile directory.
+    let default = profile_dir.join("Default");
+    let cache_dirs = [
+        default.join("Cache"),
+        default.join("Code Cache"),
+        default.join("GPUCache"),
+        default.join("Network"),
+        default.join("Service Worker"),
+        default.join("CacheStorage"),
+        default.join("Application Cache"),
+    ];
+    for dir in &cache_dirs {
+        if dir.exists() {
+            if let Err(e) = fs::remove_dir_all(dir) {
+                // Non-fatal: Chrome might recreate missing cache dirs itself.
+                eprintln!("[WonderBrowser] cache clear warning ({:?}): {}", dir.file_name().unwrap_or_default(), e);
+            }
+        }
+    }
+}
+
 pub fn launch_browser(
     browser_path: &str,
     opts: &LaunchOptions,
@@ -456,6 +482,13 @@ pub fn launch_browser(
     // (cookies, history, extensions, autofill). Same pattern Burp / Caido / ZAP use.
     let profile_dir = opts.profile_dir.clone().unwrap_or_else(get_profile_dir);
     fs::create_dir_all(&profile_dir)?;
+
+    // Clear on-disk HTTP caches before every launch so every request goes through
+    // the proxy fresh. Chrome's --disk-cache-size=0 + CDP Network.setCacheDisabled
+    // prevent NEW disk-cache writes, but they don't remove cache entries that were
+    // written in a previous session (before those flags took effect). Deleting these
+    // directories is cheap (~ms on SSD) and guarantees proxy captures everything.
+    clear_browser_caches(&profile_dir);
 
     // Stealth used to be injected via CDP (Page.addScriptToEvaluateOnNewDocument).
     // v0.2.0 moved it into the bundled WonderSuite Chrome extension, which runs the
@@ -617,7 +650,10 @@ pub fn launch_browser(
                 let stealth_js = fs::read_to_string(&path).unwrap_or_default();
                 let cdp_port_clone = cdp_port;
                 tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    // 500 ms is enough for Chrome to open the CDP socket after spawn.
+                    // The old 2 s wait meant setCacheDisabled fired late, allowing
+                    // the first page load to bypass the proxy from the RAM cache.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     inject_stealth_via_cdp(cdp_port_clone, &stealth_js).await;
                     start_network_capture_cdp(cdp_port_clone).await;
                 });
@@ -626,7 +662,7 @@ pub fn launch_browser(
             // Extension handles stealth; we only need CDP for network capture.
             let cdp_port_clone = cdp_port;
             tokio::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 start_network_capture_cdp(cdp_port_clone).await;
             });
         }
