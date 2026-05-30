@@ -1,5 +1,4 @@
-﻿{
-  "$schema": "https://schema.tauri.app/config/2",
+{  "$schema": "https://schema.tauri.app/config/2",
   "productName": "WonderSuite",
   "version": "0.3.25",
   "identifier": "com.wondersuite.app",

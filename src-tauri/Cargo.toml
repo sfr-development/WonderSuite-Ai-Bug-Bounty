@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "wondersuite"
 version = "0.3.25"
 description = "AI-Native Web Security Testing Platform"
