@@ -163,25 +163,32 @@ Multi-level fetcher with robots.txt + sitemap.xml + `/.well-known/` + JS endpoin
 
 ### Code Audit (v0.3.24+)
 
-A passive source-level audit that analyses every asset the proxy has captured. Lives inside the **Sitemap** module as a second tab alongside the tree view — no separate crawl step needed.
+Browse any target through the WonderSuite proxy — every JS file, stylesheet, API response, and image is captured automatically. Switch to the **Code Audit** tab inside the Sitemap module and all captured assets are instantly available for deep inspection: no separate crawl, no manual download, no devtools copy-paste.
 
-**Three-panel layout:** Asset tree (domain → type → file) · Syntax-highlighted source editor with jump-to-finding · Findings + Summary panel.
+<div align="center">
+<img src="docs/screenshots/code-audit.png" alt="Code Audit — source viewer with findings and export menu" width="900" />
+</div>
 
-**Finder engine** — 60+ regex patterns across five categories:
+**The workflow in three steps:**
+
+1. **Capture** — browse the target with the proxy running. JS bundles, CSS, API responses, and images stream into the asset tree as they're intercepted. Everything the browser loads passes through WonderSuite first.
+
+2. **Audit** — the built-in finder engine scans every captured source file automatically. 60+ regex patterns surface secrets, tokens, API endpoints, links, and suspicious comments without any manual effort.
+
+3. **Export** — right-click any domain, type-group, or individual file to export beautified source, a self-contained HTML security report, per-category CSV/TXT, or a full **ZIP bundle** (`js/` · `css/` · `html/` · `api/` · `findings/`) you can drop into a project folder or hand to an AI agent for a deeper code audit.
+
+**Three-panel layout:** Asset tree (domain → type → file) · Shiki-highlighted source editor (minified code auto-formatted, line numbers, click-to-jump on findings) · Findings + Summary panel.
+
+**Finder engine — what it exposes automatically:**
 
 | Category | Examples |
 |---|---|
-| **Secrets** | AWS/GCP/Azure keys, OpenAI/Anthropic/HuggingFace/Replicate tokens, Stripe live keys, GitHub tokens (ghp/gho/ghu/ghs/ghr/gha/PAT), Slack webhooks, Supabase service/anon keys, MongoDB/Postgres/MySQL/Redis connection strings, private key blocks, `.env`-style `NEXT_PUBLIC_` / `VITE_` / `REACT_APP_` leaks |
-| **Tokens** | JWT, Bearer, Basic Auth, OAuth, id\_token, refresh\_token, session cookies |
-| **API Endpoints** | `fetch()`, `axios.*()`, XHR `.open()`, API path strings, GraphQL operations, WebSocket URLs, gRPC/tRPC endpoints |
-| **Links** | Absolute URLs, relative paths |
-| **Comments** | TODO/FIXME/HACK/BUG, comments referencing credentials |
-
-**Source editor** powered by Shiki (`one-dark-pro` theme) with js-beautify auto-formatting — minified assets rendered readable. Click any finding → editor scrolls + flash-highlights that line.
-
-**Export options** (context menu per domain / type-group / file):
-- Beautified source, concatenated sources, HTML security report, per-category CSV/TXT
-- **Export as ZIP** — full asset bundle in `js/` · `css/` · `html/` · `api/` · `findings/` folders + `README.txt` + `assets.json` manifest; saved via Tauri's native file-chooser dialog
+| **Secrets** | AWS/GCP/Azure keys, OpenAI/Anthropic/HuggingFace tokens, Stripe live keys, GitHub tokens, Slack webhooks, **Supabase service/anon keys**, MongoDB/Postgres connection strings, private key blocks, `NEXT_PUBLIC_` / `VITE_` / `REACT_APP_` env leaks |
+| **Tokens** | JWT, Bearer, Basic Auth, OAuth, refresh\_token, session cookies |
+| **API Endpoints** | `fetch()`, `axios`, XHR, GraphQL operations, WebSocket URLs, gRPC/tRPC routes |
+| **Library versions** | Combine with `js_library_audit` (MCP tool) to detect outdated jQuery, React, lodash, etc. and cross-reference known CVEs |
+| **Links** | All absolute and relative URLs embedded in source |
+| **Comments** | TODO/FIXME/HACK, comments mentioning passwords or credentials |
 
 **Sitemap multi-select (v0.3.26+):**
 - **Ctrl+click** — additive node selection (accent highlight, cleared on plain click)
