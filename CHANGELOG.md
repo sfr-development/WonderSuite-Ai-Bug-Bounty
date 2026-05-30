@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.31] — 2026-05-30
+
+### Fixed — Code Audit: clicking a finding does not jump to the line
+
+`handleFindingJump` stored the target in `pendingJump.current` and then
+called `setSelectedAsset(asset)` to trigger a CodePane reload — which
+would eventually call `onReady` → `setJumpTarget`. But if the asset was
+already selected (the Findings panel shows findings for the currently
+loaded file), React bailed out of the re-render, `onReady` was never
+called, and `jumpTarget` stayed `null`. The jump did nothing.
+
+Fix: when `selectedAsset?.url === assetUrl` skip the asset reload and
+call `setJumpTarget` directly (with a 20 ms flush gap to clear any
+existing highlight first).
+
+### Fixed — Code Audit: no line numbers in the source viewer
+
+The editor renders Shiki HTML which emits `<span class="line">` elements
+but no visible line numbers. Fixed with CSS counters: `counter-reset` on
+`<code>`, `counter-increment` + `content: counter(shiki-line)` on
+`::before`. Numbers are styled dim (32% opacity) with a faint right
+border, `user-select: none`, and a fixed 2.8em gutter so they never
+interfere with text selection or the jump highlight.
+
 ## [0.3.30] — 2026-05-30
 
 ### Docs — CHANGELOG, README, and in-app documentation updated

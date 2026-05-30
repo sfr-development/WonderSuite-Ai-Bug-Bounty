@@ -833,11 +833,18 @@ export function AuditTab({ tree }: { tree: TreeNode[] }) {
   const handleFindingJump = useCallback((assetUrl: string, line: number) => {
     const asset = assets.find(a => a.url === assetUrl);
     if (!asset) return;
-    // Store pending jump BEFORE changing asset so CodePane knows to jump after loading
-    pendingJump.current = { assetUrl, line };
-    setJumpTarget(null);       // clear any previous highlight first
-    setSelectedAsset(asset);   // triggers CodePane to load + beautify + highlight
-  }, [assets]);
+    if (selectedAsset?.url === assetUrl) {
+      // Asset already loaded — CodePane won't re-render so onReady won't fire.
+      // Clear the old highlight first, then set the new target directly.
+      setJumpTarget(null);
+      setTimeout(() => setJumpTarget({ assetUrl, line }), 20);
+    } else {
+      // Different asset — set pending jump, wait for CodePane onReady to fire it.
+      pendingJump.current = { assetUrl, line };
+      setJumpTarget(null);
+      setSelectedAsset(asset);
+    }
+  }, [assets, selectedAsset]);
 
   // Export
   const handleExport = useCallback(async (fmt: string) => {

@@ -353,12 +353,30 @@
   background: transparent;
 }
 
+/* Line numbers via CSS counter — no JS needed */
+.audit-editor-code pre.shiki code {
+  counter-reset: shiki-line;
+}
+
 /* Each source line rendered by Shiki */
 .audit-editor-code .line {
   display: block;
-  padding: 0 16px;
+  padding: 0 16px 0 0;
   min-height: 1.65em;
   white-space: pre;
+}
+.audit-editor-code .line::before {
+  counter-increment: shiki-line;
+  content: counter(shiki-line);
+  display: inline-block;
+  width: 2.8em;
+  text-align: right;
+  padding-right: 1em;
+  margin-right: 4px;
+  color: rgba(171,178,191,0.32);
+  font-size: 0.85em;
+  user-select: none;
+  border-right: 1px solid rgba(255,255,255,0.07);
 }
 .audit-editor-code .line:hover {
   background: rgba(255,255,255,0.04);
