@@ -519,7 +519,7 @@ function SkillDownloadPanel() {
         filters: [{ name: 'Markdown', extensions: ['md'] }],
       });
       if (!path) return;
-      await invoke('save_file_text', { path, content });
+      await invoke('save_file_text_any', { path, content });
       setInstalledPath(path);
     } catch (e: any) {
       setError(String(e?.message || e));

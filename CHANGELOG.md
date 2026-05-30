@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.32] — 2026-05-30
+
+### Fixed — Export saves to Downloads (or any user-chosen path) produced no file
+
+Every export call that went through a native OS save dialog eventually
+called `save_file_text` or `save_file_bytes`, both of which pass the path
+through `validate_path`. That function only allows `~/.wondersuite/`,
+the system temp directory, and IDE config dirs — a user-chosen path such
+as `~/Downloads/report.html` or `~/Desktop/audit.zip` was rejected with
+a path-validation error that was silently swallowed, so the file was never
+written.
+
+**Fix:** Two new Rust commands `save_file_text_any` and `save_file_bytes_any`
+skip `validate_path` — they are ONLY called immediately after a native OS
+save dialog returns a path (the OS already enforces filesystem permissions
+at that point). All export call sites updated:
+
+- `auditExport.ts` — `saveFile`, `exportAll`, `exportDomainZip`
+- `Sitemap.tsx` — JSON / CSV / XML / HAR / Markdown / URL text exports
+- `MermaidView.tsx` — SVG / PNG / Markdown / Mermaid source exports
+- `ContextMenu.tsx` — "Save item…" action
+- `Settings.tsx` — AI Skill save-as dialog
+
+### Fixed — Image preview (PNG, WebP, GIF, …) blank in Code Audit
+
+The editor used `<img src={asset.url}>` to render captured images. In
+Tauri's WebView, fetching an external URL requires the original server to
+be reachable (no proxy, no auth, potential CSP `img-src` restriction) —
+the `onError` handler silently hid the failed image.
+
+**Fix:** The image `src` is now constructed from the captured proxy
+response body first:
+1. If `asset.content` looks like base64 (only base64 chars), build a
+   `data:<mime>;base64,<content>` URL directly.
+2. Otherwise encode the raw bytes via `TextEncoder` + `btoa`.
+3. Fall back to `asset.url` (original URL) as a last resort.
+
+This makes images work offline, behind auth, and for all formats
+(PNG, WebP, GIF, JPEG, SVG, ICO, AVIF, …) as long as the proxy captured
+the response body.
+
 ## [0.3.31] — 2026-05-30
 
 ### Fixed — Code Audit: clicking a finding does not jump to the line

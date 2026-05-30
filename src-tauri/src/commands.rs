@@ -384,6 +384,26 @@ pub async fn save_file_bytes(path: String, data_base64: String) -> Result<(), St
     std::fs::write(&path, bytes).map_err(|e| format!("Failed to save file: {}", e))
 }
 
+/// Write binary content (base64 encoded) to a user-chosen path.
+/// No path validation — this is ONLY called after the user explicitly picks
+/// a destination via the OS native save dialog (tauri-plugin-dialog::save()),
+/// which already enforces filesystem permissions.
+#[tauri::command]
+pub async fn save_file_bytes_any(path: String, data_base64: String) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("Failed to save file: {}", e))
+}
+
+/// Write text content to a user-chosen path.
+/// No path validation — ONLY called after the OS native save dialog.
+#[tauri::command]
+pub async fn save_file_text_any(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| format!("Failed to save file: {}", e))
+}
+
 /// Validate that a file path is within allowed directories.
 /// Prevents path traversal and arbitrary file access via the Tauri IPC.
 ///

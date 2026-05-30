@@ -596,7 +596,7 @@ export function Sitemap() {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const { invoke } = await import('@tauri-apps/api/core');
       const filePath = await save({ title: `Export Sitemap as ${ext.toUpperCase()}`, defaultPath: filename, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
-      if (filePath) await invoke('save_file_text', { path: filePath, content });
+      if (filePath) await invoke('save_file_text_any', { path: filePath, content });
     } catch (err) { console.error('Export failed:', err); }
   }, [tree]);
 

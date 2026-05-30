@@ -291,7 +291,7 @@ export function ContextMenu() {
         ],
       });
       if (!path) return; // user cancelled
-      await invoke('save_file_text', { path, content });
+      await invoke('save_file_text_any', { path, content });
       addToast({ title: 'Saved', message: path, type: 'success' });
     } catch (e: any) {
       addToast({ title: 'Save failed', message: String(e ?? 'unknown'), type: 'error' });

@@ -513,7 +513,31 @@ function EditorPane({ asset, findings, jumpTarget, onCodeReady }: {
       <div className="audit-editor-body">
         {asset.type === 'image' ? (
           <div className="audit-image-preview">
-            <img src={asset.url} alt={asset.filename} onError={e => { (e.target as HTMLElement).style.display='none'; }}/>
+            <img
+              src={(() => {
+                // Prefer a data-URL built from the captured response body so the
+                // image renders even when the original URL is inaccessible (no proxy,
+                // auth required, CSP img-src restriction, etc.).
+                if (asset.content) {
+                  try {
+                    const mime = asset.mimeType || 'image/png';
+                    // Already base64?
+                    if (/^[A-Za-z0-9+/=\r\n]+$/.test(asset.content.trim())) {
+                      return `data:${mime};base64,${asset.content.trim().replace(/\s/g, '')}`;
+                    }
+                    // Raw bytes — encode to base64
+                    const bytes = new TextEncoder().encode(asset.content);
+                    let bin = '';
+                    bytes.forEach(b => { bin += String.fromCharCode(b); });
+                    return `data:${mime};base64,${btoa(bin)}`;
+                  } catch { /* fall through to URL */ }
+                }
+                return asset.url;
+              })()}
+              alt={asset.filename}
+              style={{ maxWidth:'100%', maxHeight:400, objectFit:'contain', borderRadius:4 }}
+              onError={e => { (e.target as HTMLImageElement).src = asset.url; }}
+            />
             <div className="audit-asset-info">
               {asset.size && <span className="audit-asset-info-pill">{formatSize(asset.size)}</span>}
               {asset.mimeType && <span className="audit-asset-info-pill">{asset.mimeType}</span>}

@@ -25,7 +25,8 @@ export async function saveFile(
       filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
     });
     if (!path) return false; // user cancelled
-    await invoke('save_file_text', { path, content });
+    // Use save_file_text_any — path came from native OS dialog, no validate_path restriction.
+    await invoke('save_file_text_any', { path, content });
     return true;
   } catch (err) {
     console.error('[AuditExport] save_file_text failed:', err);
@@ -369,7 +370,8 @@ export async function exportDomainZip(
       filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
     });
     if (!path) return; // user cancelled
-    await invoke('save_file_bytes', { path, data_base64 });
+    // save_file_bytes_any — path came from native OS dialog, skip validate_path.
+    await invoke('save_file_bytes_any', { path, data_base64 });
   } catch (err) {
     console.error('[AuditExport] ZIP save failed:', err);
   }
@@ -392,6 +394,6 @@ export async function exportAll(result: AuditResult): Promise<void> {
       defaultPath: 'audit-report.json',
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
-    if (jsonPath) await invoke('save_file_text', { path: jsonPath, content: exportResultJson(result) });
+    if (jsonPath) await invoke('save_file_text_any', { path: jsonPath, content: exportResultJson(result) });
   } catch {}
 }
