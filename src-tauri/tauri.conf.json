@@ -1,6 +1,6 @@
 {  "$schema": "https://schema.tauri.app/config/2",
   "productName": "WonderSuite",
-  "version": "0.3.26",
+  "version": "0.3.27",
   "identifier": "com.wondersuite.app",
   "build": {
     "beforeDevCommand": "npm run dev",

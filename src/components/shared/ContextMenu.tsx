@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import ReactDOM from 'react-dom';
 import { Zap, FileJson, ArrowRightLeft, Target, PlusCircle, ListOrdered, Layers, Globe, Search, MessageSquare, Code, Link2, Activity, Network, Clock, Bug, GitCompare, Trash2, Link, TerminalSquare, Download, BookText } from 'lucide-react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -297,7 +298,9 @@ export function ContextMenu() {
     }
   };
 
-  return (
+  // Portal to document.body so position:fixed is relative to the real viewport,
+  // not the zoom-scaled .shell-body containing block (same fix as Sidebar ctx menu).
+  return ReactDOM.createPortal(
     <div ref={menuRef} className="context-menu" style={pos} onContextMenu={e => e.preventDefault()}>
       <div className="context-menu-header">
         <span className="context-method">{method || 'TARGET'}</span>
@@ -388,6 +391,7 @@ export function ContextMenu() {
           <PlusCircle size={13} /> Blacklist item
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.27] — 2026-05-30
+
+### Fixed — Context menu appears far below the right-click position
+
+The shared right-click context menu (`ContextMenu.tsx`) was rendered
+inside `.shell-main`, which is a child of `.shell-body`. `.shell-body`
+has `zoom: var(--ui-scale, 1)` applied — in Chromium this creates a new
+containing block for `position: fixed` descendants. As a result, the
+menu's `top` value was measured from the zoomed shell's origin (below
+the titlebar) instead of from the real viewport top, causing it to
+appear significantly lower than the actual click position.
+
+**Fix:** wrapped the `ContextMenu` return value in
+`ReactDOM.createPortal(..., document.body)`. Portaling to `document.body`
+moves the element outside the zoom context, making `position: fixed` +
+`top: e.clientY` align with the actual viewport coordinates. This is the
+identical fix applied to the Sidebar context menu in v0.3.7.
+
 ## [0.3.26] — 2026-05-30
 
 ### Fixed — Ctrl+click selection had no action bar
