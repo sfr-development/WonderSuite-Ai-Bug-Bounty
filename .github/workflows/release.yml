@@ -84,6 +84,11 @@ jobs:
       # Idempotent: if a release for this tag already exists (manual prep,
       # a re-run, or a tag pushed without a matching workflow run), reuse
       # its id instead of failing. Otherwise create a fresh DRAFT.
+      #
+      # NOTE: `gh release create --draft` creates a release that has NO tag
+      # association until it is published, so an immediate lookup via
+      # `gh api releases/tags/TAG` returns 404. The fix is to capture the
+      # release id from the POST response atomically via `gh api --jq .id`.
       - name: Create or reuse draft release
         id: create
         env:
@@ -94,16 +99,21 @@ jobs:
         shell: bash
         run: |
           set -e
-          if ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id 2>/dev/null); then
+          if ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id 2>/dev/null) && [ -n "$ID" ]; then
             echo "Found existing release for ${TAG} with id=${ID}"
           else
             echo "Creating draft release ${TAG}"
-            gh release create "${TAG}" \
-              --repo "${REPO}" \
-              --title "WonderSuite ${TAG}" \
-              --notes "${NOTES}" \
-              --draft
-            ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id)
+            # Use the REST API directly so we get the id atomically from the
+            # POST response — gh release create does not return JSON and the
+            # subsequent tag-based lookup fails while the release is still a draft.
+            ID=$(gh api "repos/${REPO}/releases" \
+              --method POST \
+              -f "tag_name=${TAG}" \
+              -f "name=WonderSuite ${TAG}" \
+              -f "body=${NOTES}" \
+              -F "draft=true" \
+              --jq '.id')
+            echo "Created draft release ${TAG} with id=${ID}"
           fi
           echo "release_id=${ID}" >> "$GITHUB_OUTPUT"
 
