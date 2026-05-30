@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import {
   ChevronRight, ChevronDown, Globe, Folder, FileCode, Palette, FileText,
   Image, Type, Zap, Film, Link, Key, ShieldOff, MessageSquare,
@@ -188,7 +189,9 @@ function AuditContextMenu({ state, assets, findings, onClose }: {
   // Section title
   const title = node.kind === 'file' ? (node.asset?.filename || node.name) : node.name;
 
-  return (
+  // Portal to document.body so position:fixed is relative to the real viewport,
+  // not the zoom-scaled .shell-body containing block.
+  return ReactDOM.createPortal(
     <div className="audit-ctx-menu" style={{ left: state.x, top: state.y }}>
       <div className="audit-ctx-header" title={title}>{title}</div>
       <div className="audit-ctx-sep"/>
@@ -293,7 +296,8 @@ function AuditContextMenu({ state, assets, findings, onClose }: {
       }}>
         <Copy size={12}/> Copy URL
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

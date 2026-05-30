@@ -196,6 +196,7 @@ pub fn run() {
             commands::mcp_browser_set_headless,
             commands::mcp_browser_get_stealth_profile,
             commands::mcp_browser_set_stealth_profile,
+            commands::browser_set_clear_cache_on_start,
             commands::save_file_text,
             commands::save_file_bytes,
             commands::skill_content,

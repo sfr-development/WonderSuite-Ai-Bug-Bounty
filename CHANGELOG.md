@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.29] — 2026-05-30
+
+### Fixed — Code Audit context menu appears far below the cursor
+
+`AuditContextMenu` rendered inside `.shell-body` (which has
+`zoom: var(--ui-scale)`). In Chromium, CSS `zoom` creates a new
+containing block for `position: fixed` children, so `top: e.clientY`
+was positioned relative to the zoomed shell's origin — shifting the
+menu downward by the titlebar height amplified by the zoom factor.
+
+**Fix:** `AuditContextMenu` return value is now wrapped in
+`ReactDOM.createPortal(..., document.body)`, identical to the fix
+applied to the shared `ContextMenu` in v0.3.27 and the Sidebar context
+menu in v0.3.7.
+
+### Fixed — Rubber-band drag-selection rectangle appears below the cursor
+
+The `sitemap-drag-rect` div was rendered inside the `.sitemap` component
+tree (inside the zoomed shell). Same `position: fixed` / zoom-origin
+issue as the context menus above. Fixed by rendering it via
+`ReactDOM.createPortal(..., document.body)` so it tracks the mouse at
+the real viewport position.
+
+### Added — Settings → Browser: "Clear HTTP cache on browser start" toggle
+
+`Settings → Browser → Clear HTTP cache on browser start` (default ON).
+
+When ON (default), WonderBrowser wipes the on-disk HTTP cache before
+every launch so all resources are fetched fresh through the proxy.
+When OFF, the cache is preserved between sessions — useful if you need
+to preserve a warmed service-worker or app-shell cache for a specific
+test scenario.
+
+The preference is stored in localStorage (`ws_browser_clear_cache_on_start`)
+and synced to the backend via a new `browser_set_clear_cache_on_start`
+Tauri command on every Settings panel mount. The backend stores the value
+in a global `AtomicBool` (`CLEAR_CACHE_ON_START`) and `launch_browser()`
+reads it before deciding whether to call `clear_browser_caches()`.
+
 ## [0.3.28] — 2026-05-30
 
 ### Fixed — WonderBrowser serves stale cached responses instead of routing through proxy

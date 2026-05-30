@@ -53,6 +53,10 @@ export function BrowserSettingsPanel() {
   const [stealthProfile, setStealthProfile] = useState<'fast' | 'human' | 'paranoid'>(
     () => (localStorage.getItem('ws_stealth_profile') as any) || 'human',
   );
+  // true = wipe HTTP cache dirs before every browser launch (default ON)
+  const [clearCacheOnStart, setClearCacheOnStart] = useState<boolean>(
+    () => localStorage.getItem('ws_browser_clear_cache_on_start') !== '0',
+  );
 
   const [migration, setMigration] = useState<MigrationReport | null>(null);
   const [busyCa, setBusyCa] = useState(false);
@@ -111,6 +115,13 @@ export function BrowserSettingsPanel() {
       }
       setStealthProfile(want);
     } catch {}
+
+    // Sync clear-cache-on-start preference.
+    try {
+      const want = localStorage.getItem('ws_browser_clear_cache_on_start') !== '0';
+      await invoke('browser_set_clear_cache_on_start', { enabled: want });
+      setClearCacheOnStart(want);
+    } catch {}
   }, [addToast]);
 
   const setProfile = async (next: 'fast' | 'human' | 'paranoid') => {
@@ -161,6 +172,14 @@ export function BrowserSettingsPanel() {
     setPreferSystem(next);
     if (next) localStorage.setItem('ws_prefer_system_browser', '1');
     else localStorage.removeItem('ws_prefer_system_browser');
+  };
+
+  const toggleClearCacheOnStart = async (next: boolean) => {
+    setClearCacheOnStart(next);
+    localStorage.setItem('ws_browser_clear_cache_on_start', next ? '1' : '0');
+    try {
+      await invoke('browser_set_clear_cache_on_start', { enabled: next });
+    } catch {}
   };
 
   const toggleNoSandbox = (next: boolean) => {
@@ -343,6 +362,21 @@ export function BrowserSettingsPanel() {
         <button
           className={`settings-toggle ${noSandbox ? 'on' : ''}`}
           onClick={() => toggleNoSandbox(!noSandbox)}
+        />
+      </div>
+
+      <div className="settings-row">
+        <div className="settings-label">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Trash2 size={12} /> Clear HTTP cache on browser start
+          </div>
+          <span>
+            Delete the browser's on-disk HTTP cache (Cache, Code Cache, Service Workers, …) before every WonderBrowser launch so all requests are fetched fresh through the proxy. Cookies and other profile data are preserved. Recommended: <strong>ON</strong>.
+          </span>
+        </div>
+        <button
+          className={`settings-toggle ${clearCacheOnStart ? 'on' : ''}`}
+          onClick={() => toggleClearCacheOnStart(!clearCacheOnStart)}
         />
       </div>
 

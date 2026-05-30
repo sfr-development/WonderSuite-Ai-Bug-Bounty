@@ -331,6 +331,12 @@ pub fn mcp_browser_set_stealth_profile(profile: String) {
     crate::mcp::browser::set_stealth_profile(p);
 }
 
+/// Enable or disable the "clear HTTP cache before every WonderBrowser launch" behaviour.
+#[tauri::command]
+pub fn browser_set_clear_cache_on_start(enabled: bool) {
+    crate::browser::set_clear_cache_on_start(enabled);
+}
+
 /// Write text content to a file path — restricted to safe paths
 #[tauri::command]
 pub async fn save_file_text(path: String, content: String) -> Result<(), String> {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { ChevronRight, ChevronDown, Globe, Folder, FileText, FileCode, Palette, Type, Image, Zap, Network, ListTree, GitMerge, Code2, Download, Lock, FileJson, Table, FileType, Archive, FileEdit, Link, Trash2, Wand2, Copy, Check, PlusCircle, Ban, X } from 'lucide-react';
 import { VisualMap } from './VisualMap';
 import { MermaidView } from './MermaidView';
@@ -859,13 +860,15 @@ export function Sitemap() {
       )}
       </div>{/* end sitemap-content */}
 
-      {/* Rubber-band drag selection overlay — fixed so it sits over the whole viewport */}
-      {dragRect && (
+      {/* Rubber-band drag selection overlay — portaled to document.body so
+          position:fixed uses the real viewport, not the zoom-scaled shell. */}
+      {dragRect && ReactDOM.createPortal(
         <div className="sitemap-drag-rect" style={{
           left: dragRect.x1, top: dragRect.y1,
           width: dragRect.x2 - dragRect.x1,
           height: dragRect.y2 - dragRect.y1,
-        }}/>
+        }}/>,
+        document.body,
       )}
     </div>
   );

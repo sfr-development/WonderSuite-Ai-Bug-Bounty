@@ -282,6 +282,9 @@ fn install_ca_cert(
 /// Global CDP debugging port — accessible by MCP tools
 static CDP_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(9222);
 static CDP_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether to wipe on-disk HTTP caches before every WonderBrowser launch.
+/// Default ON — ensures every request flows through the proxy.
+static CLEAR_CACHE_ON_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub fn get_cdp_port() -> u16 {
     CDP_PORT.load(std::sync::atomic::Ordering::Relaxed)
@@ -289,6 +292,10 @@ pub fn get_cdp_port() -> u16 {
 
 pub fn is_cdp_active() -> bool {
     CDP_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_clear_cache_on_start(enabled: bool) {
+    CLEAR_CACHE_ON_START.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Write the stealth JavaScript preload script that patches navigator props,
@@ -483,12 +490,12 @@ pub fn launch_browser(
     let profile_dir = opts.profile_dir.clone().unwrap_or_else(get_profile_dir);
     fs::create_dir_all(&profile_dir)?;
 
-    // Clear on-disk HTTP caches before every launch so every request goes through
-    // the proxy fresh. Chrome's --disk-cache-size=0 + CDP Network.setCacheDisabled
-    // prevent NEW disk-cache writes, but they don't remove cache entries that were
-    // written in a previous session (before those flags took effect). Deleting these
-    // directories is cheap (~ms on SSD) and guarantees proxy captures everything.
-    clear_browser_caches(&profile_dir);
+    // Clear on-disk HTTP caches when the setting is ON (default). This ensures every
+    // request flows through the proxy fresh — existing disk-cache entries from
+    // previous sessions would otherwise be served without touching the network.
+    if CLEAR_CACHE_ON_START.load(std::sync::atomic::Ordering::Relaxed) {
+        clear_browser_caches(&profile_dir);
+    }
 
     // Stealth used to be injected via CDP (Page.addScriptToEvaluateOnNewDocument).
     // v0.2.0 moved it into the bundled WonderSuite Chrome extension, which runs the
