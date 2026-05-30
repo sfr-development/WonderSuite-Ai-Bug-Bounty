@@ -1,4 +1,52 @@
-.sitemap { height: 100%; display: flex; overflow: hidden; }
+/* Root: column so the top tab-bar sits above the content area */
+.sitemap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top-level tab bar: Site Map | Code Audit ── */
+.sitemap-top-tabs {
+  display: flex;
+  flex-shrink: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0);
+  padding: 0 12px;
+  gap: 0;
+}
+
+.sitemap-top-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+  white-space: nowrap;
+}
+.sitemap-top-tab:hover {
+  color: var(--text-0);
+  background: var(--bg-2);
+}
+.sitemap-top-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Content wrapper under the tab bar */
+.sitemap-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
 
 .sitemap-tree {
   width: 300px; background: var(--bg-1); border-right: 1px solid var(--border-0);

@@ -12,6 +12,12 @@
   100% { background: transparent; }
 }
 
+/* Line highlight triggered on jump-to-finding */
+.audit-line-highlight {
+  animation: audit-line-flash 2.5s ease-out forwards !important;
+  border-radius: 2px;
+}
+
 /* ── Outer wrapper ────────────────────────────────────────────────── */
 .audit-tab {
   flex: 1;          /* fill parent flex slot */
@@ -320,8 +326,56 @@
 .audit-editor-btn:hover { background: var(--bg-3); color: var(--text-0); }
 .audit-editor-btn.active { color: var(--accent); }
 
-.audit-editor-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-.audit-editor-code { flex: 1; overflow: auto; }
+.audit-editor-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; background: #282c34; }
+
+/* Shiki code pane — full-height scrollable code view */
+.audit-editor-code {
+  flex: 1;
+  overflow: auto;
+  background: #282c34;
+}
+
+/* Shiki-generated <pre> — reset margins, fill container */
+.audit-editor-code pre.shiki,
+.audit-editor-code pre.shiki-fallback {
+  margin: 0;
+  padding: 10px 0;
+  min-height: 100%;
+  background: transparent !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.audit-editor-code pre.shiki code {
+  display: block;
+  background: transparent;
+}
+
+/* Each source line rendered by Shiki */
+.audit-editor-code .line {
+  display: block;
+  padding: 0 16px;
+  min-height: 1.65em;
+  white-space: pre;
+}
+.audit-editor-code .line:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+/* Plain-text fallback before Shiki initialises */
+.shiki-fallback {
+  margin: 0;
+  padding: 10px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #282c34;
+}
 
 .audit-editor-empty {
   flex: 1;

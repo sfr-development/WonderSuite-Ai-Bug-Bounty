@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.25] — 2026-05-30
+
+### Fixed — Code Audit / Sitemap layout completely broken after v0.3.24
+
+The v0.3.24 release shipped with critical missing CSS that made both the
+Code Audit tab and the Sitemap look broken:
+
+**Root cause 1 — `.sitemap` had no `flex-direction: column`.**
+The outer wrapper defaulted to `flex-direction: row`, so the
+`sitemap-top-tabs` tab bar and the content area were placed side-by-side
+instead of stacked. The tab bar collapsed to near-invisible width, and
+the entire Code Audit body appeared as a black rectangle.
+
+**Root cause 2 — `.sitemap-top-tabs`, `.sitemap-top-tab`, `.sitemap-content`
+were never written into `Sitemap.css`.**
+These classes existed only in the JSX. Without style definitions the
+tab bar rendered as unstyled browser-default buttons with no border,
+no active indicator, and no layout containment.
+
+**Root cause 3 — `.audit-line-highlight` was missing from `Audit.css`.**
+The `@keyframes audit-line-flash` animation was defined but the class
+that applies it was never written, so jumping to a finding did nothing.
+
+**Root cause 4 — Shiki `<pre>` / `.line` had no CSS.**
+The Shiki highlighter outputs `<pre class="shiki …"><code><span class="line">…`.
+Without explicit rules the pre had default browser margins, no background
+match, and lines had no padding — source code was unreadable.
+
+**Fixes:**
+- `Sitemap.css`: added `flex-direction: column` to `.sitemap`; added
+  `.sitemap-top-tabs`, `.sitemap-top-tab`, `.sitemap-top-tab.active`,
+  `.sitemap-content` rules.
+- `Audit.css`: added `.audit-line-highlight` (uses existing
+  `audit-line-flash` keyframe); added `.audit-editor-code pre.shiki`,
+  `.audit-editor-code .line`, `.shiki-fallback` rules; set
+  `background: #282c34` (one-dark-pro) on `.audit-editor-body` and
+  `.audit-editor-code`.
+
+### Fixed — Release workflow: latest.json always has empty notes field
+
+`tauri-action` with `releaseId` does not carry the release body into
+`latest.json`. The in-app update modal read `update.body` which was
+always empty, so no "what's new" text appeared. The `publish-release`
+job now downloads `latest.json`, injects the CHANGELOG notes via `jq`,
+and re-uploads before flipping draft → public.
+
 ## [0.3.24] — 2026-05-30
 
 ### Added — Code Audit tab (Sitemap module)
