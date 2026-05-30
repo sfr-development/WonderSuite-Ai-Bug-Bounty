@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.30] — 2026-05-30
+
+### Docs — CHANGELOG, README, and in-app documentation updated
+
+- **README.md**
+  - Sitemap section: Ctrl+click multi-select, drag-to-select rubber band,
+    and selection action bar (v0.3.26+) documented.
+  - WonderBrowser section: cache-clearing behaviour (v0.3.28+) and the
+    Settings → Browser toggle documented.
+
+- **`src/modules/docs/content/sitemap.md`**
+  - "Multi-select" section rewritten to cover both Ctrl+click and the new
+    drag-to-select rubber band. Added dedicated "Selection action bar" table
+    (Clear, Blacklist N, Delete N).
+
+- **`src/modules/docs/content/settings-browser.md`**
+  - New sub-section "Clear HTTP cache on browser start": default ON,
+    what it clears, why, and when to turn it off.
+
 ## [0.3.29] — 2026-05-30
 
 ### Fixed — Code Audit context menu appears far below the cursor

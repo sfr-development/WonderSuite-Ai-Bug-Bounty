@@ -25,9 +25,26 @@ Three ways to look at the same data, switched from the toolbar:
 - The **filter box** narrows the tree to matching paths.
 - The **Blacklist** keeps noise out permanently — add URL patterns (wildcards supported) and matching nodes are excluded from the Sitemap. The blacklist persists across sessions. Manage entries from the blacklist panel.
 
-## Multi-select with Ctrl+click
+## Multi-select
 
-Hold <kbd>Ctrl</kbd> (or <kbd>Cmd</kbd> on macOS) while clicking nodes to build an additive selection (highlighted in a distinct colour). This lets you visually flag a group of endpoints without entering Delete mode. A plain click clears the selection.
+Two ways to build a selection without entering Delete mode:
+
+### Ctrl+click
+Hold <kbd>Ctrl</kbd> (or <kbd>Cmd</kbd> on macOS) while clicking nodes to build an additive selection (highlighted in a distinct accent colour). A plain click clears the selection.
+
+### Drag-to-select (rubber band)
+Hold the left mouse button and drag over **empty space** in the tree to draw a selection rectangle. All visible nodes whose rows overlap the rectangle are selected when you release the mouse. Works well for selecting a contiguous block of paths under a host.
+
+> Drags shorter than 5 px are treated as missed clicks so accidental micro-drags don't interfere with normal navigation.
+
+### Selection action bar
+Whenever one or more nodes are selected (via either method above), a bar appears at the bottom of the tree:
+
+| Button | Action |
+|---|---|
+| **Clear** | Deselects everything |
+| **Blacklist (N)** | Adds all selected URLs to the blacklist and removes them from the tree |
+| **Delete (N)** | Removes all selected nodes from the tree (current session only) |
 
 ## Delete mode
 

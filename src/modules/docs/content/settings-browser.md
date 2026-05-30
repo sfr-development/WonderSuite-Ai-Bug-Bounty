@@ -21,6 +21,13 @@ Use a detected Chrome / Edge / Brave instead of the bundled WonderBrowser. Wonde
 ### Allow browser without sandbox
 Passes `--no-sandbox` to Chromium. Only needed if you run WonderSuite as root on Linux, or on a hardened kernel without user namespaces. Off by default.
 
+### Clear HTTP cache on browser start
+**Default: On.** Before every WonderBrowser launch, WonderSuite deletes the on-disk HTTP cache directories inside the browser profile (`Cache/`, `Code Cache/`, `GPUCache/`, `Network/`, `Service Worker/`, `CacheStorage/`). This guarantees that every resource is fetched fresh through the proxy — without this, Chrome may serve JS/CSS/images from a previous session directly from disk, bypassing the proxy entirely so those files never appear in the Sitemap or Code Audit.
+
+Cookies, localStorage, extension data, and all other profile data are preserved.
+
+Turn this **off** only if you intentionally need a warmed service-worker or app-shell cache for a specific test scenario.
+
 ### Impersonate Chrome TLS (JA3/JA4 + HTTP/2)
 When on, the proxy's upstream requests use a Chrome 137 JA3/JA4 + HTTP/2 fingerprint — this defeats bot-detection from Cloudflare, Akamai, DataDome, and PerimeterX. On by default; turning it off falls back to native TLS, which those services will likely block.
 

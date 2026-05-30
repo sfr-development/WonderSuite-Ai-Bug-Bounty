@@ -66,6 +66,8 @@ Full man-in-the-middle proxy with TLS interception and dynamic certificate autho
 
 A pinned Chromium build (CfT 148.0.7778.97) shipped inside WonderSuite — version-locked, SHA-256-verified, never auto-updates, per-version cached. Uses a separate `.wondersuite/` profile so it doesn't touch the user's system Chrome. The bundled WonderSuite extension applies minimal stealth at `document_start` (deletes `navigator.webdriver` from the prototype, purges automation globals) — verified `isBot: false` on all 18 deviceandbrowserinfo.com checks. All outbound requests flow through the WonderSuite proxy for capture and TLS impersonation.
 
+**Cache behaviour (v0.3.28+):** By default, WonderSuite wipes the browser's on-disk HTTP cache (`Cache/`, `Code Cache/`, `Service Worker/`, etc.) before every launch. This ensures every resource is fetched fresh through the proxy so it appears in the Sitemap and Code Audit — without this, Chrome would serve previously-cached JS/CSS/images directly from disk, bypassing capture entirely. Toggle off in **Settings → Browser → Clear HTTP cache on browser start** if you need a warmed cache for a specific test.
+
 ### Verified Undetected — 17 / 17 Bot-Detection Signals Clean
 
 Out of the box, no per-target tuning, no manual evasion: WonderBrowser plus the impersonating proxy passes **every signal** on third-party bot-detection fingerprinting suites. Live test against the public detector at [deviceandbrowserinfo.com/are_you_a_bot](https://deviceandbrowserinfo.com/are_you_a_bot):
@@ -181,7 +183,10 @@ A passive source-level audit that analyses every asset the proxy has captured. L
 - Beautified source, concatenated sources, HTML security report, per-category CSV/TXT
 - **Export as ZIP** — full asset bundle in `js/` · `css/` · `html/` · `api/` · `findings/` folders + `README.txt` + `assets.json` manifest; saved via Tauri's native file-chooser dialog
 
-**Ctrl+click** selects multiple nodes in the Sitemap tree (highlighted, additive, cleared on plain click).
+**Sitemap multi-select (v0.3.26+):**
+- **Ctrl+click** — additive node selection (accent highlight, cleared on plain click)
+- **Drag-to-select** — hold left mouse button and drag over empty space to draw a rubber-band selection rectangle; all overlapping nodes are selected on release
+- **Selection action bar** — appears when nodes are selected: *Clear*, *Blacklist (N)*, *Delete (N)*
 
 ### Port Scanner — In-Process, Adaptive, Three-Mode (v0.3.7+)
 
