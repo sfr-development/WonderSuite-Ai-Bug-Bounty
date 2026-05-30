@@ -471,7 +471,11 @@ fn clear_browser_caches(profile_dir: &PathBuf) {
         if dir.exists() {
             if let Err(e) = fs::remove_dir_all(dir) {
                 // Non-fatal: Chrome might recreate missing cache dirs itself.
-                eprintln!("[WonderBrowser] cache clear warning ({:?}): {}", dir.file_name().unwrap_or_default(), e);
+                eprintln!(
+                    "[WonderBrowser] cache clear warning ({:?}): {}",
+                    dir.file_name().unwrap_or_default(),
+                    e
+                );
             }
         }
     }
