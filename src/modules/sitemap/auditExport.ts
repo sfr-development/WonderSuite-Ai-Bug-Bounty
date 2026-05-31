@@ -359,7 +359,8 @@ export async function exportDomainZip(
   for (let i = 0; i < uint8.length; i += CHUNK) {
     binary += String.fromCharCode(...uint8.subarray(i, i + CHUNK));
   }
-  const data_base64 = btoa(binary);
+  // Tauri v2 renames Rust snake_case params to camelCase → dataBase64 not data_base64
+  const dataBase64 = btoa(binary);
 
   try {
     const { save }   = await import('@tauri-apps/plugin-dialog');
@@ -370,8 +371,7 @@ export async function exportDomainZip(
       filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
     });
     if (!path) return; // user cancelled
-    // save_file_bytes_any — path came from native OS dialog, skip validate_path.
-    await invoke('save_file_bytes_any', { path, data_base64 });
+    await invoke('save_file_bytes_any', { path, dataBase64 });
   } catch (err) {
     console.error('[AuditExport] ZIP save failed:', err);
   }

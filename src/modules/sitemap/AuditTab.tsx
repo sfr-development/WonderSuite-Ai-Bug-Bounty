@@ -410,13 +410,19 @@ function CodePane({ code, mime, path, jumpTarget, onReady }: {
   jumpTarget?: JumpTarget | null;
   onReady?: () => void;
 }) {
-  const [html, setHtml] = useState('');
-  const containerRef    = useRef<HTMLDivElement>(null);
-  const lang            = detectHighlightLang(mime, path);
+  const [html, setHtml]           = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matchCount, setMatchCount]   = useState(0);
+  const [matchIndex, setMatchIndex]   = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchRef    = useRef<HTMLInputElement>(null);
+  const wrapRef      = useRef<HTMLDivElement>(null);
+  const lang         = detectHighlightLang(mime, path);
 
   useEffect(() => {
     if (!code) { setHtml(''); return; }
-    setHtml(''); // clear immediately — prevents jump firing on stale html
+    setHtml('');
     let cancelled = false;
     (async () => {
       let source = code;
@@ -427,15 +433,12 @@ function CodePane({ code, mime, path, jumpTarget, onReady }: {
       }
       if (cancelled) return;
       const h = await highlight(source, lang || 'plaintext');
-      if (!cancelled) {
-        setHtml(h);
-        onReady?.(); // signal parent: "new html is ready, jump now if pending"
-      }
+      if (!cancelled) { setHtml(h); onReady?.(); }
     })();
     return () => { cancelled = true; };
   }, [code, lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Execute jump once html is populated and jumpTarget is set
+  // Jump to finding line
   useEffect(() => {
     if (!html || !jumpTarget || !containerRef.current) return;
     const line = jumpTarget.line;
@@ -452,10 +455,86 @@ function CodePane({ code, mime, path, jumpTarget, onReady }: {
     return () => cancelAnimationFrame(frame);
   }, [html, jumpTarget]);
 
+  // Ctrl+F / Cmd+F to open search, Escape to close
+  useEffect(() => {
+    const handle = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        // Only intercept when this pane is visible (wrapRef in DOM)
+        if (!wrapRef.current) return;
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchRef.current?.focus(), 30);
+      }
+      if (e.key === 'Escape' && searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery('');
+      }
+    };
+    window.addEventListener('keydown', handle);
+    return () => window.removeEventListener('keydown', handle);
+  }, [searchOpen]);
+
+  // Apply search highlights on query change
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const lines = Array.from(containerRef.current.querySelectorAll<HTMLElement>('.line'));
+    lines.forEach(l => l.classList.remove('audit-search-match', 'audit-search-current'));
+
+    if (!searchQuery || searchQuery.length < 1) { setMatchCount(0); setMatchIndex(0); return; }
+    const q = searchQuery.toLowerCase();
+    const hits: HTMLElement[] = [];
+    lines.forEach(l => {
+      if ((l.textContent || '').toLowerCase().includes(q)) {
+        l.classList.add('audit-search-match');
+        hits.push(l);
+      }
+    });
+    setMatchCount(hits.length);
+    const idx = Math.min(matchIndex, hits.length - 1);
+    setMatchIndex(idx < 0 ? 0 : idx);
+    if (hits[idx >= 0 ? idx : 0]) {
+      hits[idx >= 0 ? idx : 0].classList.add('audit-search-current');
+      hits[idx >= 0 ? idx : 0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [searchQuery, html]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const navigate = useCallback((dir: 1 | -1) => {
+    if (!containerRef.current || matchCount === 0) return;
+    const hits = Array.from(containerRef.current.querySelectorAll<HTMLElement>('.audit-search-match'));
+    hits.forEach(l => l.classList.remove('audit-search-current'));
+    const next = ((matchIndex + dir) % hits.length + hits.length) % hits.length;
+    setMatchIndex(next);
+    hits[next]?.classList.add('audit-search-current');
+    hits[next]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [matchIndex, matchCount]);
+
   return (
-    <div ref={containerRef} className="audit-editor-code shiki-output"
-      dangerouslySetInnerHTML={{ __html: html || '<pre class="shiki-fallback"><code><span class="line"></span></code></pre>' }}
-    />
+    <div ref={wrapRef} className="audit-codepane-wrap">
+      {searchOpen && (
+        <div className="audit-search-bar">
+          <input
+            ref={searchRef}
+            className="audit-search-input"
+            placeholder="Search…"
+            value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setMatchIndex(0); }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); navigate(e.shiftKey ? -1 : 1); }
+              if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); }
+            }}
+          />
+          <span className="audit-search-count">
+            {matchCount > 0 ? `${matchIndex + 1} / ${matchCount}` : 'no matches'}
+          </span>
+          <button className="audit-search-nav" onClick={() => navigate(-1)} title="Previous (Shift+Enter)">↑</button>
+          <button className="audit-search-nav" onClick={() => navigate(1)} title="Next (Enter)">↓</button>
+          <button className="audit-search-close" onClick={() => { setSearchOpen(false); setSearchQuery(''); }}>✕</button>
+        </div>
+      )}
+      <div ref={containerRef} className="audit-editor-code shiki-output"
+        dangerouslySetInnerHTML={{ __html: html || '<pre class="shiki-fallback"><code><span class="line"></span></code></pre>' }}
+      />
+    </div>
   );
 }
 
@@ -515,33 +594,23 @@ function EditorPane({ asset, findings, jumpTarget, onCodeReady }: {
         {asset.type === 'image' ? (
           <div className="audit-image-preview">
             <img
-              src={(() => {
-                // Prefer a data-URL built from the captured response body so the
-                // image renders even when the original URL is inaccessible (no proxy,
-                // auth required, CSP img-src restriction, etc.).
-                if (asset.content) {
-                  try {
-                    const mime = asset.mimeType || 'image/png';
-                    // Already base64?
-                    if (/^[A-Za-z0-9+/=\r\n]+$/.test(asset.content.trim())) {
-                      return `data:${mime};base64,${asset.content.trim().replace(/\s/g, '')}`;
-                    }
-                    // Raw bytes — encode to base64
-                    const bytes = new TextEncoder().encode(asset.content);
-                    let bin = '';
-                    bytes.forEach(b => { bin += String.fromCharCode(b); });
-                    return `data:${mime};base64,${btoa(bin)}`;
-                  } catch { /* fall through to URL */ }
-                }
-                return asset.url;
-              })()}
+              src={asset.url}
               alt={asset.filename}
-              style={{ maxWidth:'100%', maxHeight:400, objectFit:'contain', borderRadius:4 }}
-              onError={e => { (e.target as HTMLImageElement).src = asset.url; }}
+              style={{ maxWidth:'100%', maxHeight:360, objectFit:'contain', borderRadius:4 }}
+              onError={e => {
+                // Hide once — do NOT set src again to avoid infinite onError loop.
+                (e.target as HTMLElement).style.display = 'none';
+              }}
             />
-            <div className="audit-asset-info">
-              {asset.size && <span className="audit-asset-info-pill">{formatSize(asset.size)}</span>}
-              {asset.mimeType && <span className="audit-asset-info-pill">{asset.mimeType}</span>}
+            {/* Full metadata */}
+            <div className="audit-asset-info" style={{ flexDirection:'column', alignItems:'flex-start', gap:4, padding:'8px 0' }}>
+              <div className="audit-asset-info" style={{ flexWrap:'wrap' }}>
+                {asset.mimeType && <span className="audit-asset-info-pill">{asset.mimeType}</span>}
+                {asset.size != null && asset.size > 0 && <span className="audit-asset-info-pill">{formatSize(asset.size)}</span>}
+                {asset.status && <span className="audit-asset-info-pill">HTTP {asset.status}</span>}
+                {asset.responseTime != null && <span className="audit-asset-info-pill">{asset.responseTime} ms</span>}
+                <span className="audit-asset-info-pill" style={{ fontFamily:'monospace', fontSize:9, maxWidth:320, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={asset.url}>{asset.url}</span>
+              </div>
             </div>
           </div>
         ) : asset.content ? (

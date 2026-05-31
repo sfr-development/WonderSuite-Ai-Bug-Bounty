@@ -164,7 +164,7 @@ export function MermaidView({ tree }: MermaidViewProps) {
         });
         const dataUrl = canvas.toDataURL('image/png');
         const base64 = dataUrl.split(',')[1];
-        await invoke('save_file_bytes_any', { path: filePath, data_base64: base64 });
+        await invoke('save_file_bytes_any', { path: filePath, dataBase64: base64 });
       } else {
         const content = format === 'md' ? `\`\`\`mermaid\n${mermaidCode}\n\`\`\`` : mermaidCode;
         await invoke('save_file_text_any', { path: filePath, content });

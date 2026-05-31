@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.34] — 2026-05-30
+
+### Fixed — Export as ZIP (and all binary exports) produced an empty file
+
+Root cause: Tauri v2's `#[tauri::command]` macro renames Rust
+`snake_case` parameters to `camelCase` for TypeScript consumers.
+`save_file_bytes_any` expects `dataBase64` but the call sites were
+sending `data_base64` — Tauri silently used `""` for the missing field,
+so `base64::decode("")` wrote a 0-byte file. Same regression was
+introduced in `MermaidView.tsx` (PNG export) when the command was
+renamed.
+
+Fixes: `auditExport.ts` `exportDomainZip` — `data_base64` →
+`dataBase64`; `MermaidView.tsx` PNG export — restored `dataBase64`.
+
+### Fixed — Image preview infinite onError loop
+
+The previous fix tried to build a `data:` URL from `asset.content`
+(the proxy's text-encoded binary body). Binary data piped through
+UTF-8 → `TextEncoder` → `btoa` produces a corrupt blob URL that always
+fails. The `onError` handler then set `img.src = asset.url`, which
+could also fail and trigger `onError` again → infinite loop + no image.
+
+New behaviour: `src={asset.url}` directly; `onError` hides the element
+once (`style.display='none'`) and does not set another src.
+
+### Improved — Image asset metadata
+
+The image preview now shows all available metadata: MIME type, size,
+HTTP status, response time in ms, and the full URL (truncated with
+tooltip on hover).
+
+### Added — Ctrl+F / Cmd+F search in the code viewer
+
+Press <kbd>Ctrl+F</kbd> (or <kbd>Cmd+F</kbd> on macOS) while the code
+editor is visible to open a search bar. Features:
+
+- Type to filter — all matching lines are highlighted in amber (dim)
+- The current match is highlighted brighter with an outline
+- <kbd>Enter</kbd> / <kbd>↓</kbd> button → next match
+- <kbd>Shift+Enter</kbd> / <kbd>↑</kbd> button → previous match
+- Match counter shows `N / total`
+- <kbd>Escape</kbd> or ✕ button closes search and clears highlights
+- Implemented purely in DOM (`querySelectorAll('.line')` on the Shiki
+  output) — no re-highlighting, no performance cost on large files
+
 ## [0.3.33] — 2026-05-30
 
 ### Added — Code Audit: Library Detector

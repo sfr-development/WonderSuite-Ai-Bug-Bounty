@@ -333,6 +333,7 @@
   flex: 1;
   overflow: auto;
   background: #282c34;
+  min-height: 0;
 }
 
 /* Shiki-generated <pre> — reset margins, fill container */
@@ -351,6 +352,73 @@
 .audit-editor-code pre.shiki code {
   display: block;
   background: transparent;
+}
+
+/* ── CodePane wrapper (contains search bar + code) ───────────────── */
+.audit-codepane-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Ctrl+F search bar ───────────────────────────────────────────── */
+.audit-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0;
+  z-index: 10;
+}
+.audit-search-input {
+  flex: 1;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-s);
+  color: var(--text-0);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+}
+.audit-search-input:focus { border-color: var(--accent); outline: none; }
+.audit-search-count {
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  min-width: 60px;
+  text-align: center;
+}
+.audit-search-nav, .audit-search-close {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-3);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 100ms;
+  flex-shrink: 0;
+}
+.audit-search-nav:hover, .audit-search-close:hover { background: var(--accent); color: #fff; border-color: transparent; }
+
+/* Search match highlight */
+.audit-editor-code .line.audit-search-match {
+  background: rgba(251, 191, 36, 0.10) !important;
+}
+.audit-editor-code .line.audit-search-current {
+  background: rgba(251, 191, 36, 0.28) !important;
+  outline: 1px solid rgba(251, 191, 36, 0.5);
+  outline-offset: -1px;
 }
 
 /* Line numbers via CSS counter — no JS needed */
