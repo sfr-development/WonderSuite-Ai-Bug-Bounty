@@ -6131,6 +6131,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
+]
+
+[[package]]
 name = "windows-result"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6684,7 +6695,7 @@ dependencies = [
  "uuid",
  "webpki-root-certs",
  "windows 0.58.0",
- "windows-registry",
+ "windows-registry 0.6.1",
  "wreq",
  "wreq-util",
  "x509-cert",
@@ -6728,7 +6739,7 @@ dependencies = [
  "tower-service",
  "typed-builder",
  "url",
- "windows-registry",
+ "windows-registry 0.5.3",
 ]
 
 [[package]]
