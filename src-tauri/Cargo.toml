@@ -121,7 +121,7 @@ libc = "0.2"
 # (not at app startup), so the .exe launches cleanly on machines with no
 # pcap stack. No `windivert` / `windivert-sys` crate dep â€” those force a
 # static link that breaks app startup on stock Windows.
-libloading = "0.8"
+libloading = "0.9"
 windows = { version = "0.58", features = [
     "Win32_System_Services",
     "Win32_System_Registry",
