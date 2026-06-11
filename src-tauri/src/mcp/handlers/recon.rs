@@ -929,6 +929,216 @@ pub async fn handle_find_secrets(params: &serde_json::Value) -> HandlerResult {
     )
 }
 
+/// v0.3.35: parameter mining (à la Param Miner). The injected canary value used
+/// to detect reflection. Deliberately unusual so it almost never collides with
+/// content that already exists in the baseline response.
+const PARAM_CANARY: &str = "wsx9k3probe";
+
+/// Decide whether a probe response reveals a hidden parameter relative to the
+/// baseline. Returns `Some(evidence)` when interesting, else `None`. Extracted
+/// from the handler so the detection logic is unit-testable.
+fn param_evidence(
+    baseline_status: u16,
+    baseline_size: usize,
+    probe_status: u16,
+    probe_size: usize,
+    probe_body: &str,
+) -> Option<String> {
+    const SIZE_DELTA: i64 = 50;
+    if probe_body.contains(PARAM_CANARY) {
+        return Some("value reflected in response".to_string());
+    }
+    if probe_status != baseline_status {
+        return Some(format!("status changed {} -> {}", baseline_status, probe_status));
+    }
+    let delta = (probe_size as i64 - baseline_size as i64).abs();
+    if delta > SIZE_DELTA {
+        return Some(format!("response size {}B -> {}B (diff {}B)", baseline_size, probe_size, delta));
+    }
+    None
+}
+
+fn parameter_wordlist(size: &str) -> Vec<&'static str> {
+    let small = [
+        "id", "page", "q", "search", "debug", "test", "admin", "token", "key", "api_key", "secret",
+        "callback", "redirect", "url", "file", "user", "lang", "format", "action", "next",
+    ];
+    let extra = [
+        "query",
+        "apikey",
+        "password",
+        "pass",
+        "username",
+        "email",
+        "redirect_uri",
+        "return",
+        "return_url",
+        "uri",
+        "path",
+        "filename",
+        "include",
+        "template",
+        "language",
+        "type",
+        "output",
+        "v",
+        "version",
+        "limit",
+        "offset",
+        "sort",
+        "order",
+        "filter",
+        "category",
+        "tag",
+        "status",
+        "role",
+        "access",
+        "auth",
+        "view",
+        "mode",
+        "config",
+        "setting",
+        "option",
+        "cmd",
+        "command",
+        "exec",
+        "eval",
+        "load",
+        "file_path",
+        "download",
+        "upload",
+        "preview",
+        "size",
+        "width",
+        "height",
+        "start",
+        "end",
+        "from",
+        "to",
+        "skip",
+        "take",
+        "count",
+        "per_page",
+        "page_size",
+    ];
+    match size {
+        "small" => small.to_vec(),
+        _ => small.iter().chain(extra.iter()).copied().collect(),
+    }
+}
+
+/// Discover hidden request parameters by probing candidate names and diffing the
+/// response against a baseline (reflection / status / size). Exposed both as the
+/// `discover_parameters` MCP tool and the `discover_parameters` Tauri command.
+pub async fn handle_discover_parameters(params: &serde_json::Value) -> HandlerResult {
+    let target = params["target"].as_str().ok_or("Missing target")?.to_string();
+    let method = params["method"].as_str().unwrap_or("GET").to_uppercase();
+    let wordlist = params["wordlist"].as_str().unwrap_or("medium").to_string();
+    let max_concurrent = params["max_concurrent"].as_u64().unwrap_or(10).clamp(1, 50) as usize;
+    let timeout_ms = params["timeout_ms"].as_u64().unwrap_or(5000);
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let names = parameter_wordlist(&wordlist);
+
+    // Baseline: the unmodified request.
+    let baseline_resp = match method.as_str() {
+        "POST" => client.post(&target).send().await,
+        "PUT" => client.put(&target).send().await,
+        "PATCH" => client.patch(&target).send().await,
+        "HEAD" => client.head(&target).send().await,
+        _ => client.get(&target).send().await,
+    }
+    .map_err(|e| format!("baseline request failed: {}", e))?;
+    let baseline_status = baseline_resp.status().as_u16();
+    let baseline_body = baseline_resp.text().await.unwrap_or_default();
+    let baseline_size = baseline_body.len();
+
+    let sem = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    let client = Arc::new(client);
+    let mut handles = Vec::new();
+
+    for name in names.iter().copied() {
+        let sem = sem.clone();
+        let client = client.clone();
+        let target = target.clone();
+        let method = method.clone();
+        let name = name.to_string();
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.ok()?;
+            let probe_url = if matches!(method.as_str(), "GET" | "HEAD") {
+                let sep = if target.contains('?') { '&' } else { '?' };
+                format!("{}{}{}={}", target, sep, name, PARAM_CANARY)
+            } else {
+                target.clone()
+            };
+            let resp = match method.as_str() {
+                "POST" => {
+                    client
+                        .post(&probe_url)
+                        .header("content-type", "application/json")
+                        .body(format!("{{\"{}\":\"{}\"}}", name, PARAM_CANARY))
+                        .send()
+                        .await
+                }
+                "PUT" => {
+                    client
+                        .put(&probe_url)
+                        .header("content-type", "application/json")
+                        .body(format!("{{\"{}\":\"{}\"}}", name, PARAM_CANARY))
+                        .send()
+                        .await
+                }
+                "PATCH" => {
+                    client
+                        .patch(&probe_url)
+                        .header("content-type", "application/json")
+                        .body(format!("{{\"{}\":\"{}\"}}", name, PARAM_CANARY))
+                        .send()
+                        .await
+                }
+                "HEAD" => client.head(&probe_url).send().await,
+                _ => client.get(&probe_url).send().await,
+            };
+            let resp = resp.ok()?;
+            let probe_status = resp.status().as_u16();
+            let probe_body = resp.text().await.unwrap_or_default();
+            let probe_size = probe_body.len();
+            let evidence =
+                param_evidence(baseline_status, baseline_size, probe_status, probe_size, &probe_body)?;
+            Some(serde_json::json!({
+                "param": name,
+                "evidence": evidence,
+                "status_code": probe_status,
+                "response_size": probe_size,
+            }))
+        }));
+    }
+
+    let mut results = Vec::new();
+    for h in handles {
+        if let Ok(Some(v)) = h.await {
+            results.push(v);
+        }
+    }
+    results.sort_by(|a, b| a["param"].as_str().unwrap_or("").cmp(b["param"].as_str().unwrap_or("")));
+
+    Ok(serde_json::json!({
+        "target": target,
+        "method": method,
+        "wordlist": wordlist,
+        "baseline_status": baseline_status,
+        "baseline_size": baseline_size,
+        "parameters_tested": names.len(),
+        "parameters_found": results.len(),
+        "results": results,
+    }))
+}
+
 pub async fn handle_dns_resolve(params: &serde_json::Value) -> HandlerResult {
     let domain = params["domain"].as_str().ok_or("Missing domain")?;
     let mut results = Vec::new();
@@ -975,4 +1185,42 @@ pub async fn handle_dns_resolve(params: &serde_json::Value) -> HandlerResult {
     Ok(
         serde_json::json!({"domain": domain, "records": results, "unique_ips": ips, "cdn_indicators": cdn_indicators, "origin_subdomain_hints": origin_hints, "tip": "Use raw_tcp_send with Host header override to test direct-to-origin bypassing CDN edge"}),
     )
+}
+
+#[cfg(test)]
+mod param_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn reflection_is_detected() {
+        let body = format!("<html>hello {} world</html>", PARAM_CANARY);
+        let ev = param_evidence(200, 100, 200, 100 + body.len(), &body);
+        assert!(ev.unwrap().contains("reflected"));
+    }
+
+    #[test]
+    fn status_change_is_detected() {
+        let ev = param_evidence(404, 200, 200, 200, "no canary here");
+        assert!(ev.unwrap().contains("status changed"));
+    }
+
+    #[test]
+    fn large_size_change_is_detected() {
+        let ev = param_evidence(200, 100, 200, 200, "no canary here");
+        assert!(ev.unwrap().contains("response size"));
+    }
+
+    #[test]
+    fn no_change_is_ignored() {
+        // Same status, near-identical size, no reflection -> not interesting.
+        assert!(param_evidence(200, 100, 200, 120, "ordinary response").is_none());
+    }
+
+    #[test]
+    fn wordlist_sizes() {
+        assert_eq!(parameter_wordlist("small").len(), 20);
+        assert!(parameter_wordlist("medium").len() > parameter_wordlist("small").len());
+        // unknown sizes fall back to the medium list
+        assert_eq!(parameter_wordlist("large").len(), parameter_wordlist("medium").len());
+    }
 }

@@ -25,6 +25,17 @@ Click any frame for the full untruncated payload in the detail pane. The log aut
 
 The box at the bottom sends a frame on the selected connection — type your message and click **Send** (or press <kbd>Enter</kbd>; <kbd>Shift+Enter</kbd> for a newline).
 
+## Intercepted tab
+
+Everything above operates on connections **you** open from WonderSuite. The
+**Intercepted** tab is different: it shows WebSocket frames the **MITM proxy**
+captured from real browser traffic. Start the proxy, browse a target that uses
+WebSockets, and every frame the proxy relays appears here live — direction
+(`C→S` / `S→C`), opcode (text / binary / ping / pong / close), size, and the
+host. Frames are forwarded byte-for-byte, so the relay never disturbs the
+connection; this view is for observation. (A connected AI agent reads the same
+stream via the `proxy_get_websocket_messages` MCP tool.)
+
 ## Match & Replace tab
 
 Rules here automatically rewrite WebSocket frames as they pass through. To add a rule:

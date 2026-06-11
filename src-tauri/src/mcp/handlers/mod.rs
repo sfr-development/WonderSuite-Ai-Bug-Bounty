@@ -83,6 +83,7 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "crawl_target" => recon::handle_crawl_target(params).await,
         "discover_subdomains" => recon::handle_discover_subdomains(params).await,
         "discover_content" => recon::handle_discover_content(params).await,
+        "discover_parameters" => recon::handle_discover_parameters(params).await,
         "find_secrets" => recon::handle_find_secrets(params).await,
         "dns_resolve" => recon::handle_dns_resolve(params).await,
         // v0.3.10: client-side library + version detection (detection only;
@@ -137,6 +138,7 @@ pub async fn dispatch(name: &str, params: &serde_json::Value) -> HandlerResult {
         "passive_scan" => scanner::passive::handle_passive_scan(params).await,
         "fuzz_request" => scanner::fuzzer::handle_fuzz_request(params).await,
         "active_scan" => scanner::active::handle_active_scan(params).await,
+        "graphql_scan" => scanner::graphql::handle_graphql_scan(params).await,
         "generate_report" => scanner::reporting::handle_generate_report(params).await,
 
         _ => Err(format!("Unknown tool: {}", name)),

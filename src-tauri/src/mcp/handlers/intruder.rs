@@ -45,6 +45,10 @@ pub async fn handle_intruder_start(params: &serde_json::Value) -> HandlerResult 
         cfg_val["max_concurrent"].as_u64().or_else(|| cfg_val["threads"].as_u64()).unwrap_or(10) as usize;
     let throttle_ms = cfg_val["delay_ms"].as_u64().or_else(|| cfg_val["throttle_ms"].as_u64()).unwrap_or(0);
     let follow_redirects = cfg_val["follow_redirects"].as_bool().unwrap_or(false);
+    // v0.3.35: adaptive throttling. Defaults mirror IntruderConfig's serde
+    // defaults so an agent that omits them gets automatic 429/503 backoff.
+    let adaptive_throttle = cfg_val["adaptive_throttle"].as_bool().unwrap_or(true);
+    let max_backoff_ms = cfg_val["max_backoff_ms"].as_u64().unwrap_or(30_000);
 
     // Translate `positions` (intruder_config) OR `payload_sets` (raw) into
     // PayloadSets. send_to_intruder positions carry their payload-category
@@ -83,6 +87,8 @@ pub async fn handle_intruder_start(params: &serde_json::Value) -> HandlerResult 
         "threads": threads,
         "throttle_ms": throttle_ms,
         "follow_redirects": follow_redirects,
+        "adaptive_throttle": adaptive_throttle,
+        "max_backoff_ms": max_backoff_ms,
     });
     let cfg: crate::intruder::IntruderConfig =
         serde_json::from_value(config_json).map_err(|e| format!("Failed to build IntruderConfig: {}", e))?;

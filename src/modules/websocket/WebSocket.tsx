@@ -6,6 +6,8 @@ import './WebSocket.css';
 interface WsConnection { id: string; url: string; status: string; message_count: number; connected_at: string; }
 interface WsMessage { id: number; direction: string; data: string; msg_type: string; size: number; timestamp: string; }
 interface WsRule { id: string; name: string; enabled: boolean; direction: string; match_pattern: string; replace_value: string; is_regex: boolean; }
+// v0.3.35: frames captured by the MITM proxy (proxy_get_websocket_messages).
+interface ProxyWsFrame { id: number; connection_id: string; direction: string; opcode: string; data: string; length: number; timestamp: string; host: string; url: string; }
 
 interface ReplayFrame { id: string; data: string; delayMs: number; }
 interface ReplaySequence {
@@ -18,7 +20,7 @@ interface ReplaySequence {
 }
 interface ReplayLogEntry { ts: string; kind: 'info' | 'sent' | 'error'; text: string; }
 
-type WsTab = 'connections' | 'messages' | 'rules' | 'replay';
+type WsTab = 'connections' | 'messages' | 'rules' | 'replay' | 'intercepted';
 
 const REPLAY_STORAGE_KEY = 'ws_replay_sequences_v1';
 
@@ -46,6 +48,7 @@ export function WebSocket() {
   const [selectedConn, setSelectedConn] = useState<string | null>(null);
   const [messages, setMessages] = useState<WsMessage[]>([]);
   const [rules, setRules] = useState<WsRule[]>([]);
+  const [intercepted, setIntercepted] = useState<ProxyWsFrame[]>([]);
 
   const [connectUrl, setConnectUrl] = useState('wss://');
   const [sendMsg, setSendMsg] = useState('');
@@ -257,6 +260,15 @@ export function WebSocket() {
     } catch { setRules([]); }
   }, []);
 
+  // v0.3.35: poll the MITM proxy's WebSocket pool for intercepted frames.
+  const loadIntercepted = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const data: ProxyWsFrame[] = await invoke('proxy_get_websocket_messages');
+      setIntercepted(data);
+    } catch { setIntercepted([]); }
+  }, []);
+
   useEffect(() => {
     loadConnections();
     loadRules();
@@ -278,6 +290,14 @@ export function WebSocket() {
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Live-poll intercepted proxy frames only while that tab is open.
+  useEffect(() => {
+    if (tab !== 'intercepted') return;
+    loadIntercepted();
+    const t = setInterval(loadIntercepted, 1500);
+    return () => clearInterval(t);
+  }, [tab, loadIntercepted]);
 
   const connect = async () => {
     if (!connectUrl || connectUrl === 'wss://') return;
@@ -356,6 +376,9 @@ export function WebSocket() {
         </button>
         <button className={`ws-tab ${tab === 'replay' ? 'active' : ''}`} onClick={() => setTab('replay')}>
           <Play size={10} /> Replay <span className="ws-badge">{sequences.length}</span>
+        </button>
+        <button className={`ws-tab ${tab === 'intercepted' ? 'active' : ''}`} onClick={() => setTab('intercepted')}>
+          <Wifi size={10} /> Intercepted {intercepted.length > 0 && <span className="ws-badge">{intercepted.length}</span>}
         </button>
       </div>
 
@@ -709,6 +732,45 @@ export function WebSocket() {
                     onClick={createSequence}>
                     <Plus size={10} /> New Sequence
                   </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Intercepted (MITM proxy) Tab — v0.3.35 */}
+        {tab === 'intercepted' && (
+          <div className="ws-messages-panel">
+            <div className="ws-messages-header">
+              <Wifi size={12} />
+              <span className="ws-conn-active-url">Proxy-intercepted WebSocket frames</span>
+              <span className="ws-dim">{intercepted.length} frames · live from the MITM proxy</span>
+            </div>
+            <div className="ws-messages-list">
+              {[...intercepted].reverse().map(f => {
+                const dir = f.direction === 'client_to_server' ? 'sent' : 'received';
+                return (
+                  <div key={f.id} className={`ws-msg ${dir}`}>
+                    <div className="ws-msg-indicator">
+                      {dir === 'sent' ? <ArrowUp size={10} /> : <ArrowDown size={10} />}
+                    </div>
+                    <div className="ws-msg-content">
+                      <div className="ws-msg-header">
+                        <span className={`ws-msg-dir ${dir}`}>{dir === 'sent' ? 'C→S' : 'S→C'}</span>
+                        <span className="ws-msg-type">{f.opcode}</span>
+                        <span className="ws-dim">{f.length}B</span>
+                        <span className="ws-dim">{f.host}</span>
+                      </div>
+                      <pre className="ws-msg-data">{f.data.slice(0, 200)}{f.data.length > 200 ? '…' : ''}</pre>
+                    </div>
+                  </div>
+                );
+              })}
+              {intercepted.length === 0 && (
+                <div className="ws-empty" style={{ padding: 20 }}>
+                  <Wifi size={24} strokeWidth={1} />
+                  <span>No intercepted WebSocket frames yet</span>
+                  <span className="ws-dim">Start the proxy and browse a site that uses WebSockets — frames captured by the MITM proxy appear here live.</span>
                 </div>
               )}
             </div>

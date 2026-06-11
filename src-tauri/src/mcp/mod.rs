@@ -604,6 +604,21 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "discover_parameters".into(),
+            description: "Discover hidden request parameters (Param-Miner style). Probes candidate names (wordlist: small | medium) against the target and flags any that reflect a canary value, change the status code, or shift the response size (>50B). Works for GET/HEAD (query) and POST/PUT/PATCH (JSON body). Use for parameter pollution, hidden inputs, and undocumented API fields.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string", "description": "Target URL to probe" },
+                    "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "HEAD"], "default": "GET" },
+                    "wordlist": { "type": "string", "enum": ["small", "medium"], "default": "medium" },
+                    "max_concurrent": { "type": "integer", "default": 10 },
+                    "timeout_ms": { "type": "integer", "default": 5000 }
+                },
+                "required": ["target"]
+            }),
+        },
+        ToolDef {
             name: "find_secrets".into(),
             description: "Scan text or a URL response for leaked secrets: AWS keys, API keys, JWTs, passwords, database URLs, internal IPs, and more (17 pattern types).".into(),
             input_schema: serde_json::json!({
@@ -1033,6 +1048,18 @@ pub fn tool_definitions() -> Vec<ToolDef> {
                     "headers": { "type": "object", "description": "Header overrides (added on top of any headers from intercept/traffic)." },
                     "body": { "type": "string", "description": "Explicit body override (overrides any body from intercept/traffic)." }
                 }
+            }),
+        },
+        ToolDef {
+            name: "graphql_scan".into(),
+            description: "GraphQL introspection + injection-surface enumeration. POSTs the standard introspection query to a GraphQL endpoint; if introspection is enabled (an information-disclosure finding) it returns every query/mutation field with its scalar arguments and a deduplicated list of injection points (field + arg + type). Feed an injection point into active_scan / intruder to fuzz the argument for SQLi/XSS/SSTI. If introspection is disabled it reports that cleanly (good posture).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string", "description": "GraphQL endpoint URL (e.g. https://api.example.com/graphql)" },
+                    "headers": { "type": "object", "description": "Optional headers to send (e.g. {\"Authorization\": \"Bearer ...\"})." }
+                },
+                "required": ["target"]
             }),
         },
         ToolDef {
