@@ -35,7 +35,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Resolve version
         id: version
@@ -136,7 +136,7 @@ jobs:
 
     runs-on: ${{ matrix.settings.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Sync version into manifests
         shell: bash
@@ -186,7 +186,7 @@ jobs:
           # resources/drivers/windivert/ and dlopened at runtime via libloading.
 
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'npm'
@@ -229,7 +229,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # tauri-action generates latest.json with an empty "notes" field when
       # called via releaseId (it doesn't read the release body). Re-upload the
