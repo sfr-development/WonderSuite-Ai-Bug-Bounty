@@ -12,7 +12,7 @@ WonderSuite exposes its full toolset over the [MCP server](page:settings-mcp) so
 
 ## Scanner
 
-`active_scan` — SQLi, XSS, SSTI, LFI, Open Redirect, CRLF, with optional `with_oast:true` for blind command injection, blind SSRF, and Log4Shell via the bundled OAST listener · `passive_scan` — headers, cookies, CORS, information disclosure
+`active_scan` — SQLi, XSS, SSTI, LFI, Open Redirect, CRLF, with optional `with_oast:true` for blind command injection, blind SSRF, and Log4Shell via the bundled OAST listener · `passive_scan` — headers, cookies, CORS, information disclosure · `graphql_scan` — introspect a GraphQL endpoint (flags introspection-enabled as a finding) and enumerate every query/mutation argument as injection points to feed into `active_scan` / `fuzz_request`
 
 ## Intruder
 
@@ -26,7 +26,7 @@ A pentest-grade browser surface driving WonderBrowser over a persistent CDP conn
 
 ## Recon
 
-`crawl_target` · `discover_content` · `discover_subdomains` · `find_secrets` · `dns_resolve` · `js_link_finder`
+`crawl_target` · `discover_content` · `discover_subdomains` · `discover_parameters` (hidden-parameter mining via canary reflection + status/size diff) · `find_secrets` · `dns_resolve` · `js_link_finder`
 
 ## OSINT
 

@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::backoff::{parse_retry_after, BackoffState};
+
 pub type IntruderState = Arc<Mutex<IntruderManager>>;
 
 // v0.3.10: global accessor so MCP handlers can drive the Intruder engine
@@ -96,6 +98,23 @@ pub struct IntruderConfig {
     pub threads: usize,
     pub throttle_ms: u64,
     pub follow_redirects: bool,
+    // v0.3.35: adaptive throttling. When `adaptive_throttle` is on (default) and
+    // the target answers 429/503, the inter-dispatch delay grows exponentially
+    // (honoring Retry-After), capped at `max_backoff_ms`, and decays back toward
+    // `throttle_ms` once the target recovers. Both fields are serde-defaulted so
+    // configs written before 0.3.35 still deserialize.
+    #[serde(default = "default_adaptive_throttle")]
+    pub adaptive_throttle: bool,
+    #[serde(default = "default_max_backoff_ms")]
+    pub max_backoff_ms: u64,
+}
+
+fn default_adaptive_throttle() -> bool {
+    true
+}
+
+fn default_max_backoff_ms() -> u64 {
+    30_000 // 30s ceiling
 }
 
 fn generate_payloads(set: &PayloadSet) -> Vec<String> {
@@ -362,6 +381,8 @@ pub async fn start_attack_from_state(state: IntruderState, config: IntruderConfi
     let grep_rules = config.grep_rules.clone();
     let throttle = config.throttle_ms;
     let follow_redirects = config.follow_redirects;
+    let adaptive = config.adaptive_throttle;
+    let max_backoff = config.max_backoff_ms;
     // v0.3.10: `config.threads` is finally honored. Defaults to 10 if the
     // caller passes 0 (the JSON-default route). Previously the runner was a
     // strict sequential `for` loop — documented multi-thread feature was a
@@ -387,6 +408,12 @@ pub async fn start_attack_from_state(state: IntruderState, config: IntruderConfi
         let start = std::time::Instant::now();
         let sem = Arc::new(Semaphore::new(concurrency));
         let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+        // v0.3.35: adaptive inter-dispatch backoff. `inspected` tracks how many
+        // results we have already folded into the backoff state so we only react
+        // to responses that landed since the previous dispatch.
+        let mut backoff = BackoffState::new(throttle, max_backoff);
+        let mut inspected: usize = 0;
 
         for (i, payloads) in payload_matrix.iter().enumerate() {
             // Pause / stop check — once per dispatch. Cheap, just reads the
@@ -535,8 +562,53 @@ pub async fn start_attack_from_state(state: IntruderState, config: IntruderConfi
 
             // Inter-dispatch throttle (NOT per completion). Cheap delay so we
             // can drip-feed concurrency on rate-limited targets.
-            if throttle > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(throttle)).await;
+            //
+            // v0.3.35: when adaptive throttling is on, fold any results that
+            // landed since the last dispatch into the backoff state — a 429/503
+            // grows the delay (honoring Retry-After) and clean responses decay
+            // it back toward `throttle`. With adaptive off we keep the original
+            // fixed `throttle` behaviour.
+            let delay_ms = if adaptive {
+                let mut rate_limited = false;
+                let mut retry_after: Option<u64> = None;
+                let mut saw_new = false;
+                {
+                    let mgr = state_clone.lock().await;
+                    if let Some(attack) = mgr.attacks.get(&aid) {
+                        let len = attack.results.len();
+                        if len > inspected {
+                            saw_new = true;
+                            for r in &attack.results[inspected..len] {
+                                if r.status == 429 || r.status == 503 {
+                                    rate_limited = true;
+                                    if retry_after.is_none() {
+                                        retry_after = r.response_headers.lines().find_map(|line| {
+                                            let (name, val) = line.split_once(':')?;
+                                            if name.trim().eq_ignore_ascii_case("retry-after") {
+                                                parse_retry_after(val.trim())
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            inspected = len;
+                        }
+                    }
+                }
+                if rate_limited {
+                    backoff.on_rate_limit(retry_after);
+                } else if saw_new {
+                    backoff.on_success();
+                }
+                backoff.current_delay_ms()
+            } else {
+                throttle
+            };
+
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
         }
 
@@ -651,4 +723,45 @@ pub async fn intruder_delete(
 fn chrono_now() -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     format!("{}Z", now.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v0.3.35: configs serialized before adaptive throttling existed must
+    /// still deserialize, defaulting `adaptive_throttle` on and the cap to 30s.
+    #[test]
+    fn config_without_adaptive_fields_uses_defaults() {
+        let json = serde_json::json!({
+            "attack_type": "sniper",
+            "request_template": "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            "payload_sets": [],
+            "grep_rules": [],
+            "threads": 1,
+            "throttle_ms": 100,
+            "follow_redirects": false
+        });
+        let cfg: IntruderConfig = serde_json::from_value(json).expect("legacy config must deserialize");
+        assert!(cfg.adaptive_throttle);
+        assert_eq!(cfg.max_backoff_ms, 30_000);
+    }
+
+    #[test]
+    fn config_with_adaptive_fields_round_trips() {
+        let json = serde_json::json!({
+            "attack_type": "sniper",
+            "request_template": "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            "payload_sets": [],
+            "grep_rules": [],
+            "threads": 4,
+            "throttle_ms": 0,
+            "follow_redirects": true,
+            "adaptive_throttle": false,
+            "max_backoff_ms": 5000
+        });
+        let cfg: IntruderConfig = serde_json::from_value(json).expect("config must deserialize");
+        assert!(!cfg.adaptive_throttle);
+        assert_eq!(cfg.max_backoff_ms, 5000);
+    }
 }

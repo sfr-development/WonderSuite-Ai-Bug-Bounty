@@ -6,6 +6,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.3.35] — 2026-06-11
+
+This release closes four feature gaps against Burp Suite, each reinforcing the
+AI-native angle (every new capability is reachable both from the UI and as an
+MCP tool the agent can drive). 24 new unit tests; full suite green (79 passed).
+
+### Added — WebSocket frame interception in the MITM proxy
+
+Previously the proxy only logged the WebSocket **upgrade request** and then
+forwarded the connection via a one-shot HTTP call — every frame after the
+handshake was silently dropped, so WebSocket traffic was invisible. This was the
+one real functional gap in an otherwise Burp-parity proxy.
+
+`handle_websocket_upgrade` (the old detection-only stub) is replaced by
+`relay_websocket` in `src-tauri/src/proxy/engine.rs`. On a WebSocket upgrade,
+`handle_connect` now hands **both** stream halves to the relay, which:
+
+- opens a real upstream TLS connection and replays the handshake verbatim,
+- forwards the upstream `101 Switching Protocols` response to the client,
+- relays every frame in **both directions byte-for-byte** (a `tokio::select!`
+  loop, mirroring `tcp_tunnel`), and
+- sniffs a copy of each direction with an RFC 6455 frame parser
+  (`parse_ws_frames`), logging opcode + direction + unmasked text/payload into
+  the proxy's WebSocket pool via `add_websocket_message`.
+
+Forwarding is verbatim, so a parse failure can never corrupt the tunnel —
+parsing is best-effort, for visibility only. Frames are masked-unmasked for
+display (client→server frames are masked per spec).
+
+- **UI:** the WebSocket module (`src/modules/websocket/WebSocket.tsx`) gains an
+  **Intercepted** tab that live-polls `proxy_get_websocket_messages` and shows
+  captured MITM frames grouped by direction (C→S / S→C) with opcode and size.
+- **Agent:** the `proxy_get_websocket_messages` MCP tool now surfaces the full
+  MITM WebSocket stream, not just connections the agent opened itself.
+
+Scope note: 0.3.35 captures and observes frames. Frame editing, hold, and
+proxy-side match-and-replace for WebSocket land in a follow-up.
+
+### Added — GraphQL introspection scan (`graphql_scan`)
+
+New MCP tool + handler `src-tauri/src/mcp/handlers/scanner/graphql.rs`. Given a
+GraphQL endpoint it POSTs the canonical introspection query (type references
+nested seven levels deep so `[String!]!`-style wrappers resolve to the base
+scalar), and:
+
+- reports whether **introspection is enabled** — an information-disclosure
+  finding (`graphql_introspection_enabled`, severity low) when it is, or a clean
+  "good posture" note when it's disabled;
+- parses every query/mutation field and its scalar arguments
+  (`String`/`ID`/`Int`/`Float`/`Boolean`; custom scalars and input objects are
+  skipped), and
+- emits a deduplicated list of **injection points** (field + argument + type +
+  suggested seed value) ready to hand to `active_scan` / `intruder` for
+  SQLi/XSS/SSTI payload testing.
+
+This activates an attack surface that was previously only half-wired (the
+introspection constants in `crawler/well_known.rs` were dead code).
+
+### Added — Hidden-parameter discovery (`discover_parameters`)
+
+The Discovery module's "Hidden Parameters" tab was a sequential, client-side
+size/status diff loop. It now runs through a real backend (`handle_discover_
+parameters` in `src-tauri/src/mcp/handlers/recon.rs`), exposed both as the
+`discover_parameters` MCP tool and to the UI via `mcp_execute_tool`:
+
+- concurrent probing (bounded semaphore) of a small/medium parameter wordlist,
+- detection by **canary reflection**, status-code change, or response-size delta
+  (>50 B) versus a baseline — the decision logic lives in a unit-tested
+  `param_evidence` helper, and
+- support for GET/HEAD (query string) and POST/PUT/PATCH (JSON body).
+
+`src/modules/discovery/Discovery.tsx` is rewired to the new tool, gaining
+reflection detection the old client-side loop never had.
+
+### Added — Adaptive throttling / rate-limit handling in Intruder
+
+New `src-tauri/src/backoff.rs` state machine. When a target answers `429` or
+`503`, the Intruder dispatch loop now backs off automatically instead of holding
+a fixed `throttle_ms`:
+
+- honors `Retry-After` (numeric seconds **or** HTTP-date — the weekday is
+  stripped before parsing so a slightly-malformed header is still honored),
+- exponential backoff capped at `max_backoff_ms` (default 30 s), and
+- decays back toward the base delay after a run of clean responses.
+
+The state machine is additive (tracks the current delay directly) rather than
+multiplier-based, so it stays correct even at the default `throttle_ms = 0`
+(where a multiplier model would divide by zero). New `IntruderConfig` fields
+`adaptive_throttle` (default on) and `max_backoff_ms` are serde-defaulted, so
+attack configs written before 0.3.35 still deserialize. Surfaced through the
+`intruder_start` MCP handler.
+
 ## [0.3.34] — 2026-05-30
 
 ### Fixed — Export as ZIP (and all binary exports) produced an empty file
