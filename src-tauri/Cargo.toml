@@ -21,7 +21,7 @@ tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "socks", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "socks", "stream"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 axum = "0.8"
@@ -72,7 +72,7 @@ pnet_packet = "0.35"
 p12 = "0.6"
 
 # â”€â”€ Platform directories â”€â”€
-dirs = "5"
+dirs = "6"
 
 # â”€â”€ Chromium download + extraction (browser vendoring, v0.2.0) â”€â”€
 zip = { version = "8", default-features = false, features = ["deflate"] }
@@ -121,7 +121,7 @@ libc = "0.2"
 # (not at app startup), so the .exe launches cleanly on machines with no
 # pcap stack. No `windivert` / `windivert-sys` crate dep â€” those force a
 # static link that breaks app startup on stock Windows.
-libloading = "0.8"
+libloading = "0.9"
 windows = { version = "0.58", features = [
     "Win32_System_Services",
     "Win32_System_Registry",
@@ -132,7 +132,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
-windows-registry = "0.5"
+windows-registry = "0.6"
 
 # â”€â”€ Release Profile â”€â”€
 [profile.release]
