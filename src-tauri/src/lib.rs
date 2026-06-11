@@ -1,3 +1,4 @@
+mod backoff;
 mod browser;
 mod browser_migration;
 mod chromium;

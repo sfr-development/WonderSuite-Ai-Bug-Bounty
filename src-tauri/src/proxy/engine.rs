@@ -337,6 +337,20 @@ impl ProxyEngine {
                 Err(_) => break,       // Idle timeout
             };
 
+            // v0.3.35: a WebSocket upgrade takes over the whole connection. Hand
+            // BOTH halves to the relay (which holds it open and captures every
+            // frame) instead of the old detection-only stub that forwarded the
+            // handshake and then dropped all frames.
+            if request.is_websocket_upgrade {
+                if let Err(e) = self.relay_websocket(buf_reader, writer, &host, port, request).await {
+                    let msg = e.to_string();
+                    if !is_benign_error(&msg) {
+                        eprintln!("[Proxy] WebSocket relay error for {}: {}", host, msg);
+                    }
+                }
+                return Ok(());
+            }
+
             let should_continue = self.process_tunneled_request(&mut writer, &host, port, request).await;
 
             match should_continue {
@@ -391,10 +405,9 @@ impl ProxyEngine {
             if body.is_empty() { String::new() } else { format!("\r\n{}", body_str) }
         );
 
-        if request.is_websocket_upgrade {
-            self.handle_websocket_upgrade(writer, host, &url, &raw_request, &headers, &body).await?;
-            return Ok(false); // WebSocket takes over
-        }
+        // NOTE: WebSocket upgrades are intercepted earlier, in `handle_connect`,
+        // which hands both stream halves to `relay_websocket`. They never reach
+        // this point.
 
         let mut final_method = method.clone();
         let mut final_url = url.clone();
@@ -870,43 +883,183 @@ impl ProxyEngine {
             .into())
     }
 
-    async fn handle_websocket_upgrade<W: AsyncWriteExt + Unpin>(
+    /// v0.3.35: full WebSocket frame relay for the MITM proxy.
+    ///
+    /// Replaces the old detection-only stub (which forwarded the handshake via a
+    /// one-shot HTTP call and then dropped every frame). After the client's
+    /// upgrade request we open a real upstream TLS connection, replay the
+    /// handshake, forward the `101 Switching Protocols` response to the client,
+    /// then relay every frame in both directions *byte-for-byte* — sniffing a
+    /// copy of each direction to log frames (opcode + direction + unmasked text)
+    /// into the proxy's WebSocket pool. Forwarding is verbatim, so the tunnel is
+    /// never corrupted; parsing is best-effort, for visibility only. Scope for
+    /// 0.3.35 is capture/observe (no frame editing / hold / match-replace).
+    async fn relay_websocket<R, W>(
         &self,
-        writer: &mut W,
+        mut client_reader: R,
+        mut client_writer: W,
         host: &str,
-        url: &str,
-        raw_request: &str,
-        headers: &[(String, String)],
-        body: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        port: u16,
+        request: WireRequest,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        let connection_id = uuid::Uuid::new_v4().to_string();
+        let url = if port == 443 {
+            format!("wss://{}{}", host, request.path)
+        } else {
+            format!("wss://{}:{}{}", host, port, request.path)
+        };
+
+        // Reconstruct the verbatim upgrade request: request line + headers + the
+        // blank-line terminator. `headers_raw` already ends each header with CRLF
+        // but omits the final blank line.
+        let upgrade_req =
+            format!("{} {} HTTP/1.1\r\n{}\r\n", request.method, request.path, request.headers_raw);
+
         self.state
             .add_websocket_message(WebSocketMessage {
                 id: self.state.next_id(),
-                connection_id: uuid::Uuid::new_v4().to_string(),
+                connection_id: connection_id.clone(),
                 direction: "client_to_server".into(),
                 opcode: "upgrade".into(),
-                data: raw_request.to_string(),
-                length: raw_request.len(),
+                data: upgrade_req.clone(),
+                length: upgrade_req.len(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 host: host.to_string(),
-                url: url.to_string(),
+                url: url.clone(),
             })
             .await;
 
-        let result = self.forward_request("GET", url, headers, body).await;
-        if let Ok((status, resp_headers, resp_body)) = result {
-            let mut raw_resp = format!("HTTP/1.1 {}\r\n", status);
-            for (k, v) in &resp_headers {
-                raw_resp.push_str(&format!("{}: {}\r\n", k, v));
+        // Open the upstream TLS connection (this is the CONNECT / HTTPS path).
+        let tcp = TcpStream::connect((host, port)).await?;
+        let connector = native_tls::TlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()?;
+        let connector = tokio_native_tls::TlsConnector::from(connector);
+        let upstream = connector.connect(host, tcp).await?;
+        let (mut up_read, mut up_write) = tokio::io::split(upstream);
+
+        // Replay the handshake upstream.
+        up_write.write_all(upgrade_req.as_bytes()).await?;
+        up_write.flush().await?;
+
+        // Read the upstream response head (up to CRLF CRLF) and forward it to the
+        // client so the browser sees a real 101 Switching Protocols.
+        let mut resp_head = Vec::new();
+        let mut one = [0u8; 1];
+        loop {
+            let n = up_read.read(&mut one).await?;
+            if n == 0 {
+                break;
             }
-            raw_resp.push_str("\r\n");
-            writer.write_all(raw_resp.as_bytes()).await?;
-            if !resp_body.is_empty() {
-                writer.write_all(&resp_body).await?;
+            resp_head.push(one[0]);
+            if resp_head.ends_with(b"\r\n\r\n") {
+                break;
             }
-            writer.flush().await?;
+            if resp_head.len() > MAX_HEADER_SIZE {
+                return Err("WebSocket upstream response headers too large".into());
+            }
+        }
+        client_writer.write_all(&resp_head).await?;
+        client_writer.flush().await?;
+
+        let resp_head_str = String::from_utf8_lossy(&resp_head).to_string();
+        self.state
+            .add_websocket_message(WebSocketMessage {
+                id: self.state.next_id(),
+                connection_id: connection_id.clone(),
+                direction: "server_to_client".into(),
+                opcode: "upgrade".into(),
+                data: resp_head_str.clone(),
+                length: resp_head_str.len(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                host: host.to_string(),
+                url: url.clone(),
+            })
+            .await;
+
+        // Relay both directions until either side closes.
+        let c2s = self.relay_ws_direction(
+            &mut client_reader,
+            &mut up_write,
+            "client_to_server",
+            &connection_id,
+            host,
+            &url,
+        );
+        let s2c = self.relay_ws_direction(
+            &mut up_read,
+            &mut client_writer,
+            "server_to_client",
+            &connection_id,
+            host,
+            &url,
+        );
+        tokio::select! {
+            _ = c2s => {}
+            _ = s2c => {}
         }
 
+        Ok(())
+    }
+
+    /// Relay one direction of a WebSocket stream: forward bytes verbatim, then
+    /// sniff a copy to log each complete frame it can parse.
+    async fn relay_ws_direction<R, W>(
+        &self,
+        from: &mut R,
+        to: &mut W,
+        direction: &str,
+        connection_id: &str,
+        host: &str,
+        url: &str,
+    ) -> std::io::Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        let mut sniff: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = from.read(&mut chunk).await?;
+            if n == 0 {
+                break;
+            }
+            // Forward verbatim FIRST — the tunnel must never depend on our
+            // ability to parse a frame.
+            to.write_all(&chunk[..n]).await?;
+            to.flush().await?;
+
+            sniff.extend_from_slice(&chunk[..n]);
+            let (frames, consumed) = parse_ws_frames(&sniff);
+            for f in frames {
+                let (data, length) = render_ws_frame(&f);
+                self.state
+                    .add_websocket_message(WebSocketMessage {
+                        id: self.state.next_id(),
+                        connection_id: connection_id.to_string(),
+                        direction: direction.to_string(),
+                        opcode: ws_opcode_name(f.opcode).to_string(),
+                        data,
+                        length,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                        host: host.to_string(),
+                        url: url.to_string(),
+                    })
+                    .await;
+            }
+            if consumed > 0 {
+                sniff.drain(0..consumed);
+            }
+            // Bound memory if we're mid-way through an implausibly large frame.
+            if sniff.len() > 1_048_576 {
+                sniff.clear();
+            }
+        }
         Ok(())
     }
 
@@ -930,6 +1083,162 @@ impl ProxyEngine {
         }
 
         Ok(())
+    }
+}
+
+// ── WebSocket frame sniffing (v0.3.35) ──────────────────────────────────────
+//
+// These parse RFC 6455 frames purely for logging. The proxy forwards the raw
+// bytes verbatim, so a parse failure can never corrupt the tunnel.
+
+/// A WebSocket frame with its payload already unmasked, captured for display.
+struct ParsedWsFrame {
+    opcode: u8,
+    payload: Vec<u8>,
+}
+
+fn ws_opcode_name(op: u8) -> &'static str {
+    match op {
+        0x0 => "continuation",
+        0x1 => "text",
+        0x2 => "binary",
+        0x8 => "close",
+        0x9 => "ping",
+        0xA => "pong",
+        _ => "unknown",
+    }
+}
+
+/// Turn a parsed frame into a `(display_string, byte_length)` pair for the UI.
+fn render_ws_frame(f: &ParsedWsFrame) -> (String, usize) {
+    let len = f.payload.len();
+    match f.opcode {
+        0x1 => {
+            let s = String::from_utf8_lossy(&f.payload);
+            (s.chars().take(4096).collect(), len)
+        }
+        0x8 => {
+            if f.payload.len() >= 2 {
+                let code = u16::from_be_bytes([f.payload[0], f.payload[1]]);
+                let reason = String::from_utf8_lossy(&f.payload[2..]);
+                (format!("close code={} reason={}", code, reason), len)
+            } else {
+                ("close".to_string(), len)
+            }
+        }
+        _ => {
+            let preview: String = f.payload.iter().take(32).map(|b| format!("{:02x}", b)).collect();
+            (format!("[{} bytes] {}", len, preview), len)
+        }
+    }
+}
+
+/// Parse as many complete WebSocket frames as possible from the front of `buf`.
+/// Returns the parsed frames (payloads unmasked) and the number of bytes
+/// consumed; an incomplete trailing frame is left for the next read.
+fn parse_ws_frames(buf: &[u8]) -> (Vec<ParsedWsFrame>, usize) {
+    let mut frames = Vec::new();
+    let mut pos = 0;
+    while buf.len() - pos >= 2 {
+        let rest = &buf[pos..];
+        let b0 = rest[0];
+        let b1 = rest[1];
+        let opcode = b0 & 0x0F;
+        let masked = (b1 & 0x80) != 0;
+        let len7 = (b1 & 0x7F) as usize;
+
+        let (mut header, payload_len) = if len7 == 126 {
+            if rest.len() < 4 {
+                break;
+            }
+            (4usize, u16::from_be_bytes([rest[2], rest[3]]) as usize)
+        } else if len7 == 127 {
+            if rest.len() < 10 {
+                break;
+            }
+            (
+                10usize,
+                u64::from_be_bytes([rest[2], rest[3], rest[4], rest[5], rest[6], rest[7], rest[8], rest[9]])
+                    as usize,
+            )
+        } else {
+            (2usize, len7)
+        };
+
+        let mask_offset = header;
+        if masked {
+            header += 4;
+        }
+        let total = header + payload_len;
+        if rest.len() < total {
+            break;
+        }
+
+        let mut payload = rest[header..total].to_vec();
+        if masked {
+            let key =
+                [rest[mask_offset], rest[mask_offset + 1], rest[mask_offset + 2], rest[mask_offset + 3]];
+            for (i, byte) in payload.iter_mut().enumerate() {
+                *byte ^= key[i % 4];
+            }
+        }
+
+        frames.push(ParsedWsFrame { opcode, payload });
+        pos += total;
+    }
+    (frames, pos)
+}
+
+#[cfg(test)]
+mod ws_frame_tests {
+    use super::*;
+
+    #[test]
+    fn parses_unmasked_text_frame() {
+        // FIN + text(0x1), len 2, "Hi"
+        let buf = [0x81u8, 0x02, b'H', b'i'];
+        let (frames, consumed) = parse_ws_frames(&buf);
+        assert_eq!(consumed, 4);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].opcode, 0x1);
+        assert_eq!(frames[0].payload, b"Hi");
+    }
+
+    #[test]
+    fn parses_masked_client_frame() {
+        // FIN + text, masked, len 2, key 01020304, "Hi" XOR key
+        let key = [0x01u8, 0x02, 0x03, 0x04];
+        let masked = [b'H' ^ key[0], b'i' ^ key[1]];
+        let buf = [0x81u8, 0x82, key[0], key[1], key[2], key[3], masked[0], masked[1]];
+        let (frames, consumed) = parse_ws_frames(&buf);
+        assert_eq!(consumed, 8);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].payload, b"Hi"); // unmasked back to plaintext
+    }
+
+    #[test]
+    fn leaves_incomplete_frame_unconsumed() {
+        // Header claims a masked 2-byte payload but only part is present.
+        let buf = [0x81u8, 0x82, 0x01, 0x02];
+        let (frames, consumed) = parse_ws_frames(&buf);
+        assert_eq!(consumed, 0);
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn parses_two_back_to_back_frames() {
+        let buf = [0x81u8, 0x01, b'A', 0x8A, 0x00]; // text "A" then a pong (0xA)
+        let (frames, consumed) = parse_ws_frames(&buf);
+        assert_eq!(consumed, 5);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(ws_opcode_name(frames[1].opcode), "pong");
+    }
+
+    #[test]
+    fn renders_close_frame_code() {
+        let f = ParsedWsFrame { opcode: 0x8, payload: vec![0x03, 0xE8] }; // 1000
+        let (data, _) = render_ws_frame(&f);
+        assert!(data.contains("code=1000"));
     }
 }
 

@@ -177,45 +177,41 @@ export function Discovery() {
     setSubRunning(false);
   }, [target, subRunning]);
 
+  // v0.3.35: param discovery now runs through the `discover_parameters` backend
+  // (MCP) tool — concurrent probing plus canary reflection detection, instead of
+  // the old sequential client-side size/status diff loop.
   const startParamDiscovery = useCallback(async () => {
     if (!target || paramRunning) return;
     if (!scopeGuard()) return;
     setParamRunning(true); setParamResults([]);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const params = [
-        'id', 'page', 'q', 'search', 'query', 'debug', 'test', 'admin', 'token',
-        'key', 'api_key', 'apikey', 'secret', 'password', 'pass', 'user', 'username',
-        'email', 'callback', 'redirect', 'redirect_uri', 'return', 'return_url', 'next',
-        'url', 'uri', 'path', 'file', 'filename', 'include', 'template', 'lang', 'language',
-        'action', 'type', 'format', 'output', 'v', 'version', 'limit', 'offset', 'sort',
-        'order', 'filter', 'category', 'tag', 'status', 'role', 'access', 'auth',
-        'view', 'mode', 'config', 'setting', 'option', 'cmd', 'command', 'exec',
-      ];
+      const result = await invoke('mcp_execute_tool', {
+        name: 'discover_parameters',
+        params: { target, method: paramMethod, wordlist: 'medium', max_concurrent: 10, timeout_ms: 5000 },
+      }) as {
+        baseline_status: number;
+        baseline_size: number;
+        parameters_tested: number;
+        parameters_found: number;
+        results: Array<{ param: string; evidence: string; status_code: number; response_size: number }>;
+      };
 
-      const baseline: { status: number; body: string; size: number } =
-        await invoke('send_http_request', { method: 'GET', url: target, headers: null, body: null });
-
-      const found: Array<{ param: string; evidence: string }> = [];
-      for (const param of params) {
-        try {
-          const testUrl = `${target}${target.includes('?') ? '&' : '?'}${param}=wondertest123`;
-          const r: { status: number; body: string; size: number } =
-            await invoke('send_http_request', { method: 'GET', url: testUrl, headers: null, body: null });
-
-          const sizeDiff = Math.abs(r.size - baseline.size);
-          if (sizeDiff > 50 || r.status !== baseline.status) {
-            found.push({
-              param,
-              evidence: `Status: ${r.status} (baseline: ${baseline.status}), Size diff: ${sizeDiff > 0 ? '+' : ''}${sizeDiff}B`,
-            });
-          }
-        } catch { /* ignore */ }
+      const formatted: Array<{ param: string; evidence: string }> = result.results.map(r => ({
+        param: r.param,
+        evidence: `${r.evidence} — ${r.status_code}/${r.response_size}B vs baseline ${result.baseline_status}/${result.baseline_size}B`,
+      }));
+      setParamResults(formatted);
+      if (formatted.length === 0) {
+        addToast({
+          title: 'Parameter discovery complete',
+          message: `Tested ${result.parameters_tested} parameters — none altered the response.`,
+          type: 'info',
+        });
       }
-      setParamResults(found);
     } catch (err) { notifyError('Param discovery failed', err); }
     setParamRunning(false);
-  }, [target, paramRunning]);
+  }, [target, paramMethod, paramRunning, scopeGuard, addToast]);
 
   const statusClass = (code: number) => {
     if (code < 300) return 's2xx'; if (code < 400) return 's3xx';
