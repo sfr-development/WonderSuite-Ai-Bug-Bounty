@@ -34,9 +34,9 @@
     "@types/js-beautify": "^1.14.3",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.1.0"
   },
   "overrides": {
     "protobufjs": "^7.5.6",
