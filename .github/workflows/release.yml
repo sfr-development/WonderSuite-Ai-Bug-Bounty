@@ -186,7 +186,7 @@ jobs:
           # resources/drivers/windivert/ and dlopened at runtime via libloading.
 
       - name: Setup node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: 'npm'
