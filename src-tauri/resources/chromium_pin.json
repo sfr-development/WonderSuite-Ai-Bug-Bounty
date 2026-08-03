@@ -1,26 +1,25 @@
 {
-  "_comment": "Pin file for the bundled Chromium. Updated by .github/workflows/update-chromium-pin.yml each Monday. Manual refresh: run `node scripts/refresh-chromium-pin.mjs` then commit.",
-  "chromium_version": "148.0.7778.97",
+  "chromium_version": "151.0.7922.71",
   "manifest_uri": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
   "platforms": {
     "win64": {
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/win64/chrome-win64.zip",
-      "sha256": "6bcb14a148136428a6780df42f7fd0b951ceea679ca6d79c4e46e6473c6c40cc",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.71/win64/chrome-win64.zip",
+      "sha256": "7ea2e94833ef710026c8cb08d0d2dafcb13f5d304d9c475ac07a3fa8c11d846c",
       "binary_subpath": "chrome-win64/chrome.exe"
     },
     "mac-arm64": {
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/mac-arm64/chrome-mac-arm64.zip",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.71/mac-arm64/chrome-mac-arm64.zip",
+      "sha256": "1c516b5d6c00a074034d5ce03dc1cc9bd2cde2a09293d9613244e0bc153cb80f",
       "binary_subpath": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
     },
     "mac-x64": {
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/mac-x64/chrome-mac-x64.zip",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.71/mac-x64/chrome-mac-x64.zip",
+      "sha256": "bedcd79ae533fed218c26232b74e73cffec2a7277fce42cafcf5ec7280e4f81c",
       "binary_subpath": "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
     },
     "linux64": {
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/148.0.7778.97/linux64/chrome-linux64.zip",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.71/linux64/chrome-linux64.zip",
+      "sha256": "6bd04aab53fba1544ce6027d9daddb24137295033124a61ecdf9840d785792e9",
       "binary_subpath": "chrome-linux64/chrome"
     }
   }
